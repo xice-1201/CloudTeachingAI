@@ -1,11 +1,13 @@
 # CloudTeachingAI 系统设计文档（SDD）
 
-**文档版本**：v2.0
+**文档版本**：v2.1
 **创建日期**：2026-03-20
-**最后更新**：2026-03-20
+**最后更新**：2026-03-21
 **关联文档**：URD-CloudTeachingAI.md v2.4 / FRD-CloudTeachingAI.md v1.2 / NFR-CloudTeachingAI.md v1.1
 
 > v2.0 重大变更：后端由"单体 API + 独立 AI 服务"重构为微服务分布式架构，引入 API 网关、服务注册中心、消息总线，数据层按服务边界拆分，各服务独立部署和扩展。
+>
+> v2.1 修订：补充 chat-db 和 analysis-db 的 ER 图及 Nacos 配置；在 Kafka Topic 规划中补充冗余字段同步事件（`knowledge-point.updated`、`resource.updated`、`course.updated`）；在 learn-db ER 图中补充 `QUESTION` 表；在 API Gateway 路由中补充 WebSocket 鉴权方案和 analysis-agent 路由；明确 media-service 上传状态的 Redis 存储限制；补充 analysis-agent 输出存储方案及管理员 API 端点；优化 media-service 和 chat-agent 的 HPA 触发指标；补充 analysis-agent 代码目录结构。
 
 ---
 
@@ -126,8 +128,8 @@ graph TB
 | tag-agent | 8101 | 图谱构建和映射智能体（AI） | vector-db |
 | nav-agent | 8102 | 个性化导航智能体（AI） | vector-db |
 | grade-agent | 8103 | 作业批改智能体（AI） | — |
-| chat-agent | 8104 | AI 智能助手答疑（同步 SSE） | — |
-| analysis-agent | 8105 | 数据分析智能体（AI） | — |
+| chat-agent | 8104 | AI 智能助手答疑（同步 SSE） | chat-db |
+| analysis-agent | 8105 | 数据分析智能体（AI） | analysis-db |
 
 
 ---
@@ -243,6 +245,9 @@ graph TB
 | `submission.graded` | grade-agent | assign-service, notify-service | 批改完成，更新状态并通知师生 |
 | `notification.send` | 所有业务服务 | notify-service | 统一通知事件入口 |
 | `user.behavior` | learn-service, assign-service | analysis-agent | 用户行为数据，供分析智能体消费 |
+| `knowledge-point.updated` | course-service | learn-service | 知识点名称变更，同步冗余字段 |
+| `resource.updated` | course-service | learn-service | 资源标题变更，同步冗余字段 |
+| `course.updated` | course-service | assign-service | 课程标题变更，同步冗余字段 |
 
 ### 3.3 OpenFeign 服务间调用
 
@@ -304,9 +309,21 @@ routes:
     uri: lb://chat-agent
     predicates: [Path=/api/v1/chat/**]
     filters: [JwtAuthFilter, StripPrefix=0]
+
+  - id: analysis-agent
+    uri: lb://analysis-agent
+    predicates: [Path=/api/v1/analysis/**]
+    filters: [JwtAuthFilter, RoleFilter=ADMIN, StripPrefix=0]
+
+  - id: notify-service-ws
+    uri: lb:ws://notify-service
+    predicates: [Path=/ws/notifications]
+    filters: [JwtQueryParamAuthFilter, StripPrefix=0]
 ```
 
 Gateway 全局过滤器 `JwtAuthFilter` 负责验证 JWT 签名和有效期，将解析出的 `userId`、`role` 注入下游请求头，各微服务无需重复验签。
+
+WebSocket 路由使用独立的 `JwtQueryParamAuthFilter`，从 URL query param `token` 中读取 JWT（浏览器 WebSocket API 不支持自定义请求头），验签通过后同样注入 `X-User-Id` 和 `X-User-Role` 头。客户端连接示例：`wss://api.example.com/ws/notifications?token=<access_token>`。
 
 
 ---
@@ -486,6 +503,16 @@ erDiagram
         jsonb path_items
         timestamp generated_at
     }
+    QUESTION {
+        bigint id PK
+        int knowledge_point_id
+        int difficulty "1-5"
+        text content
+        jsonb options
+        varchar answer
+        boolean is_active
+        timestamp created_at
+    }
 ```
 
 #### assign-db（assign-service）
@@ -542,6 +569,51 @@ erDiagram
     }
 ```
 
+#### chat-db（chat-agent）
+
+```mermaid
+erDiagram
+    CHAT_SESSION {
+        bigint id PK
+        bigint user_id
+        bigint course_id "nullable，课程上下文"
+        timestamp created_at
+        timestamp last_active_at
+    }
+    CHAT_MESSAGE {
+        bigint id PK
+        bigint session_id FK
+        enum role "USER/ASSISTANT"
+        text content
+        int token_count
+        timestamp created_at
+    }
+    CHAT_SESSION ||--o{ CHAT_MESSAGE : "contains"
+```
+
+#### analysis-db（analysis-agent）
+
+```mermaid
+erDiagram
+    ANALYSIS_REPORT {
+        bigint id PK
+        enum report_type "ACCOUNT_HEALTH/PLATFORM_USAGE/CONTENT_COMPLIANCE"
+        jsonb result
+        enum status "PENDING/COMPLETED/FAILED"
+        bigint triggered_by "管理员 user_id"
+        timestamp created_at
+        timestamp completed_at
+    }
+    COMPLIANCE_FLAG {
+        bigint id PK
+        bigint resource_id
+        text reason
+        float risk_score
+        enum status "PENDING_REVIEW/CONFIRMED/DISMISSED"
+        timestamp flagged_at
+    }
+```
+
 ### 4.3 关键约束与索引
 
 | 数据库 | 表 | 约束 / 索引 |
@@ -554,8 +626,12 @@ erDiagram
 | course-db | enrollment | UNIQUE(student_id, course_id) |
 | learn-db | ability_map | UNIQUE(student_id, knowledge_point_id) |
 | learn-db | learning_progress | UNIQUE(student_id, resource_id) |
+| learn-db | question | INDEX(knowledge_point_id, difficulty) |
 | assign-db | submission | INDEX(assignment_id, status)，UNIQUE(assignment_id, student_id) |
 | notify-db | notification | INDEX(user_id, is_read, created_at) |
+| chat-db | chat_session | INDEX(user_id, last_active_at) |
+| chat-db | chat_message | INDEX(session_id, created_at) |
+| analysis-db | compliance_flag | INDEX(resource_id, status) |
 
 ### 4.4 冗余字段说明
 
@@ -797,7 +873,7 @@ sequenceDiagram
     C->>GW: POST /api/v1/uploads/init {filename, size, type, resource_id}
     GW->>Media: 转发
     Media->>MinIO: 初始化 Multipart Upload，获取 upload_id
-    Media->>Redis: 记录上传状态 upload:{upload_id} {offset, storage_key}
+    Media->>Redis: 记录上传状态 upload:{upload_id} {offset, storage_key, resource_id} TTL 24h
     Media-->>C: {upload_id}
 
     loop 分片上传（每片 5MB）
@@ -840,6 +916,8 @@ assignments/{year}/{month}/{submission_id}/{uuid}.{ext}
 ```
 
 MinIO 存储桶设为私有，所有访问通过 media-service 生成预签名 URL（有效期 1 小时）。
+
+> 上传状态仅存储在 Redis（TTL 24 小时），Redis 重启后进行中的上传记录会丢失，客户端需重新调用 `/uploads/init` 初始化新的上传任务。已完成上传并写入 MinIO 的文件不受影响。
 
 ### 6.3 能力图谱测试（learn-service）
 
@@ -1102,6 +1180,20 @@ chat-agent 维护自己的 chat-db（PostgreSQL），存储会话和消息记录
 
 所有分析结果仅作为辅助参考，最终决策由管理员执行。
 
+**输出存储**：分析结果持久化到 analysis-db（PostgreSQL）：
+- 账号健康度报告和平台使用分析写入 `analysis_report` 表
+- 内容合规预审结果写入 `compliance_flag` 表，并通过 Kafka `notification.send` 事件通知管理员
+
+管理员通过 `/admin/stats` 路由查看报告，对应 analysis-agent 提供以下 API 端点（经 API Gateway 路由）：
+
+```
+GET    /api/v1/analysis/reports              # 报告列表（管理员）
+POST   /api/v1/analysis/reports              # 手动触发分析任务
+GET    /api/v1/analysis/reports/{id}         # 报告详情
+GET    /api/v1/analysis/compliance-flags     # 合规预警列表
+PATCH  /api/v1/analysis/compliance-flags/{id} # 处置合规预警（确认/驳回）
+```
+
 
 ---
 
@@ -1213,6 +1305,11 @@ services:
   kafka-ui:         # 端口 8090（开发可视化）
   zookeeper:        # 端口 2181
 
+  # 消息层
+  kafka:            # 端口 9092
+  kafka-ui:         # 端口 8090（开发可视化）
+  zookeeper:        # 端口 2181
+
   # 数据层
   postgres:         # 端口 5432（开发环境单实例，多 Schema 隔离）
   redis:            # 端口 6379
@@ -1222,7 +1319,7 @@ services:
   frontend:         # Vue 3 SPA，Nginx 静态服务，端口 80
 ```
 
-> 开发环境 PostgreSQL 使用单实例多 Schema 隔离（`auth`、`user`、`course`、`learn`、`assign`、`notify`、`chat`），生产环境各服务独立实例。
+> 开发环境 PostgreSQL 使用单实例多 Schema 隔离（`auth`、`user`、`course`、`learn`、`assign`、`notify`、`chat`、`analysis`），生产环境各服务独立实例。
 
 ### 9.3 生产环境 Kubernetes 部署图
 
@@ -1276,6 +1373,7 @@ graph TB
             AssignDB["assign-db\nPostgreSQL StatefulSet\n主从"]
             NotifyDB["notify-db\nPostgreSQL StatefulSet\n主从"]
             ChatDB["chat-db\nPostgreSQL StatefulSet\n主从"]
+            AnalysisDB["analysis-db\nPostgreSQL StatefulSet\n主从"]
             VectorDB["vector-db\nPostgreSQL + pgvector\n主从"]
         end
     end
@@ -1304,6 +1402,7 @@ graph TB
     AssignDep --> AssignDB
     NotifyDep --> NotifyDB
     ChatDep --> ChatDB
+    AnalysisDep --> AnalysisDB
     TagDep & NavDep --> VectorDB
 
     BizNS & GWPod --> RedisSS
@@ -1325,11 +1424,11 @@ graph TB
 | learn-service | 2 | 6 | CPU > 70% |
 | assign-service | 2 | 4 | CPU > 70% |
 | notify-service | 2 | 4 | 连接数 > 200/副本 |
-| media-service | 2 | 4 | CPU > 60% |
+| media-service | 2 | 4 | CPU > 60% 或内存 > 70% |
 | tag-agent | 1 | 3 | Kafka 消费延迟 > 30s |
 | nav-agent | 1 | 3 | Kafka 消费延迟 > 30s |
 | grade-agent | 1 | 4 | Kafka 消费延迟 > 60s |
-| chat-agent | 2 | 6 | CPU > 60% |
+| chat-agent | 2 | 6 | CPU > 60% 或活跃 SSE 连接数 > 100/副本 |
 | analysis-agent | 1 | 2 | 手动触发，不自动扩容 |
 
 ### 9.5 资源配置（单 Pod）
@@ -1804,6 +1903,23 @@ chat-agent/
 └── ...（同上）
 ```
 
+**analysis-agent 特殊结构**（同步 HTTP + 异步 Kafka 消费，需 FastAPI 路由）：
+
+```
+analysis-agent/
+├── main.py
+├── router/
+│   └── analysis_router.py          # GET/POST /api/v1/analysis/reports 等路由
+├── agent/
+│   └── analysis_agent.py           # 分析逻辑（账号健康度、平台使用、合规预审）
+├── consumer/
+│   └── kafka_consumer.py           # 消费 user.behavior 事件积累行为数据
+├── db/
+│   ├── session.py                  # asyncpg 连接池
+│   └── analysis_repository.py      # 报告和合规预警 CRUD
+└── ...（同上）
+```
+
 ### 12.4 Nacos 配置中心规划
 
 各微服务从 Nacos 读取配置，按 `{service-name}-{env}.yaml` 命名：
@@ -1827,6 +1943,14 @@ course-service-prod.yaml
 tag-agent-prod.yaml
   - claude.api-key: <从 K8s Secret 注入，不写入 Nacos>
   - vector-db.url: postgresql://vector-db:5432/vector
+
+chat-agent-prod.yaml
+  - claude.api-key: <从 K8s Secret 注入，不写入 Nacos>
+  - chat-db.url: postgresql://chat-db:5432/chat
+
+analysis-agent-prod.yaml
+  - claude.api-key: <从 K8s Secret 注入，不写入 Nacos>
+  - analysis-db.url: postgresql://analysis-db:5432/analysis
 ```
 
 > 敏感配置（数据库密码、Claude API Key）通过 K8s Secret 以环境变量形式注入，不存储在 Nacos。
