@@ -1,8 +1,11 @@
 # CloudTeachingAI 数字孪生设计文档（DT）
 
-**文档版本**：v1.0
+**文档版本**：v1.1
 **创建日期**：2026-03-21
-**关联文档**：SDD-CloudTeachingAI.md v2.4
+**最后更新**：2026-03-21
+**关联文档**：SDD-CloudTeachingAI.md v2.5
+
+> v1.1 修订：关联文档升级至 SDD v2.5；在第 3.1 节补充 `gateway.access` Topic 的孪生用途；新增 `twin.cdc.ability` CDC Topic（第 3.2 节），监听 `learn-db.ABILITY_MAP` 表；在 `StudentLearningTwin` 模型中补充 `last_login_at` 字段；在第 4.2 节补充 `login.event` 路由规则；修正 `interaction_stats` 数据来源（改为 Kafka 事件驱动，不直接访问 chat-db）；补充 `TeachingEffectivenessTwin.mentoring` 数据来源（新增 `twin.cdc.mentor` CDC Topic）；明确 `twin-notify` 与 `twin-query-service` 职责分离（WebSocket 端点归属 `twin-notify`）；明确冷启动快照调用使用 `X-Internal-Token` 绕过 Gateway 角色过滤；补充 Redis 复用现有集群的说明；明确孪生层 API 权限边界（ADMIN 全量访问，TEACHER 访问学生/课程/教学效果孪生）；修正 `snapshot_loader.py` 注释（Python 使用 httpx，非 Feign）。
 
 ---
 
@@ -23,10 +26,10 @@ graph TB
 
     subgraph DSL["数据同步层 Data Sync Layer"]
         direction LR
-        DSL1["Kafka Topic 镜像\n现有13个Topic直接复用"]
+        DSL1["Kafka Topic 镜像\n现有14个Topic直接复用"]
         DSL2["Micrometer指标流\nPrometheus Scrape"]
         DSL3["CDC变更捕获\nDebezium → Kafka"]
-        DSL4["新增采集Topic\n4个孪生专用Topic"]
+        DSL4["新增采集Topic\n6个孪生专用Topic"]
     end
 
     subgraph DML["数字模型层 Digital Model Layer"]
@@ -92,6 +95,9 @@ StudentLearningTwin {
         AT_RISK          // 活跃度骤降（较前2周下降>50%）
     }
 
+    last_login_at: timestamp              // 来源：login.event（auth-service 发布）；
+                                          // 用于 AT_RISK 检测的登录时间维度
+
     ability_snapshot: [{
         knowledge_point_id: int
         mastery: enum { NONE, PARTIAL, MASTERED }
@@ -119,7 +125,8 @@ StudentLearningTwin {
         chat_session_count_7d: int
         avg_tokens_per_session: float
         last_chat_at: timestamp
-    }                                     // 来源：chat-db.CHAT_SESSION
+    }                                     // 来源：user.behavior 事件（chat-agent 发布）；
+                                          // 不直接访问 chat-db（零侵入原则）
 
     path_execution: {
         current_path_generated_at: timestamp
@@ -328,9 +335,9 @@ TeachingEffectivenessTwin {
 
     mentoring: {
         active_mentee_count: int
-        at_risk_mentee_count: int         // 处于AT_RISK状态的学生数
-        guidance_frequency_30d: float
-        last_guidance_at: timestamp
+        at_risk_mentee_count: int         // 处于AT_RISK状态的学生数；聚合自 StudentLearningTwin
+        guidance_frequency_30d: float     // 来源：twin.cdc.mentor（监听 user-db.MENTOR_GUIDANCE）
+        last_guidance_at: timestamp       // 来源：twin.cdc.mentor（监听 user-db.MENTOR_GUIDANCE）
     }
 
     effectiveness_score: {
@@ -351,7 +358,7 @@ TeachingEffectivenessTwin {
 
 | 现有 Topic | 孪生用途 | 目标孪生实体 |
 |-----------|---------|------------|
-| `user.behavior` | 更新活跃度、进度统计 | StudentLearningTwin |
+| `user.behavior` | 更新活跃度、进度统计、chat 交互统计 | StudentLearningTwin |
 | `ability.updated` | 触发能力快照同步、流失风险重算 | StudentLearningTwin |
 | `learning-path.generated` | 更新路线执行状态 | StudentLearningTwin |
 | `submission.created` | 更新作业待批改队列深度 | StudentLearningTwin, TeachingEffectivenessTwin |
@@ -359,8 +366,9 @@ TeachingEffectivenessTwin {
 | `submission.reviewed` | 更新人工复核率指标 | TeachingEffectivenessTwin |
 | `resource.uploaded` | 触发课程结构快照更新 | CourseContentTwin |
 | `resource.tagged` | 更新知识图谱覆盖状态 | CourseContentTwin |
-| `login.event` | 更新活跃度状态、AT_RISK检测 | StudentLearningTwin |
+| `login.event` | 更新 `last_login_at`、活跃度状态、AT_RISK检测 | StudentLearningTwin |
 | `notification.send` | 统计通知频率（间接反映系统事件密度） | SystemRuntimeTwin |
+| `gateway.access` | 统计 API 访问频率、错误率趋势（来自 API Gateway 访问日志） | SystemRuntimeTwin |
 
 ### 3.2 新增孪生专用采集 Topic
 
@@ -401,16 +409,37 @@ TeachingEffectivenessTwin {
 用途：实时追踪作业批改状态机转换，补充 submission.graded 之外的中间状态
 ```
 
+**`twin.cdc.ability`**
+
+```
+生产者：Debezium CDC（监听 learn-db.ABILITY_MAP 表）
+消费者：StudentLearningTwin 同步器
+用途：实时捕获能力图谱变化；ability.updated 事件有 30 分钟防抖，CDC 补充防抖窗口内
+      的细粒度掌握度变更，确保 ability_snapshot 的实时性
+```
+
+**`twin.cdc.mentor`**
+
+```
+生产者：Debezium CDC（监听 user-db.MENTOR_GUIDANCE 表）
+消费者：TeachingEffectivenessTwin 同步器
+用途：实时更新 mentoring.guidance_frequency_30d 和 mentoring.last_guidance_at；
+      user-db 中导师指导记录无对应 Kafka 事件，CDC 为唯一实时采集手段
+```
+
 ### 3.3 冷启动全量快照拉取
 
-孪生服务初始化时，通过 Feign 调用现有 API 进行全量快照拉取，后续通过 Kafka 增量更新：
+孪生服务初始化时，通过 httpx 直接调用现有业务服务内部 API 进行全量快照拉取（Python 服务使用 httpx，非 Java Feign），后续通过 Kafka 增量更新。
 
-| 采集目标 | 调用端点 | 用途 |
-|---------|---------|------|
-| 学生能力图谱全量 | `GET /api/v1/students/{id}/ability-map` | StudentLearningTwin 冷启动 |
-| 课程结构全量 | `GET /api/v1/courses/{id}/chapters` | CourseContentTwin 冷启动 |
-| 作业提交统计 | `GET /api/v1/assignments/{id}/submissions` | 历史数据回填 |
-| 分析报告 | `GET /api/v1/analysis/reports` | TeachingEffectivenessTwin 初始化 |
+所有冷启动调用均携带 `X-Internal-Token` 请求头（从 K8s Secret 注入），绕过 API Gateway 的角色过滤器，直接访问业务服务内部端点，不经过 Gateway 路由。
+
+| 采集目标 | 调用服务 | 端点 | 用途 |
+|---------|---------|------|------|
+| 学生能力图谱全量 | learn-service | `GET /api/v1/students/{id}/ability-map` | StudentLearningTwin 冷启动 |
+| 课程结构全量 | course-service | `GET /api/v1/courses/{id}/chapters` | CourseContentTwin 冷启动 |
+| 作业提交统计 | assign-service | `GET /api/v1/assignments/{id}/submissions` | 历史数据回填 |
+| 分析报告 | analysis-agent | `GET /api/v1/analysis/reports` | TeachingEffectivenessTwin 初始化（需 `X-Internal-Token`，该端点 Gateway 侧限制 ADMIN 角色） |
+| 导师关系全量 | user-service | `GET /api/v1/mentor-relations` | TeachingEffectivenessTwin.mentoring 冷启动 |
 
 ---
 
@@ -429,16 +458,16 @@ flowchart LR
 
     subgraph Sync["数据同步层（新增）"]
         direction TB
-        KafkaMirror["Kafka Topic 镜像消费者\n复用现有13个Topic\n独立Consumer Group: twin-sync"]
-        Debezium["Debezium CDC\n监听 learn-db / assign-db"]
+        KafkaMirror["Kafka Topic 镜像消费者\n复用现有14个Topic\n独立Consumer Group: twin-sync"]
+        Debezium["Debezium CDC\n监听 learn-db / assign-db / user-db"]
         MetricsExporter["Metrics Exporter\nPrometheus → Kafka桥接"]
-        SnapshotLoader["快照加载器\n冷启动时Feign全量拉取"]
+        SnapshotLoader["快照加载器\n冷启动时 httpx 全量拉取\n携带 X-Internal-Token"]
     end
 
     subgraph TwinStore["孪生状态存储（新增）"]
         direction TB
         TwinDB[("twin-db\nPostgreSQL\n孪生实体状态持久化")]
-        TwinCache[("twin-cache\nRedis\n热点孪生状态缓存")]
+        TwinCache[("twin-cache\nRedis（复用现有集群\nkey前缀 twin:*）\n热点孪生状态缓存")]
         TwinTS[("twin-timeseries\nTimescaleDB\n时序指标存储")]
     end
 
@@ -475,18 +504,21 @@ flowchart LR
 
 | 事件 Topic | 触发动作 | 目标孪生实体 |
 |-----------|---------|------------|
-| `login.event` | activity_state 重算 | StudentLearningTwin |
-| `user.behavior` | progress_stats 增量更新 | StudentLearningTwin |
-| `ability.updated` | ability_snapshot 全量刷新 + dropout_risk_score 重算 | StudentLearningTwin |
-| `learning-path.generated` | path_execution 更新 | StudentLearningTwin |
-| `submission.created` | assignment_performance.pending_count +1 | StudentLearningTwin, CourseContentTwin |
-| `submission.graded` | assignment_performance 更新 + avg_class_score 重算 | StudentLearningTwin, CourseContentTwin, TeachingEffectivenessTwin |
-| `submission.reviewed` | manual_review_rate 更新 | TeachingEffectivenessTwin |
-| `resource.tagged` | knowledge_coverage 更新 + content_quality 重算 | CourseContentTwin |
-| `twin.metrics.service` | services[*] 更新 | SystemRuntimeTwin |
-| `twin.metrics.kafka` | kafka_state[*] 更新 | SystemRuntimeTwin |
-| `twin.cdc.learn` | progress_stats 细粒度更新 | StudentLearningTwin |
+| `login.event` | `last_login_at` 更新 + `activity_state` 重算 | StudentLearningTwin |
+| `user.behavior` | `progress_stats` 增量更新、`interaction_stats` 统计（chat 行为） | StudentLearningTwin |
+| `ability.updated` | `ability_snapshot` 全量刷新 + `dropout_risk_score` 重算 | StudentLearningTwin |
+| `learning-path.generated` | `path_execution` 更新 | StudentLearningTwin |
+| `submission.created` | `assignment_performance.pending_count` +1 | StudentLearningTwin, TeachingEffectivenessTwin |
+| `submission.graded` | `assignment_performance` 更新 + `avg_class_score` 重算 | StudentLearningTwin, CourseContentTwin, TeachingEffectivenessTwin |
+| `submission.reviewed` | `manual_review_rate` 更新 | TeachingEffectivenessTwin |
+| `resource.tagged` | `knowledge_coverage` 更新 + `content_quality` 重算 | CourseContentTwin |
+| `gateway.access` | API 访问频率、错误率趋势统计 | SystemRuntimeTwin |
+| `twin.metrics.service` | `services[*]` 更新 | SystemRuntimeTwin |
+| `twin.metrics.kafka` | `kafka_state[*]` 更新 | SystemRuntimeTwin |
+| `twin.cdc.learn` | `progress_stats` 细粒度更新 | StudentLearningTwin |
 | `twin.cdc.assign` | 状态机同步 | StudentLearningTwin, CourseContentTwin |
+| `twin.cdc.ability` | `ability_snapshot` 细粒度更新（防抖窗口内的掌握度变更） | StudentLearningTwin |
+| `twin.cdc.mentor` | `mentoring.guidance_frequency_30d` / `last_guidance_at` 更新 | TeachingEffectivenessTwin |
 
 ---
 
@@ -498,7 +530,7 @@ flowchart LR
 graph TB
     subgraph Existing["现有系统（零修改）"]
         GW["API Gateway\n:8080"]
-        Kafka["Kafka Cluster\n现有13个Topic"]
+        Kafka["Kafka Cluster\n现有14个Topic"]
         Services["业务微服务 + AI智能体"]
         DBs["各服务 PostgreSQL"]
         Nacos["Nacos\n服务注册中心"]
@@ -512,13 +544,14 @@ graph TB
         QueryAPI["twin-query-service\n:8201"]
         PredictAPI["twin-prediction-service\n:8202"]
         SimAPI["twin-simulation-service\n:8203"]
+        TwinNotify["twin-notify\n:8204\nWebSocket推送"]
         TwinDB[("twin-db\nPostgreSQL")]
-        TwinCache[("twin-cache\nRedis")]
+        TwinCache[("twin-cache\nRedis（复用现有集群\nkey前缀 twin:*）")]
         TwinTS[("twin-timeseries\nTimescaleDB")]
     end
 
     Kafka -->|"独立Consumer Group\ntwin-sync"| SyncWorker
-    DBs -->|"Debezium CDC\nKafka Connect"| CDC
+    DBs -->|"Debezium CDC\nKafka Connect\nlearn-db / assign-db / user-db"| CDC
     Services -->|"Prometheus Scrape"| MetricsBridge
     Nacos -->|"服务注册"| TwinNS
 
@@ -529,44 +562,66 @@ graph TB
     TwinDB & TwinCache --> QueryAPI
     TwinDB & TwinTS --> PredictAPI
     TwinDB --> SimAPI
+    QueryAPI & PredictAPI --> TwinNotify
 
-    GW -->|"新增路由\n/api/v1/twin/**"| TwinGW
-    TwinGW --> QueryAPI & PredictAPI & SimAPI
+    GW -->|"新增路由\n/api/v1/twin/**\n/ws/twin/**"| TwinGW
+    TwinGW --> QueryAPI & PredictAPI & SimAPI & TwinNotify
 ```
 
 ### 5.2 对现有系统的唯一改动
 
-只需在 API Gateway 路由配置中追加一条规则：
+只需在 API Gateway 路由配置中追加两条规则：
 
 ```yaml
 - id: twin-query-service
   uri: lb://twin-query-service
   predicates: [Path=/api/v1/twin/**]
   filters: [JwtAuthFilter, RoleFilter=ADMIN|TEACHER, StripPrefix=0]
+
+- id: twin-notify-ws
+  uri: lb:ws://twin-notify
+  predicates: [Path=/ws/twin/**]
+  filters: [JwtQueryParamAuthFilter, RoleFilter=ADMIN|TEACHER, StripPrefix=0]
 ```
 
-Debezium 通过 Kafka Connect 独立部署，以 PostgreSQL 逻辑复制槽（Logical Replication Slot）方式读取 WAL 日志，不需要修改任何现有服务代码。
+**权限边界说明**：
+
+| 角色 | 可访问端点 | 说明 |
+|------|-----------|------|
+| ADMIN | 全部孪生 API | 含系统运行状态孪生、所有学生/课程/教师孪生 |
+| TEACHER | `/twin/students/{id}`、`/twin/courses/{id}`、`/twin/teachers/{id}`、预测与仿真端点 | 仅限自己课程的学生和课程；`/twin/system` 不对教师开放 |
+
+各孪生服务在业务层进一步校验资源归属（如教师只能查询自己课程的学生孪生），不依赖 Gateway 单层过滤。
+
+Debezium 通过 Kafka Connect 独立部署，以 PostgreSQL 逻辑复制槽（Logical Replication Slot）方式读取 WAL 日志，不需要修改任何现有服务代码。新增监听 `user-db.MENTOR_GUIDANCE` 表，需在 user-db 上开启逻辑复制（`wal_level=logical`），与 learn-db / assign-db 的配置方式一致。
 
 ### 5.3 孪生服务 API 端点
 
-**twin-query-service**
+**twin-query-service**（REST 查询，仅提供 HTTP 端点）
 
 ```
-GET  /api/v1/twin/students/{id}                  # 学生孪生画像
-GET  /api/v1/twin/students/{id}/risk             # 流失风险详情
-GET  /api/v1/twin/courses/{id}                   # 课程孪生状态
-GET  /api/v1/twin/teachers/{id}                  # 教学效果孪生
-GET  /api/v1/twin/system                         # 系统运行状态孪生
-GET  /api/v1/twin/system/alerts                  # 当前活跃告警
-WS   /ws/twin/updates                            # 孪生状态变更推送
+GET  /api/v1/twin/students/{id}                  # 学生孪生画像（TEACHER/ADMIN）
+GET  /api/v1/twin/students/{id}/risk             # 流失风险详情（TEACHER/ADMIN）
+GET  /api/v1/twin/courses/{id}                   # 课程孪生状态（TEACHER/ADMIN）
+GET  /api/v1/twin/teachers/{id}                  # 教学效果孪生（TEACHER 本人/ADMIN）
+GET  /api/v1/twin/system                         # 系统运行状态孪生（ADMIN 专属）
+GET  /api/v1/twin/system/alerts                  # 当前活跃告警（ADMIN 专属）
 ```
+
+**twin-notify**（WebSocket 推送，独立承载长连接）
+
+```
+WS   /ws/twin/updates                            # 孪生状态变更实时推送（TEACHER/ADMIN）
+```
+
+twin-notify 订阅 twin-query-service 和 twin-prediction-service 的状态变更通知（通过内部 Redis Pub/Sub），向已连接的客户端推送增量更新，不提供 REST 查询能力。
 
 **twin-prediction-service**
 
 ```
-GET  /api/v1/twin/students/{id}/forecast         # 30天掌握度预测
-GET  /api/v1/twin/courses/{id}/engagement-trend  # 课程参与度趋势预测
-POST /api/v1/twin/simulation/learning-path       # 仿真：调整路线后的效果预测
+GET  /api/v1/twin/students/{id}/forecast         # 30天掌握度预测（TEACHER/ADMIN）
+GET  /api/v1/twin/courses/{id}/engagement-trend  # 课程参与度趋势预测（TEACHER/ADMIN）
+POST /api/v1/twin/simulation/learning-path       # 仿真：调整路线后的效果预测（TEACHER/ADMIN）
 ```
 
 ---
@@ -733,8 +788,10 @@ services:
 
 databases:
   twin-db:                 # PostgreSQL，端口 5432
-  twin-cache:              # Redis，端口 6379
   twin-timeseries:         # TimescaleDB，端口 5433
+  # twin-cache 复用现有 Redis Cluster（infra namespace），不单独部署
+  # 孪生层缓存 key 统一使用 twin:* 前缀与业务层隔离
+  # 若孪生缓存量级增大（预估超过 Redis 总内存 20%），再评估独立部署
 ```
 
 ### 8.2 HPA 配置
@@ -757,7 +814,7 @@ databases:
 twin-sync-worker/
 ├── main.py                         # 启动入口，初始化消费者和快照加载器
 ├── consumer/
-│   ├── kafka_consumer.py           # aiokafka 消费现有13个Topic + 4个孪生Topic
+│   ├── kafka_consumer.py           # aiokafka 消费现有14个Topic + 6个孪生Topic
 │   └── event_router.py             # 事件路由：Topic → 对应孪生实体更新器
 ├── updater/
 │   ├── student_twin_updater.py     # StudentLearningTwin 状态更新逻辑
@@ -765,10 +822,11 @@ twin-sync-worker/
 │   ├── teacher_twin_updater.py     # TeachingEffectivenessTwin 状态更新逻辑
 │   └── system_twin_updater.py      # SystemRuntimeTwin 状态更新逻辑
 ├── snapshot/
-│   └── snapshot_loader.py          # 冷启动全量快照拉取（Feign调用现有API）
+│   └── snapshot_loader.py          # 冷启动全量快照拉取（httpx 调用现有业务服务内部 API，
+│                                   #   携带 X-Internal-Token，不经过 API Gateway）
 ├── db/
 │   ├── twin_db.py                  # twin-db asyncpg 连接池
-│   ├── twin_cache.py               # twin-cache Redis 连接
+│   ├── twin_cache.py               # Redis 连接（复用现有 Redis Cluster，key 前缀 twin:*）
 │   └── twin_ts.py                  # twin-timeseries asyncpg 连接池
 ├── config.py
 ├── requirements.txt
@@ -781,19 +839,33 @@ twin-sync-worker/
 twin-query-service/
 ├── main.py
 ├── router/
-│   ├── student_router.py           # GET /twin/students/{id}
+│   ├── student_router.py           # GET /twin/students/{id}，含资源归属校验
 │   ├── course_router.py            # GET /twin/courses/{id}
 │   ├── teacher_router.py           # GET /twin/teachers/{id}
-│   └── system_router.py            # GET /twin/system
-├── websocket/
-│   └── twin_ws_handler.py          # WS /ws/twin/updates 推送孪生状态变更
+│   └── system_router.py            # GET /twin/system（ADMIN 专属）
 ├── db/
 │   └── twin_db.py
 ├── config.py
 └── Dockerfile
 ```
 
-### 9.3 twin-prediction-service（Python FastAPI）
+### 9.3 twin-notify（Python FastAPI + WebSocket）
+
+```
+twin-notify/
+├── main.py
+├── websocket/
+│   ├── twin_ws_handler.py          # WS /ws/twin/updates 连接管理
+│   └── ws_session_registry.py      # 本实例 WebSocket 连接注册表
+├── subscriber/
+│   └── redis_subscriber.py         # 订阅 Redis Pub/Sub twin:notify:{user_id}，
+│                                   #   接收 twin-query-service / twin-prediction-service
+│                                   #   的状态变更通知并推送给已连接客户端
+├── config.py
+└── Dockerfile
+```
+
+### 9.4 twin-prediction-service（Python FastAPI）
 
 ```
 twin-prediction-service/
@@ -822,7 +894,7 @@ twin-common-config.yaml
   - kafka.bootstrap-servers: kafka:9092
   - kafka.consumer-group: twin-sync
   - twin-db.url: postgresql://twin-db:5432/twin
-  - twin-cache.nodes: twin-cache:6379
+  - twin-cache.nodes: redis-0:6379,...   # 复用现有 Redis Cluster，key 前缀 twin:*
   - twin-timeseries.url: postgresql://twin-timeseries:5433/twin_ts
 
 # 各孪生服务独立配置
@@ -836,6 +908,10 @@ twin-prediction-service-prod.yaml
 
 twin-query-service-prod.yaml
   - cache.ttl-seconds: 30
+
+twin-notify-prod.yaml
+  - websocket.max-connections-per-replica: 200
+  - redis.pubsub.channel-prefix: twin:notify:
 ```
 
 ---
@@ -850,8 +926,12 @@ twin-query-service-prod.yaml
 | 孪生层与业务层隔离 | 独立 K8s Namespace + 独立数据库 | 孪生层故障不影响业务系统，资源独立管控 |
 | 预测模型 | 规则引擎 + 简单统计模型 | 初期数据量有限，避免过度工程化；后期可替换为 ML 模型 |
 | 仿真模式 | 沙箱克隆（只读） | 仿真不修改物理系统状态，保证数据安全 |
+| 孪生层缓存 | 复用现有 Redis Cluster（key 前缀 twin:*） | 避免额外运维成本；孪生缓存量级预估较小，独立部署收益不足以覆盖成本；量级增大后可迁移 |
+| WebSocket 推送 | twin-notify 独立服务 | 与 twin-query-service 职责分离；长连接管理与 REST 查询独立扩缩容，避免相互影响 |
+| 冷启动鉴权 | X-Internal-Token 直连业务服务内部端点 | 绕过 Gateway 角色过滤器，与现有服务间 Feign 调用鉴权机制一致 |
+| interaction_stats 数据来源 | user.behavior 事件（Kafka） | 零侵入原则，不直接访问 chat-db；chat-agent 在会话结束时通过 user.behavior 事件上报交互统计 |
 
 ---
 
-*物理系统设计详见 SDD-CloudTeachingAI.md v2.4*
+*物理系统设计详见 SDD-CloudTeachingAI.md v2.5*
 
