@@ -1,11 +1,15 @@
 # CloudTeachingAI 数字孪生设计文档（DT）
 
-**文档版本**：v1.1
+**文档版本**：v1.3
 **创建日期**：2026-03-21
-**最后更新**：2026-03-21
-**关联文档**：SDD-CloudTeachingAI.md v2.5
+**最后更新**：2026-03-22
+**关联文档**：SDD-CloudTeachingAI.md v2.6
 
 > v1.1 修订：关联文档升级至 SDD v2.5；在第 3.1 节补充 `gateway.access` Topic 的孪生用途；新增 `twin.cdc.ability` CDC Topic（第 3.2 节），监听 `learn-db.ABILITY_MAP` 表；在 `StudentLearningTwin` 模型中补充 `last_login_at` 字段；在第 4.2 节补充 `login.event` 路由规则；修正 `interaction_stats` 数据来源（改为 Kafka 事件驱动，不直接访问 chat-db）；补充 `TeachingEffectivenessTwin.mentoring` 数据来源（新增 `twin.cdc.mentor` CDC Topic）；明确 `twin-notify` 与 `twin-query-service` 职责分离（WebSocket 端点归属 `twin-notify`）；明确冷启动快照调用使用 `X-Internal-Token` 绕过 Gateway 角色过滤；补充 Redis 复用现有集群的说明；明确孪生层 API 权限边界（ADMIN 全量访问，TEACHER 访问学生/课程/教学效果孪生）；修正 `snapshot_loader.py` 注释（Python 使用 httpx，非 Feign）。
+>
+> v1.2 修订：补充预测模型详细设计（第 6.4 节），含流失风险评分特征权重表和掌握度预测算法；补充 CDC 与事件协作的幂等处理机制（第 5.4 节）；补充 CDC 延迟目标、故障恢复机制和告警阈值（第 5.5 节）；补充存储容量规划与数据保留策略（第 7.3 节）；补充仿真推演引擎核心假设与可信度评估（第 6.5 节）；补充孪生层监控告警集成方案（第 9 节）；补充 WebSocket 前端连接管理策略（第 5.6 节）。
+>
+> v1.3 修订：关联文档升级至 SDD v2.6；将 `SystemRuntimeTwin.ai_task_state` 中的 `claude_api_error_rate` 字段更名为 `deepseek_api_error_rate`，与 SDD v2.6 的 LLM API 切换保持一致。
 
 ---
 
@@ -281,7 +285,7 @@ SystemRuntimeTwin {
         agent: string
         queue_depth: int
         avg_processing_time_ms: float
-        claude_api_error_rate: float
+        deepseek_api_error_rate: float
         fallback_triggered_count_1h: int
     }]
 
@@ -608,6 +612,202 @@ GET  /api/v1/twin/system                         # 系统运行状态孪生（AD
 GET  /api/v1/twin/system/alerts                  # 当前活跃告警（ADMIN 专属）
 ```
 
+### 5.4 CDC 与事件协作的幂等处理
+
+`ability.updated` 事件（30 分钟防抖）与 `twin.cdc.ability` CDC 同时监听 `learn-db.ABILITY_MAP` 表变更，需明确协作关系以避免重复更新：
+
+**职责分工**：
+
+| 数据源 | 触发时机 | 职责 |
+|--------|---------|------|
+| `twin.cdc.ability` | 每条 ABILITY_MAP 记录变更后立即触发 | 实时更新 `ability_snapshot`，确保秒级延迟 |
+| `ability.updated` | 防抖窗口（30 分钟）结束后触发 | 触发下游预测重算（流失风险、掌握度预测） |
+
+**幂等处理机制**：
+
+每次更新孪生状态时，检查并更新 `twin_version`（单调递增时间戳），确保同一数据源的重复事件不会导致状态回退：
+
+```python
+# twin-sync-worker/updater/student_twin_updater.py
+
+async def update_ability_snapshot(student_id: int, changes: list, source: str, event_time: datetime):
+    """
+    更新学生能力快照，带幂等校验
+
+    :param student_id: 学生ID
+    :param changes: 变更的能力记录列表
+    :param source: 数据来源（"cdc" 或 "event"）
+    :param event_time: 事件发生时间
+    """
+    # 1. 获取当前孪生状态
+    current_twin = await twin_db.get_student_twin(student_id)
+
+    # 2. 幂等校验：事件时间早于当前版本则跳过
+    if current_twin and event_time <= current_twin['twin_version']:
+        logger.info(f"Skipping stale {source} event for student {student_id}, "
+                    f"event_time={event_time}, twin_version={current_twin['twin_version']}")
+        return
+
+    # 3. 更新能力快照
+    new_ability_snapshot = merge_ability_changes(
+        current_twin.get('ability_snapshot', []) if current_twin else [],
+        changes
+    )
+
+    # 4. 写入数据库，twin_version 使用事件时间
+    await twin_db.update_student_twin(
+        student_id=student_id,
+        ability_snapshot=new_ability_snapshot,
+        twin_version=event_time
+    )
+
+    # 5. 仅当来源为事件时，触发下游预测重算
+    if source == "event":
+        await trigger_prediction_recalc(student_id)
+```
+
+**冲突解决策略**：
+
+若 CDC 和事件同时到达（时序不确定），以 `twin_version` 较大者为准。CDC 负责实时同步，事件负责触发下游，两者互补而非互斥。
+
+---
+
+### 5.5 CDC 延迟与故障处理
+
+**延迟目标**：
+
+| CDC 连接器 | 监听表 | 延迟目标 | 监控指标 |
+|-----------|--------|---------|---------|
+| `twin-cdc-learn` | `learn-db.LEARNING_PROGRESS` / `ABILITY_MAP` | < 5s | Debezium `millisecondsBehindSource` |
+| `twin-cdc-assign` | `assign-db.SUBMISSION` | < 5s | 同上 |
+| `twin-cdc-mentor` | `user-db.MENTOR_GUIDANCE` | < 5s | 同上 |
+
+**故障恢复机制**：
+
+```mermaid
+stateDiagram-v2
+    [*] --> Running : connector 启动
+    Running --> Degraded : lag > 30s
+    Degraded --> Running : lag 恢复 < 5s
+    Running --> Failed : connector 崩溃 / slot 错误
+    Degraded --> Failed : lag > 120s
+    Failed --> Recovering : 自动重启 / 人工干预
+    Recovering --> Running : 恢复成功
+    Recovering --> Fallback : 3 次重启失败
+    Fallback --> Running : connector 恢复后切回
+```
+
+**降级策略**：
+
+当 CDC 故障持续超过 5 分钟（无法在短时间恢复），自动切换为**定时轮询降级模式**：
+
+| 降级行为 | 说明 |
+|---------|------|
+| 触发条件 | CDC connector 状态 = FAILED 且持续时间 > 5 分钟 |
+| 降级操作 | `twin-sync-worker` 启动轮询任务，每 30 秒调用业务服务内部 API 拉取增量数据 |
+| 恢复操作 | CDC 恢复后，停止轮询任务，从 CDC 继续消费 |
+| 数据来源 | 调用 `learn-service` / `assign-service` / `user-service` 内部端点，携带 `X-Internal-Token` |
+
+**告警阈值**：
+
+| 告警条件 | 级别 | 通知对象 |
+|---------|------|---------|
+| CDC 延迟 > 30s | P2 | 运维团队 |
+| CDC 延迟 > 120s | P1 | 运维团队 + 值班开发 |
+| CDC connector 状态 = FAILED | P1 | 运维团队 + 值班开发 |
+| Replication Slot 积压 > 10000 条 | P2 | 运维团队 |
+
+---
+
+### 5.6 WebSocket 前端连接管理
+
+孪生层引入 `twin-notify` 服务，与现有 `notify-service` 的 WebSocket 共存，需在前端明确区分：
+
+**连接端点区分**：
+
+| WebSocket 服务 | 端点 | 用途 | 目标用户 |
+|---------------|------|------|---------|
+| `notify-service` | `/ws/notifications` | 业务通知推送（作业批改完成、标签确认等） | 所有用户 |
+| `twin-notify` | `/ws/twin/updates` | 孪生状态变更推送（流失预警、系统告警等） | ADMIN / TEACHER |
+
+**前端连接策略**：
+
+```typescript
+// stores/useTwinStore.ts
+
+export const useTwinStore = defineStore('twin', () => {
+  const wsConnection = ref<WebSocket | null>(null)
+  const reconnectAttempts = ref(0)
+  const MAX_RECONNECT_ATTEMPTS = 5
+
+  function connectTwinWebSocket() {
+    const role = useAuthStore().role
+    // 仅 ADMIN 和 TEACHER 建立孪生 WebSocket
+    if (!['ADMIN', 'TEACHER'].includes(role)) {
+      return
+    }
+
+    const token = useAuthStore().accessToken
+    const wsUrl = `${WS_BASE_URL}/ws/twin/updates?token=${token}`
+
+    wsConnection.value = new WebSocket(wsUrl)
+
+    wsConnection.value.onopen = () => {
+      console.log('[TwinWS] Connected')
+      reconnectAttempts.value = 0
+    }
+
+    wsConnection.value.onmessage = (event) => {
+      const twinUpdate = JSON.parse(event.data)
+      handleTwinUpdate(twinUpdate)
+    }
+
+    wsConnection.value.onclose = () => {
+      console.log('[TwinWS] Disconnected')
+      scheduleReconnect()
+    }
+
+    wsConnection.value.onerror = (error) => {
+      console.error('[TwinWS] Error:', error)
+    }
+  }
+
+  function scheduleReconnect() {
+    if (reconnectAttempts.value >= MAX_RECONNECT_ATTEMPTS) {
+      console.warn('[TwinWS] Max reconnect attempts reached, falling back to polling')
+      startPollingFallback()
+      return
+    }
+
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.value), 30000)
+    setTimeout(() => {
+      reconnectAttempts.value++
+      connectTwinWebSocket()
+    }, delay)
+  }
+
+  function startPollingFallback() {
+    // 降级为 30 秒轮询
+    setInterval(async () => {
+      const updates = await fetchTwinUpdates()
+      updates.forEach(handleTwinUpdate)
+    }, 30000)
+  }
+
+  return { connectTwinWebSocket }
+})
+```
+
+**负载分担**：
+
+两个 WebSocket 服务独立部署、独立扩缩容，前端根据用户角色决定是否建立孪生连接：
+
+- **学生**：仅连接 `/ws/notifications`
+- **教师**：同时连接 `/ws/notifications` 和 `/ws/twin/updates`
+- **管理员**：同时连接两个 WebSocket，且订阅全量孪生变更
+
+---
+
 **twin-notify**（WebSocket 推送，独立承载长连接）
 
 ```
@@ -698,6 +898,250 @@ sequenceDiagram
 
 ---
 
+### 6.4 预测模型详细设计
+
+#### 6.4.1 流失风险评分模型
+
+**特征权重表**：
+
+| 特征 | 权重 | 计算方式 | 数据来源 |
+|------|------|---------|---------|
+| `activity_state` | 0.25 | ACTIVE=0, IDLE=0.4, DORMANT=0.8, AT_RISK=0.6 | 状态机转换 |
+| `avg_daily_seconds_trend` | 0.20 | `(本周日均 - 上周日均) / 上周日均`，下降为正 | `progress_stats` |
+| `overdue_count` | 0.15 | `逾期作业数 / 总作业数`（最近 30 天） | `assignment_performance` |
+| `path_adherence_rate` | 0.15 | `实际完成 / 推荐路线数` | `path_execution` |
+| `chat_session_count_7d` | 0.10 | 7 天内 AI 对话次数，次数越低风险越高 | `interaction_stats` |
+| `login_frequency_trend` | 0.10 | `(本周登录次数 - 上周登录次数) / 上周登录次数` | `login.event` |
+| `completion_rate` | 0.05 | 课程完成率，越低风险越高 | `progress_stats` |
+
+**评分计算公式**：
+
+```
+dropout_risk_score = Σ(feature_value × weight) × normalization_factor
+
+其中：
+- feature_value: 各特征归一化到 [0, 1] 区间
+- normalization_factor: 1.0（确保总分在 [0, 1] 区间）
+```
+
+**风险等级划分**：
+
+| 风险分数 | 风险等级 | 推荐干预 |
+|---------|---------|---------|
+| 0.0 - 0.3 | 低风险 | NONE |
+| 0.3 - 0.5 | 中风险 | SEND_ENCOURAGEMENT |
+| 0.5 - 0.7 | 高风险 | NOTIFY_TEACHER |
+| 0.7 - 1.0 | 极高风险 | TRIGGER_NAV_REFRESH + NOTIFY_TEACHER |
+
+**模型迭代机制**：
+
+1. 每周自动计算预测准确率：对比上周预测的流失学生与实际流失情况
+2. 当准确率 < 70% 时，触发模型参数调优告警
+3. 支持通过 Nacos 配置动态调整特征权重
+
+#### 6.4.2 掌握度预测模型
+
+**学习曲线拟合算法**：
+
+采用**指数增长模型**拟合知识点掌握度随时间的变化：
+
+```
+mastery(t) = M_max × (1 - e^(-k × t))
+
+其中：
+- M_max: 理论最大掌握度（取历史观测最大值）
+- k: 学习速率参数（根据历史数据拟合）
+- t: 累计学习时间（秒）
+```
+
+**参数拟合方法**：
+
+```python
+# model/mastery_forecast_model.py
+
+import numpy as np
+from scipy.optimize import curve_fit
+
+def exponential_learning_curve(t, M_max, k):
+    """指数学习曲线模型"""
+    return M_max * (1 - np.exp(-k * t))
+
+def fit_learning_params(time_series: list[tuple[datetime, float]]) -> tuple[float, float]:
+    """
+    拟合学习曲线参数
+
+    :param time_series: [(timestamp, mastery_score), ...] 历史时序数据
+    :return: (M_max, k) 拟合参数
+    """
+    # 转换为相对时间（小时）
+    t0 = time_series[0][0]
+    t_hours = np.array([(ts - t0).total_seconds() / 3600 for ts, _ in time_series])
+    mastery = np.array([m for _, m in time_series])
+
+    try:
+        popt, _ = curve_fit(
+            exponential_learning_curve,
+            t_hours,
+            mastery,
+            p0=[1.0, 0.01],  # 初始猜测
+            bounds=([0, 0], [1, 1])  # M_max ∈ [0,1], k > 0
+        )
+        return tuple(popt)
+    except RuntimeError:
+        # 拟合失败，使用默认参数
+        return (1.0, 0.01)
+
+def predict_mastery_30d(M_max: float, k: float, current_hours: float) -> float:
+    """预测 30 天后的掌握度"""
+    future_hours = current_hours + 30 * 24 * 2  # 假设每天学习 2 小时
+    return exponential_learning_curve(future_hours, M_max, k)
+```
+
+**冷启动处理**：
+
+对于新建学生（历史数据 < 7 天），使用全局平均学习速率：
+
+```
+k_default = 0.005  # 基于平台历史数据统计
+M_max_default = 1.0
+```
+
+---
+
+### 6.5 仿真推演引擎设计
+
+#### 6.5.1 核心假设
+
+| 假设 | 说明 | 参数 |
+|------|------|------|
+| **资源完成率假设** | 不同类型资源有不同的平均完成率 | VIDEO: 75%, DOCUMENT: 60%, SLIDE: 50% |
+| **掌握度提升假设** | 完成一个资源对知识点掌握度的提升与资源置信度正相关 | `Δmastery = 0.1 × confidence × completion_rate` |
+| **遗忘曲线假设** | 长期不复习的知识点掌握度会衰减 | 衰减系数 λ = 0.01 / 天 |
+| **顺序依赖假设** | 推荐路线中的资源顺序影响学习效果 | 顺序正确时掌握度提升 +10% |
+
+#### 6.5.2 仿真执行流程
+
+```python
+# model/simulation_engine.py
+
+class LearningPathSimulationEngine:
+    """学习路线仿真引擎"""
+
+    def __init__(self, twin_db, twin_ts):
+        self.twin_db = twin_db
+        self.twin_ts = twin_ts
+
+    async def simulate_path_adjustment(
+        self,
+        student_id: int,
+        proposed_path_items: list[dict]
+    ) -> dict:
+        """
+        仿真路线调整效果
+
+        :param student_id: 学生ID
+        :param proposed_path_items: 提议的新路线 [{resource_id, knowledge_point_id}, ...]
+        :return: {current_forecast, proposed_forecast, delta, confidence_score}
+        """
+        # 1. 加载当前孪生状态（沙箱克隆）
+        current_twin = await self.twin_db.get_student_twin(student_id)
+        sandbox_twin = deepcopy(current_twin)
+
+        # 2. 获取当前路线预测作为基准
+        current_forecast = await self._forecast_with_current_path(current_twin)
+
+        # 3. 模拟执行提议路线
+        for item in proposed_path_items:
+            await self._simulate_resource_completion(sandbox_twin, item)
+
+        # 4. 预测调整后的掌握度
+        proposed_forecast = await self._predict_future_mastery(sandbox_twin)
+
+        # 5. 计算差异和可信度
+        delta = self._calculate_delta(current_forecast, proposed_forecast)
+        confidence_score = self._calculate_confidence(current_twin, proposed_path_items)
+
+        return {
+            "current_forecast": current_forecast,
+            "proposed_forecast": proposed_forecast,
+            "delta": delta,
+            "confidence_score": confidence_score,
+            "assumptions": self._get_active_assumptions()
+        }
+
+    async def _simulate_resource_completion(self, twin: dict, item: dict):
+        """模拟单个资源完成对孪生状态的影响"""
+        resource_id = item['resource_id']
+        kp_id = item['knowledge_point_id']
+
+        # 获取资源元数据
+        resource_meta = await self._get_resource_meta(resource_id)
+
+        # 更新掌握度（应用核心假设）
+        completion_rate = self.COMPLETION_RATE_BY_TYPE[resource_meta['type']]
+        confidence = resource_meta.get('confidence', 0.8)
+
+        for kp in twin['ability_snapshot']:
+            if kp['knowledge_point_id'] == kp_id:
+                delta = 0.1 * confidence * completion_rate
+                kp['score'] = min(1.0, kp['score'] + delta)
+                break
+
+    def _calculate_confidence(self, twin: dict, path_items: list) -> float:
+        """
+        计算仿真可信度
+
+        可信度取决于：
+        1. 学生历史数据量（数据越多越可信）
+        2. 资源类型熟悉度（已完成过同类资源更可信）
+        3. 知识点覆盖度（已有相关知识点记录更可信）
+        """
+        data_volume_score = min(1.0, twin['progress_stats']['completed_resources'] / 20)
+        type_familiarity = self._calc_type_familiarity(twin, path_items)
+        kp_coverage = self._calc_kp_coverage(twin, path_items)
+
+        return (data_volume_score * 0.4 + type_familiarity * 0.3 + kp_coverage * 0.3)
+```
+
+#### 6.5.3 可信度评估
+
+| 可信度分数 | 含义 | 建议操作 |
+|-----------|------|---------|
+| 0.8 - 1.0 | 高可信 | 可作为主要参考依据 |
+| 0.5 - 0.8 | 中等可信 | 结合教师经验综合判断 |
+| 0.3 - 0.5 | 低可信 | 仅作辅助参考，需更多数据 |
+| < 0.3 | 不可信 | 不推荐使用，建议积累更多历史数据 |
+
+#### 6.5.4 预测验证机制
+
+系统自动跟踪仿真预测与实际结果的偏差，用于迭代优化：
+
+```sql
+-- 仿真预测跟踪表
+CREATE TABLE simulation_tracking (
+    id BIGSERIAL PRIMARY KEY,
+    student_id BIGINT NOT NULL,
+    simulation_id VARCHAR(64) NOT NULL,
+    predicted_mastery JSONB NOT NULL,
+    actual_mastery JSONB,              -- 30 天后填充
+    prediction_error FLOAT,             -- 实际 - 预测
+    created_at TIMESTAMPTZ NOT NULL,
+    validated_at TIMESTAMPTZ
+);
+
+-- 每月统计预测准确率
+SELECT
+    DATE_TRUNC('month', created_at) AS month,
+    AVG(ABS(prediction_error)) AS avg_error,
+    STDDEV(prediction_error) AS error_stddev,
+    COUNT(*) FILTER (WHERE ABS(prediction_error) < 0.1) * 100.0 / COUNT(*) AS accuracy_rate
+FROM simulation_tracking
+WHERE validated_at IS NOT NULL
+GROUP BY DATE_TRUNC('month', created_at);
+```
+
+---
+
 ## 7. 孪生数据库设计
 
 ### 7.1 twin-db 核心表结构
@@ -769,6 +1213,87 @@ CREATE TABLE system_metrics_ts (
 SELECT create_hypertable('system_metrics_ts', 'time');
 ```
 
+### 7.3 存储容量规划与数据保留策略
+
+#### 7.3.1 数据保留策略
+
+| 数据类型 | 存储位置 | 保留周期 | 压缩策略 | 清理方式 |
+|---------|---------|---------|---------|---------|
+| 孪生实体状态 | `twin-db.STUDENT_TWIN` 等 | 永久（随学生/课程生命周期） | 不压缩 | 随业务数据删除 |
+| 学生活跃度时序 | `twin-timeseries.student_activity_ts` | 90 天 | 7 天后 TimescaleDB 压缩 | 自动删除超期数据 |
+| 系统指标时序 | `twin-timeseries.system_metrics_ts` | 30 天 | 3 天后压缩 | 自动删除超期数据 |
+| 仿真预测跟踪 | `twin-timeseries.simulation_tracking` | 365 天 | 30 天后压缩 | 自动删除超期数据 |
+| CDC 偏移量 | Kafka `__consumer_offsets` | 7 天（与消息保留期对齐） | Kafka 内置 | 自动清理 |
+
+#### 7.3.2 存储容量估算
+
+**假设基准**：
+- 学生数：10,000
+- 课程数：500
+- 教师数：200
+- 知识点数：5,000
+
+**twin-db 容量估算**：
+
+| 表 | 单条大小 | 记录数 | 总容量 |
+|----|---------|--------|--------|
+| `STUDENT_TWIN` | ~8 KB（jsonb 含 ability_snapshot） | 10,000 | ~80 MB |
+| `COURSE_TWIN` | ~15 KB（jsonb 含 knowledge_coverage） | 500 | ~8 MB |
+| `TEACHER_TWIN` | ~10 KB | 200 | ~2 MB |
+| `SYSTEM_TWIN` | ~50 KB（jsonb 含 services 状态） | 1 | ~50 KB |
+| **合计** | - | - | **~90 MB** |
+
+**twin-timeseries 容量估算**：
+
+| 表 | 单条大小 | 日增量 | 90 天总量 |
+|----|---------|--------|----------|
+| `student_activity_ts` | ~50 字节 | 10,000 学生 × 3 指标 × 24 次/天 = 720 万条/天 | ~3.2 GB |
+| `system_metrics_ts` | ~40 字节 | 13 服务 × 5 指标 × 2880 次/天 = 18.7 万条/天 | ~200 MB |
+| **合计** | - | - | **~3.4 GB** |
+
+**Redis 缓存容量估算**：
+
+| 缓存 Key | 单条大小 | 预估数量 | 总容量 |
+|---------|---------|---------|--------|
+| `twin:student:{id}` | ~8 KB | 热点 1,000 学生 | ~8 MB |
+| `twin:course:{id}` | ~15 KB | 全量 500 课程 | ~8 MB |
+| `twin:system` | ~50 KB | 1 条 | ~50 KB |
+| **合计** | - | - | **~16 MB** |
+
+#### 7.3.3 TimescaleDB 压缩配置
+
+```sql
+-- 学生活跃度时序表压缩策略
+ALTER TABLE student_activity_ts SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'student_id, metric',
+    timescaledb.compress_orderby = 'time DESC'
+);
+SELECT add_compression_policy('student_activity_ts', INTERVAL '7 days');
+
+-- 系统指标时序表压缩策略
+ALTER TABLE system_metrics_ts SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'service_name, metric',
+    timescaledb.compress_orderby = 'time DESC'
+);
+SELECT add_compression_policy('system_metrics_ts', INTERVAL '3 days');
+
+-- 数据保留策略（自动删除超期数据）
+SELECT add_retention_policy('student_activity_ts', INTERVAL '90 days');
+SELECT add_retention_policy('system_metrics_ts', INTERVAL '30 days');
+SELECT add_retention_policy('simulation_tracking', INTERVAL '365 days');
+```
+
+#### 7.3.4 容量监控告警
+
+| 监控指标 | 告警阈值 | 级别 |
+|---------|---------|------|
+| `twin-db` 磁盘使用率 | > 70% | P2 |
+| `twin-db` 磁盘使用率 | > 85% | P1 |
+| `twin-timeseries` 磁盘使用率 | > 70% | P2 |
+| 时序表单日增量异常（较上周 +50%） | - | P2 |
+
 ---
 
 ## 8. 部署规划
@@ -806,9 +1331,200 @@ databases:
 
 ---
 
-## 9. 孪生服务代码结构
+## 9. 监控告警集成
 
-### 9.1 twin-sync-worker（Python）
+### 9.1 与现有监控体系的关系
+
+孪生层监控复用现有 Prometheus + Grafana + Jaeger 基础设施，不独立部署监控组件。
+
+```mermaid
+graph LR
+    subgraph TwinServices["孪生服务（Namespace: twin）"]
+        SyncWorker["twin-sync-worker"]
+        QuerySvc["twin-query-service"]
+        PredictSvc["twin-prediction-service"]
+        SimSvc["twin-simulation-service"]
+        NotifySvc["twin-notify"]
+    end
+
+    subgraph ExistingInfra["现有监控基础设施（Namespace: infra）"]
+        Prometheus["Prometheus"]
+        Grafana["Grafana"]
+        Alertmanager["Alertmanager"]
+        Jaeger["Jaeger"]
+    end
+
+    SyncWorker & QuerySvc & PredictSvc & SimSvc & NotifySvc
+        -->|"Micrometer 指标暴露\n:9090/metrics"| Prometheus
+    SyncWorker & QuerySvc & PredictSvc & SimSvc & NotifySvc
+        -->|"OpenTelemetry Traces"| Jaeger
+    Prometheus --> Alertmanager
+    Prometheus --> Grafana
+```
+
+### 9.2 孪生服务指标暴露
+
+所有孪生服务通过 Micrometer（Python 使用 `prometheus-client`）暴露以下指标：
+
+**通用指标**：
+
+| 指标名 | 类型 | 标签 | 说明 |
+|--------|------|------|------|
+| `twin_http_requests_total` | Counter | service, method, path, status | HTTP 请求总数 |
+| `twin_http_request_duration_seconds` | Histogram | service, method, path | HTTP 请求延迟分布 |
+| `twin_db_query_duration_seconds` | Histogram | service, query_type | DB 查询延迟 |
+| `twin_cache_hit_total` | Counter | service, cache_name | 缓存命中次数 |
+| `twin_cache_miss_total` | Counter | service, cache_name | 缓存未命中次数 |
+
+**twin-sync-worker 专用指标**：
+
+| 指标名 | 类型 | 标签 | 说明 |
+|--------|------|------|------|
+| `twin_kafka_consumed_total` | Counter | topic, consumer_group | 消费的 Kafka 消息数 |
+| `twin_kafka_lag_seconds` | Gauge | topic, consumer_group | Kafka 消费延迟（秒） |
+| `twin_cdc_lag_seconds` | Gauge | connector, table | CDC 延迟（秒） |
+| `twin_twin_update_total` | Counter | twin_type, update_type | 孪生状态更新次数 |
+| `twin_snapshot_load_duration_seconds` | Histogram | - | 快照加载耗时 |
+
+**twin-notify 专用指标**：
+
+| 指标名 | 类型 | 标签 | 说明 |
+|--------|------|------|------|
+| `twin_websocket_connections` | Gauge | - | 当前 WebSocket 连接数 |
+| `twin_websocket_messages_sent_total` | Counter | message_type | WebSocket 消息发送数 |
+
+**twin-prediction-service 专用指标**：
+
+| 指标名 | 类型 | 标签 | 说明 |
+|--------|------|------|------|
+| `twin_prediction_total` | Counter | prediction_type, result | 预测执行次数 |
+| `twin_prediction_duration_seconds` | Histogram | prediction_type | 预测计算耗时 |
+| `twin_simulation_total` | Counter | result | 仿真执行次数 |
+
+### 9.3 告警规则
+
+**孪生层专用告警规则**（追加到现有 Alertmanager 配置）：
+
+```yaml
+groups:
+  - name: twin-alerts
+    rules:
+      # P1 告警
+      - alert: TwinSyncWorkerKafkaLagCritical
+        expr: twin_kafka_lag_seconds{consumer_group="twin-sync"} > 120
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "孪生同步服务 Kafka 消费延迟过高"
+          description: "twin-sync-worker 消费延迟 {{ $value }}秒，超过 120 秒阈值"
+
+      - alert: TwinCDCLagCritical
+        expr: twin_cdc_lag_seconds > 120
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "CDC 延迟过高"
+          description: "CDC 连接器 {{ $labels.connector }} 延迟 {{ $value }}秒"
+
+      - alert: TwinCDCConnectorDown
+        expr: debezium_connector_status{connector=~"twin-.*"} == 0
+        for: 1m
+        labels:
+          severity: P1
+        annotations:
+          summary: "CDC 连接器宕机"
+          description: "CDC 连接器 {{ $labels.connector }} 状态为 DOWN"
+
+      # P2 告警
+      - alert: TwinSyncWorkerKafkaLagHigh
+        expr: twin_kafka_lag_seconds{consumer_group="twin-sync"} > 30
+        for: 3m
+        labels:
+          severity: P2
+        annotations:
+          summary: "孪生同步服务 Kafka 消费延迟偏高"
+          description: "twin-sync-worker 消费延迟 {{ $value }}秒"
+
+      - alert: TwinCDCLagHigh
+        expr: twin_cdc_lag_seconds > 30
+        for: 3m
+        labels:
+          severity: P2
+        annotations:
+          summary: "CDC 延迟偏高"
+          description: "CDC 连接器 {{ $labels.connector }} 延迟 {{ $value }}秒"
+
+      - alert: TwinQueryServiceHighLatency
+        expr: histogram_quantile(0.99, rate(twin_http_request_duration_seconds_bucket{service="twin-query-service"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: P2
+        annotations:
+          summary: "孪生查询服务 P99 延迟过高"
+          description: "twin-query-service P99 延迟 {{ $value }}秒"
+
+      - alert: TwinPredictionErrorRateHigh
+        expr: rate(twin_prediction_total{result="error"}[5m]) / rate(twin_prediction_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: P2
+        annotations:
+          summary: "预测服务错误率过高"
+          description: "twin-prediction-service 错误率 {{ $value | humanizePercentage }}"
+
+      - alert: TwinWebSocketConnectionsHigh
+        expr: twin_websocket_connections / twin_notify_replicas > 180
+        for: 5m
+        labels:
+          severity: P2
+        annotations:
+          summary: "WebSocket 连接数接近上限"
+          description: "单副本 WebSocket 连接数 {{ $value }}，接近 200 上限，建议扩容"
+
+      - alert: TwinDBStorageHigh
+        expr: twin_db_disk_usage_pct > 70
+        for: 10m
+        labels:
+          severity: P2
+        annotations:
+          summary: "孪生数据库存储空间不足"
+          description: "twin-db 磁盘使用率 {{ $value }}%"
+```
+
+### 9.4 Grafana 面板扩展
+
+在现有 Grafana 中新增孪生监控面板：
+
+| 面板名称 | 内容 | 刷新频率 |
+|---------|------|---------|
+| **孪生服务概览** | 5 个孪生服务的健康状态、CPU/内存、错误率 | 10s |
+| **孪生同步监控** | Kafka 消费延迟、CDC 延迟、孪生更新速率 | 10s |
+| **孪生查询监控** | QPS、P99 延迟、缓存命中率 | 10s |
+| **预测与仿真监控** | 预测执行量、准确率趋势、仿真可信度分布 | 30s |
+| **孪生数据存储** | twin-db/twin-timeseries 磁盘使用、时序数据增长趋势 | 1m |
+
+### 9.5 日志集成
+
+孪生服务日志统一接入现有 ELK Stack：
+
+| 日志字段 | 说明 | 示例 |
+|---------|------|------|
+| `service` | 服务名 | `twin-sync-worker` |
+| `level` | 日志级别 | `INFO`, `WARN`, `ERROR` |
+| `trace_id` | 分布式追踪 ID | 与 Jaeger 对齐 |
+| `student_id` | 相关学生 ID（如有） | `12345` |
+| `twin_type` | 孪生实体类型 | `StudentLearningTwin` |
+| `event_source` | 事件来源 | `cdc`, `kafka`, `snapshot` |
+
+**日志保留策略**：与业务服务一致，保留 90 天。
+
+---
+
+## 10. 孪生服务代码结构
+
+### 10.1 twin-sync-worker（Python）
 
 ```
 twin-sync-worker/
@@ -833,7 +1549,7 @@ twin-sync-worker/
 └── Dockerfile
 ```
 
-### 9.2 twin-query-service（Python FastAPI）
+### 10.2 twin-query-service（Python FastAPI）
 
 ```
 twin-query-service/
@@ -849,7 +1565,7 @@ twin-query-service/
 └── Dockerfile
 ```
 
-### 9.3 twin-notify（Python FastAPI + WebSocket）
+### 10.3 twin-notify（Python FastAPI + WebSocket）
 
 ```
 twin-notify/
@@ -865,7 +1581,7 @@ twin-notify/
 └── Dockerfile
 ```
 
-### 9.4 twin-prediction-service（Python FastAPI）
+### 10.4 twin-prediction-service（Python FastAPI）
 
 ```
 twin-prediction-service/
@@ -886,7 +1602,7 @@ twin-prediction-service/
 
 ---
 
-## 10. Nacos 配置规划
+## 11. Nacos 配置规划
 
 ```
 # 孪生服务公共配置
@@ -916,7 +1632,7 @@ twin-notify-prod.yaml
 
 ---
 
-## 11. 关键设计决策
+## 12. 关键设计决策
 
 | 决策点 | 选择 | 理由 |
 |--------|------|------|
@@ -924,12 +1640,15 @@ twin-notify-prod.yaml
 | 时序存储 | TimescaleDB | 基于 PostgreSQL 扩展，运维成本低，支持时序压缩和连续聚合 |
 | CDC 工具 | Debezium + Kafka Connect | 与现有 Kafka 基础设施复用，零侵入业务服务 |
 | 孪生层与业务层隔离 | 独立 K8s Namespace + 独立数据库 | 孪生层故障不影响业务系统，资源独立管控 |
-| 预测模型 | 规则引擎 + 简单统计模型 | 初期数据量有限，避免过度工程化；后期可替换为 ML 模型 |
+| 预测模型 | 规则引擎 + 指数学习曲线 | 初期数据量有限，避免过度工程化；支持后续替换为 ML 模型 |
 | 仿真模式 | 沙箱克隆（只读） | 仿真不修改物理系统状态，保证数据安全 |
 | 孪生层缓存 | 复用现有 Redis Cluster（key 前缀 twin:*） | 避免额外运维成本；孪生缓存量级预估较小，独立部署收益不足以覆盖成本；量级增大后可迁移 |
 | WebSocket 推送 | twin-notify 独立服务 | 与 twin-query-service 职责分离；长连接管理与 REST 查询独立扩缩容，避免相互影响 |
 | 冷启动鉴权 | X-Internal-Token 直连业务服务内部端点 | 绕过 Gateway 角色过滤器，与现有服务间 Feign 调用鉴权机制一致 |
 | interaction_stats 数据来源 | user.behavior 事件（Kafka） | 零侵入原则，不直接访问 chat-db；chat-agent 在会话结束时通过 user.behavior 事件上报交互统计 |
+| CDC 与事件协作 | CDC 实时更新 + 事件触发预测 | CDC 确保秒级延迟，事件触发下游重算，两者互补 |
+| CDC 故障降级 | 定时轮询业务服务 API | 保证 CDC 故障时孪生状态仍可更新，牺牲实时性换取可用性 |
+| 预测验证机制 | 自动跟踪预测偏差 | 支持模型迭代优化，提升预测准确率 |
 
 ---
 

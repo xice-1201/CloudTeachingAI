@@ -1,8 +1,8 @@
 # CloudTeachingAI 系统设计文档（SDD）
 
-**文档版本**：v2.5
+**文档版本**：v2.6
 **创建日期**：2026-03-20
-**最后更新**：2026-03-21
+**最后更新**：2026-03-22
 **关联文档**：URD-CloudTeachingAI.md v2.4 / FRD-CloudTeachingAI.md v1.2 / NFR-CloudTeachingAI.md v1.1
 
 > v2.0 重大变更：后端由"单体 API + 独立 AI 服务"重构为微服务分布式架构，引入 API 网关、服务注册中心、消息总线，数据层按服务边界拆分，各服务独立部署和扩展。
@@ -16,6 +16,8 @@
 > v2.4 修订：将 Outbox 模式推广至 learn-service 和 course-service，补充对应 `OUTBOX_MESSAGE` 表及索引；在 Kafka Topic 规划中补充 `login.event` 事件，auth-service 作为生产者，analysis-agent 作为消费者，修复账号健康度分析数据来源缺口；在 learn-service API 端点中补充题目管理接口；在 course-service API 端点中补充选课接口；补充 vector-db 向量表结构与嵌入策略；明确 chat-agent 上下文超出时的用户提示策略；统一 WebSocket Token 安全规范为 Gateway 侧移除 token 参数；明确 grade-agent 作业复杂度判断标准；补充 Redis 关键数据 DB 兜底评估说明。
 >
 > v2.5 修订：在第 2.4 节补充 OpenAI Embedding SDK 依赖，与 vector-db 嵌入策略对齐；在第 2.3 节补充讨论区归属 course-service 扩展实现；在第 3.4 节 Gateway 路由补充文件上传大小限制过滤器，在第 6.2 节补充 media-service 侧校验逻辑；在第 6.3 节补充能力测试题库不足时的降级处理；统一 grade-agent 作业复杂度判断标准与 NFR 一致（≤ 1000 字为简单作业）；在第 7.6 节补充平台使用分析的数据来源说明（API Gateway 访问日志）；在第 7.3 节明确 nav-agent 向量检索与 Feign 调用的协作关系；在第 13.3 节补充 Outbox Poller 并发安全机制（`SELECT FOR UPDATE SKIP LOCKED`）；将幂等去重 Redis TTL 从 24 小时延长至 7 天，与 Kafka 消息保留期对齐；在第 9.4 节补充 notify-service HPA 自定义指标来源说明；在第 6.2 节补充视频转码多副本防重复机制（交叉引用分布式锁）；在第 6.3 节补充 `session_state` 持久化同步时机；在第 4.3 节补充 `question` 表 `created_at` 索引及 `enrollment` 唯一约束覆盖说明。
+>
+> v2.6 修订：将 AI 智能体服务的外部 LLM API 从 Claude API（Anthropic SDK）切换为 DeepSeek API（OpenAI SDK 兼容），更新相关架构图、技术选型表、代码目录结构及配置说明；更新 `deepseek.api-key` 配置项名称。
 
 ---
 
@@ -74,7 +76,7 @@ graph TB
     end
 
     subgraph External["外部服务"]
-        ClaudeAPI["Claude API"]
+        DeepSeekAPI["DeepSeek API"]
         SMTP["SMTP"]
     end
 
@@ -107,7 +109,7 @@ graph TB
     MediaSvc --> MinIO
 
     AuthSvc & GW --> Redis
-    TagAgent & NavAgent & GradeAgent & ChatAgent --> ClaudeAPI
+    TagAgent & NavAgent & GradeAgent & ChatAgent --> DeepSeekAPI
     NotifySvc --> SMTP
 ```
 
@@ -118,7 +120,7 @@ graph TB
 | 客户端层 | Vue 3 SPA | 渲染、路由、状态管理，统一通过 API Gateway 访问后端 |
 | 接入层 | API Gateway + CDN | 统一入口：HTTPS 终止、JWT 预校验、路由转发、全局限流；CDN 分发静态资源和视频 |
 | 服务治理 | Nacos | 服务注册与发现、健康检查、分布式配置中心 |
-| 微服务层 | 8 个业务服务 + 5 个 AI 智能体服务 | 各服务职责单一，独立部署，通过 Kafka 事件总线异步协作 |
+| 微服务层 | 7 个业务微服务 + 5 个 AI 智能体服务 | 各服务职责单一，独立部署，通过 Kafka 事件总线异步协作 |
 | 消息层 | Apache Kafka | 服务间异步解耦，保证事件可靠投递，支持重放 |
 | 数据层 | 各服务独立数据库 + 共享 Redis + MinIO | 数据按服务边界隔离，禁止跨服务直接访问数据库 |
 
@@ -187,13 +189,13 @@ graph TB
 |------|------|------|
 | Python | 3.12 | 运行时 |
 | FastAPI | 0.111+ | 异步 Web 框架 |
-| Anthropic SDK | latest | 调用 Claude API（claude-sonnet-4-6） |
+| OpenAI SDK | latest | 调用 DeepSeek API（deepseek-chat），兼容 OpenAI API 格式 |
 | OpenAI SDK | latest | 调用 OpenAI Embedding API（text-embedding-3-small），用于 tag-agent / nav-agent 向量生成 |
 | aiokafka | — | 异步 Kafka 消费者 |
 | pgvector + asyncpg | — | 向量数据库异步访问 |
 | PyMuPDF / python-pptx | — | 文档内容解析 |
 
-> **嵌入模型说明**：向量生成使用 OpenAI `text-embedding-3-small`（1536 维），与 Claude API 并列为外部依赖。OpenAI API Key 通过 K8s Secret 注入 tag-agent 和 nav-agent，不写入代码或配置文件（与 Claude API Key 管理方式一致，详见第 8.7 节）。
+> **嵌入模型说明**：向量生成使用 OpenAI `text-embedding-3-small`（1536 维）。DeepSeek API Key 通过 K8s Secret 注入 tag-agent、nav-agent、grade-agent、chat-agent 和 analysis-agent，不写入代码或配置文件（与 OpenAI Embedding API Key 管理方式一致，详见第 8.7 节）。
 
 ### 2.5 消息层
 
@@ -680,7 +682,7 @@ erDiagram
     }
 ```
 
-> **嵌入策略**：使用 OpenAI `text-embedding-3-small` 模型（1536 维）生成向量，通过 pgvector 的 `ivfflat` 索引加速近邻检索（`lists=100`）。知识点嵌入在知识点创建/更新时由 tag-agent 生成并写入；资源嵌入在 `resource.tagged` 事件后由 tag-agent 生成并写入。nav-agent 在路线生成时通过向量相似度检索与薄弱知识点最相关的资源片段，作为候选集传入 Claude 排序。
+> **嵌入策略**：使用 OpenAI `text-embedding-3-small` 模型（1536 维）生成向量，通过 pgvector 的 `ivfflat` 索引加速近邻检索（`lists=100`）。知识点嵌入在知识点创建/更新时由 tag-agent 生成并写入；资源嵌入在 `resource.tagged` 事件后由 tag-agent 生成并写入。nav-agent 在路线生成时通过向量相似度检索与薄弱知识点最相关的资源片段，作为候选集传入 DeepSeek 排序。
 
 ### 4.3 关键约束与索引
 
@@ -1042,7 +1044,7 @@ sequenceDiagram
     participant Kafka as Kafka
     participant NavAgent as nav-agent
     participant CourseSvc as course-service
-    participant Claude as Claude API
+    participant DeepSeek as DeepSeek API
     participant Redis as Redis Cluster
     participant NotifySvc as notify-service
 
@@ -1050,8 +1052,8 @@ sequenceDiagram
     Kafka->>NavAgent: 消费事件
     NavAgent->>LearnSvc: Feign 查询 ability_map（掌握程度 < MASTERED）
     NavAgent->>CourseSvc: Feign 查询覆盖薄弱知识点的候选资源片段
-    NavAgent->>Claude: 发送排序 Prompt（候选资源 + 能力图谱）
-    Claude-->>NavAgent: 返回推荐序列 JSON
+    NavAgent->>DeepSeek: 发送排序 Prompt（候选资源 + 能力图谱）
+    DeepSeek-->>NavAgent: 返回推荐序列 JSON
     NavAgent->>LearnSvc: Feign 写入 learning_paths 表
     NavAgent->>Redis: 更新 learning_path:{student_id} 缓存（TTL 24h）
     NavAgent->>Kafka: 发布 learning-path.generated {student_id}
@@ -1080,7 +1082,7 @@ stateDiagram-v2
 
 1. 学生提交作业，assign-service 写入 DB，发布 `submission.created` 到 Kafka
 2. grade-agent 消费事件，从 MinIO 下载附件（如有），提取文本
-3. 调用 Claude API 批改，超时设置：简单作业 60s，复杂作业 300s
+3. 调用 DeepSeek API 批改，超时设置：简单作业 60s，复杂作业 300s
 4. 批改成功：发布 `submission.graded` 事件，assign-service 更新状态，notify-service 通知师生
 5. 批改失败（重试 2 次后）：发布 `submission.grading-failed` 事件，置 `PENDING_MANUAL`，通知教师
 
@@ -1143,7 +1145,7 @@ graph TB
         AnalysisAgent["analysis-agent\n数据分析智能体"]
     end
 
-    ClaudeAPI["Claude API\nclaude-sonnet-4-6"]
+    DeepSeekAPI["DeepSeek API\ndeepseek-chat"]
 
     CourseSvc --> T1
     LearnSvc --> T2
@@ -1155,7 +1157,7 @@ graph TB
     T3 --> GradeAgent
     T4 --> AnalysisAgent
 
-    TagAgent & NavAgent & GradeAgent & ChatAgent & AnalysisAgent --> ClaudeAPI
+    TagAgent & NavAgent & GradeAgent & ChatAgent & AnalysisAgent --> DeepSeekAPI
 ```
 
 所有 AI 智能体服务均为独立微服务，注册到 Nacos，可独立扩缩容。chat-agent 通过 API Gateway 同步路由，其余智能体通过 Kafka 异步驱动。
@@ -1174,8 +1176,8 @@ graph TB
 
 处理：
   1. 从 MinIO 下载文件，解析文本（PyMuPDF / python-pptx / VTT）
-  2. 构建 Prompt，要求 Claude 仅从分类树中匹配知识点（防幻觉）
-  3. Claude 返回 JSON：[{knowledge_point_id, name, confidence}]
+  2. 构建 Prompt，要求 DeepSeek 仅从分类树中匹配知识点（防幻觉）
+  3. DeepSeek 返回 JSON：[{knowledge_point_id, name, confidence}]
   4. Feign 调用 course-service 写入 resource_knowledge（confirmed=false）
 
 输出：
@@ -1203,8 +1205,8 @@ graph TB
      召回 Top-K 相关资源片段（K=20），作为候选集
   3. Feign 补充（兜底）：若向量检索结果不足 5 条（如知识点嵌入尚未生成），
      降级为 Feign 调用 course-service 按知识点 ID 直接查询覆盖该知识点的资源片段
-  4. 调用 Claude 对候选资源排序，生成推荐序列
-  5. Claude 返回 JSON：[{resource_id, knowledge_point_id, reason, priority}]
+  4. 调用 DeepSeek 对候选资源排序，生成推荐序列
+  5. DeepSeek 返回 JSON：[{resource_id, knowledge_point_id, reason, priority}]
   6. Feign 调用 learn-service 写入 learning_paths 表
   7. 更新 Redis 缓存 learning_path:{student_id}（TTL 24h）
 
@@ -1213,7 +1215,7 @@ graph TB
   - 发布 learning-path.generated 事件，notify-service 推送 WebSocket 通知
 ```
 
-**跨课程推荐逻辑**：同一知识点可能有多个课程的资源片段覆盖，Claude 根据资源描述、标题、知识点置信度综合排序，选出最优片段，不限定来源课程。
+**跨课程推荐逻辑**：同一知识点可能有多个课程的资源片段覆盖，DeepSeek 根据资源描述、标题、知识点置信度综合排序，选出最优片段，不限定来源课程。
 
 ### 7.4 grade-agent（作业批改智能体）
 
@@ -1231,8 +1233,8 @@ graph TB
   1. 解析提交内容（文字直接使用，文件用 PyMuPDF 提取文本）
   2. 判断作业复杂度：提交文字字数 ≤ 1000 字且无附件 → 简单作业（超时 60s）；提交文字字数 > 1000 字或含附件 → 复杂作业（超时 300s）
   3. 构建批改 Prompt，包含评分标准和提交内容
-  4. 调用 Claude 生成评分和评语
-  5. Claude 返回 JSON：{score, feedback, strengths, weaknesses}
+  4. 调用 DeepSeek 生成评分和评语
+  5. DeepSeek 返回 JSON：{score, feedback, strengths, weaknesses}
   6. Feign 调用 assign-service 更新 submission（ai_score, ai_feedback, status=AI_GRADED）
 
 输出：
@@ -1240,7 +1242,7 @@ graph TB
   - 发布 submission.graded 事件，notify-service 通知师生
 ```
 
-**异常处理**：超时或 Claude 调用失败时重试 2 次，仍失败则发布 `submission.grading-failed` 事件，assign-service 置 `PENDING_MANUAL`，通知教师人工批改，不向学生展示任何评分。
+**异常处理**：超时或 DeepSeek 调用失败时重试 2 次，仍失败则发布 `submission.grading-failed` 事件，assign-service 置 `PENDING_MANUAL`，通知教师人工批改，不向学生展示任何评分。
 
 ### 7.5 chat-agent（AI 智能助手）
 
@@ -1258,7 +1260,7 @@ graph TB
   1. 从本地 DB 加载历史消息（按 Token 数动态截断，上限 8000 tokens，优先保留最近消息，确保不超过模型上下文限制）
   2. 若历史消息因截断导致早期内容被丢弃，在 SSE 响应头中附加 `X-Context-Truncated: true`，前端展示提示"早期对话内容已超出上下文限制，如需参考请重新开启会话"
   3. 构建对话 Prompt（含课程上下文）
-  4. 调用 Claude API（流式模式）
+  4. 调用 DeepSeek API（流式模式）
   5. 实时将 token 通过 SSE 推送给客户端
   6. 完整响应写入 chat_messages 表
 
@@ -1357,7 +1359,7 @@ chat-agent 维护自己的 chat-db（PostgreSQL），存储会话和消息记录
 ### 8.7 分布式安全补充
 
 - **服务间信任**：集群内服务间通信通过 K8s NetworkPolicy 白名单控制，仅允许已知服务互访
-- **配置安全**：数据库密码、Claude API Key 等敏感配置通过 K8s Secret 注入，不写入代码或配置文件
+- **配置安全**：数据库密码、DeepSeek API Key 等敏感配置通过 K8s Secret 注入，不写入代码或配置文件
 - **Kafka 安全**：生产环境启用 SASL/SCRAM 认证，各服务使用独立账号，按 Topic 授权读写权限
 
 
@@ -1471,7 +1473,7 @@ graph TB
     end
 
     subgraph External["外部服务"]
-        Claude["Claude API"]
+        DeepSeek["DeepSeek API"]
         SMTP["SMTP"]
     end
 
@@ -1501,7 +1503,7 @@ graph TB
     MediaDep --> MinioSS
     TagDep & GradeDep --> MinioSS
 
-    AINS --> Claude
+    AINS --> DeepSeek
     NotifyDep --> SMTP
 ```
 
@@ -1601,7 +1603,7 @@ sequenceDiagram
     participant MinIO as MinIO 集群
     participant Kafka as Kafka
     participant TagAgent as tag-agent
-    participant Claude as Claude API
+    participant DeepSeek as DeepSeek API
     participant Notify as notify-service
 
     Teacher->>GW: 上传资源文件（tus 断点续传）
@@ -1614,8 +1616,8 @@ sequenceDiagram
     TagAgent->>MinIO: 下载文件内容
     TagAgent->>TagAgent: 提取文本（PyMuPDF / python-pptx / VTT）
     TagAgent->>Course: Feign 查询知识点分类树（Redis 缓存 1h）
-    TagAgent->>Claude: 发送分析 Prompt（文本 + 分类树）
-    Claude-->>TagAgent: 返回建议标签 JSON
+    TagAgent->>DeepSeek: 发送分析 Prompt（文本 + 分类树）
+    DeepSeek-->>TagAgent: 返回建议标签 JSON
     TagAgent->>Course: Feign 写入 resource_knowledge（confirmed=false）
     TagAgent->>Kafka: 发布 resource.tagged {resource_id}
 
@@ -1640,7 +1642,7 @@ sequenceDiagram
     participant Kafka as Kafka
     participant NavAgent as nav-agent
     participant Course as course-service
-    participant Claude as Claude API
+    participant DeepSeek as DeepSeek API
     participant Redis as Redis Cluster
     participant Notify as notify-service
 
@@ -1661,8 +1663,8 @@ sequenceDiagram
     Kafka->>NavAgent: 消费 ability.updated
     NavAgent->>Learn: Feign 查询 ability_map（mastery < MASTERED）
     NavAgent->>Course: Feign 查询覆盖薄弱知识点的候选资源片段
-    NavAgent->>Claude: 发送排序 Prompt
-    Claude-->>NavAgent: 返回推荐序列 JSON
+    NavAgent->>DeepSeek: 发送排序 Prompt
+    DeepSeek-->>NavAgent: 返回推荐序列 JSON
     NavAgent->>Learn: Feign 写入 learning_paths 表
     NavAgent->>Redis: 更新 learning_path:{student_id} 缓存（TTL 24h）
     NavAgent->>Kafka: 发布 learning-path.generated {student_id}
@@ -1682,7 +1684,7 @@ sequenceDiagram
     participant Kafka as Kafka
     participant GradeAgent as grade-agent
     participant MinIO as MinIO 集群
-    participant Claude as Claude API
+    participant DeepSeek as DeepSeek API
     participant Notify as notify-service
 
     Student->>GW: POST /assignments/{id}/submit {content / file}
@@ -1697,8 +1699,8 @@ sequenceDiagram
         GradeAgent->>MinIO: 下载附件，提取文本
     end
     GradeAgent->>Assign: Feign 更新 status=AI_GRADING
-    GradeAgent->>Claude: 发送批改 Prompt（评分标准 + 提交内容）
-    Claude-->>GradeAgent: 返回 {score, feedback, strengths, weaknesses}
+    GradeAgent->>DeepSeek: 发送批改 Prompt（评分标准 + 提交内容）
+    DeepSeek-->>GradeAgent: 返回 {score, feedback, strengths, weaknesses}
     GradeAgent->>Assign: Feign 更新 submission（ai_score, ai_feedback, status=AI_GRADED）
     GradeAgent->>Kafka: 发布 submission.graded {submission_id, student_id, teacher_id}
 
@@ -1963,7 +1965,7 @@ event/       producer/ ResourceUploadedProducer.java
 {agent-name}/
 ├── main.py                         # FastAPI 入口（chat-agent）或 Kafka 消费入口
 ├── agent/
-│   └── {agent_name}.py             # 核心智能体逻辑（Claude API 调用）
+│   └── {agent_name}.py             # 核心智能体逻辑（DeepSeek API 调用）
 ├── consumer/
 │   └── kafka_consumer.py           # aiokafka 异步消费者（非 chat-agent）
 ├── client/
@@ -1974,7 +1976,7 @@ event/       producer/ ResourceUploadedProducer.java
 │   ├── pptx_parser.py              # python-pptx 解析
 │   └── vtt_parser.py               # 视频字幕解析
 ├── utils/
-│   ├── claude_client.py            # Anthropic SDK 封装（含重试、超时）
+│   ├── deepseek_client.py            # OpenAI SDK 封装（含重试、超时），兼容 DeepSeek API
 │   └── prompt_builder.py           # Prompt 模板管理
 ├── config.py                       # 环境变量配置（从 Nacos 或 K8s Secret 读取）
 ├── requirements.txt
@@ -2034,19 +2036,19 @@ course-service-prod.yaml
 
 # AI 智能体配置
 tag-agent-prod.yaml
-  - claude.api-key: <从 K8s Secret 注入，不写入 Nacos>
+  - deepseek.api-key: <从 K8s Secret 注入，不写入 Nacos>
   - vector-db.url: postgresql://vector-db:5432/vector
 
 chat-agent-prod.yaml
-  - claude.api-key: <从 K8s Secret 注入，不写入 Nacos>
+  - deepseek.api-key: <从 K8s Secret 注入，不写入 Nacos>
   - chat-db.url: postgresql://chat-db:5432/chat
 
 analysis-agent-prod.yaml
-  - claude.api-key: <从 K8s Secret 注入，不写入 Nacos>
+  - deepseek.api-key: <从 K8s Secret 注入，不写入 Nacos>
   - analysis-db.url: postgresql://analysis-db:5432/analysis
 ```
 
-> 敏感配置（数据库密码、Claude API Key）通过 K8s Secret 以环境变量形式注入，不存储在 Nacos。
+> 敏感配置（数据库密码、DeepSeek API Key）通过 K8s Secret 以环境变量形式注入，不存储在 Nacos。
 
 
 ---
@@ -2142,7 +2144,7 @@ sequenceDiagram
 | user-service → learn-service | 失败率 > 50% | 返回空档案，提示"学习数据暂时不可用" |
 | nav-agent → course-service | 失败率 > 50% | 暂停路线生成，保留旧路线 |
 | grade-agent → assign-service | 失败率 > 50% | 发布 grading-failed 事件，转人工批改 |
-| 任意服务 → Claude API | 超时 > 10s | 重试 2 次，仍失败则走降级流程 |
+| 任意服务 → DeepSeek API | 超时 > 10s | 重试 2 次，仍失败则走降级流程 |
 
 熔断器状态：`CLOSED`（正常）→ `OPEN`（熔断，快速失败）→ `HALF_OPEN`（探测恢复）→ `CLOSED`。
 
