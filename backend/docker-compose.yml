@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # PostgreSQL for auth-service
+  auth-db:
+    image: postgres:16
+    container_name: auth-db
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL for user-service
+  user-db:
+    image: postgres:16
+    container_name: user-db
+    environment:
+      POSTGRES_DB: user_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - user-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka (optional for now)
+  # zookeeper:
+  #   image: confluentinc/cp-zookeeper:7.5.0
+  #   container_name: zookeeper
+  #   environment:
+  #     ZOOKEEPER_CLIENT_PORT: 2181
+  #     ZOOKEEPER_TICK_TIME: 2000
+  #   ports:
+  #     - "2181:2181"
+
+  # kafka:
+  #   image: confluentinc/cp-kafka:7.5.0
+  #   container_name: kafka
+  #   depends_on:
+  #     - zookeeper
+  #   ports:
+  #     - "9092:9092"
+  #   environment:
+  #     KAFKA_BROKER_ID: 1
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  # Nacos (optional for now)
+  # nacos:
+  #   image: nacos/nacos-server:v2.3.0
+  #   container_name: nacos
+  #   environment:
+  #     MODE: standalone
+  #   ports:
+  #     - "8848:8848"
+  #     - "9848:9848"
+
+volumes:
+  auth-db-data:
+  user-db-data:
+  redis-data:

@@ -1,0 +1,171 @@
+package com.cloudteachingai.auth.service;
+
+import com.cloudteachingai.auth.dto.LoginRequest;
+import com.cloudteachingai.auth.dto.LoginResponse;
+import com.cloudteachingai.auth.entity.AuthCredential;
+import com.cloudteachingai.auth.entity.RefreshToken;
+import com.cloudteachingai.auth.exception.BusinessException;
+import com.cloudteachingai.auth.repository.AuthCredentialRepository;
+import com.cloudteachingai.auth.repository.RefreshTokenRepository;
+import com.cloudteachingai.auth.util.JwtUtil;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AuthService {
+
+    private final AuthCredentialRepository authCredentialRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final StringRedisTemplate redisTemplate;
+    private final JwtUtil jwtUtil;
+    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder(12);
+
+    private static final String LOGIN_FAIL_KEY_PREFIX = "login_fail:";
+    private static final String TOKEN_BLACKLIST_PREFIX = "token_blacklist:";
+    private static final int MAX_LOGIN_ATTEMPTS = 5;
+    private static final int LOCK_DURATION_MINUTES = 15;
+
+    @Transactional
+    public LoginResponse login(LoginRequest request) {
+        String email = request.getEmail();
+
+        // Check login failure count in Redis
+        String failKey = LOGIN_FAIL_KEY_PREFIX + email;
+        String failCountStr = redisTemplate.opsForValue().get(failKey);
+        int failCount = failCountStr != null ? Integer.parseInt(failCountStr) : 0;
+
+        if (failCount >= MAX_LOGIN_ATTEMPTS) {
+            throw BusinessException.forbidden("账号已锁定，请 15 分钟后重试");
+        }
+
+        // Find user credentials
+        AuthCredential credential = authCredentialRepository.findByEmail(email)
+                .orElseThrow(() -> BusinessException.unauthorized("用户名或密码错误"));
+
+        // Check if account is locked
+        if (credential.isLocked()) {
+            throw BusinessException.forbidden("账号已锁定，请稍后重试");
+        }
+
+        // Verify password
+        if (!passwordEncoder.matches(request.getPassword(), credential.getPasswordHash())) {
+            // Increment fail count
+            redisTemplate.opsForValue().increment(failKey);
+            redisTemplate.expire(failKey, LOCK_DURATION_MINUTES, TimeUnit.MINUTES);
+
+            credential.incrementFailCount();
+            authCredentialRepository.save(credential);
+
+            throw BusinessException.unauthorized("用户名或密码错误");
+        }
+
+        // Login successful - reset fail count
+        redisTemplate.delete(failKey);
+        credential.resetFailCount();
+        credential.setLastLoginAt(LocalDateTime.now());
+        authCredentialRepository.save(credential);
+
+        // Get user role from user-service (for now, we'll use a placeholder)
+        String role = getUserRole(credential.getUserId());
+
+        // Generate tokens
+        String accessToken = jwtUtil.generateAccessToken(credential.getUserId(), role);
+        String refreshTokenId = UUID.randomUUID().toString();
+
+        // Save refresh token to database
+        RefreshToken refreshToken = RefreshToken.builder()
+                .tokenId(refreshTokenId)
+                .userId(credential.getUserId())
+                .expiresAt(LocalDateTime.now().plusDays(7))
+                .revoked(false)
+                .build();
+        refreshTokenRepository.save(refreshToken);
+
+        // Publish login event to Kafka (for analysis-agent)
+        publishLoginEvent(credential.getUserId(), email, true);
+
+        return LoginResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshTokenId)
+                .role(role)
+                .userId(credential.getUserId())
+                .build();
+    }
+
+    @Transactional
+    public void logout(String accessToken, String refreshTokenId) {
+        // Add access token to blacklist
+        Long userId = jwtUtil.getUserIdFromToken(accessToken);
+        String blacklistKey = TOKEN_BLACKLIST_PREFIX + accessToken;
+        redisTemplate.opsForValue().set(blacklistKey, "1", 2, TimeUnit.HOURS);
+
+        // Revoke refresh token
+        refreshTokenRepository.findByTokenIdAndRevokedFalse(refreshTokenId)
+                .ifPresent(token -> {
+                    token.setRevoked(true);
+                    refreshTokenRepository.save(token);
+                });
+    }
+
+    @Transactional
+    public LoginResponse refreshToken(String refreshTokenId) {
+        RefreshToken refreshToken = refreshTokenRepository.findByTokenIdAndRevokedFalse(refreshTokenId)
+                .orElseThrow(() -> BusinessException.unauthorized("无效的 refresh token"));
+
+        if (!refreshToken.isValid()) {
+            throw BusinessException.unauthorized("refresh token 已过期或已被吊销");
+        }
+
+        // Get user role
+        String role = getUserRole(refreshToken.getUserId());
+
+        // Generate new access token
+        String accessToken = jwtUtil.generateAccessToken(refreshToken.getUserId(), role);
+
+        return LoginResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshTokenId)
+                .role(role)
+                .userId(refreshToken.getUserId())
+                .build();
+    }
+
+    @Transactional
+    public void createCredential(Long userId, String email, String password) {
+        if (authCredentialRepository.existsByEmail(email)) {
+            throw BusinessException.conflict("邮箱已被注册");
+        }
+
+        String passwordHash = passwordEncoder.encode(password);
+
+        AuthCredential credential = AuthCredential.builder()
+                .userId(userId)
+                .email(email)
+                .passwordHash(passwordHash)
+                .loginFailCount(0)
+                .build();
+
+        authCredentialRepository.save(credential);
+    }
+
+    private String getUserRole(Long userId) {
+        // TODO: Call user-service via Feign to get user role
+        // For now, return a placeholder
+        return "STUDENT";
+    }
+
+    private void publishLoginEvent(Long userId, String email, boolean success) {
+        // TODO: Publish to Kafka topic "login.event"
+        log.info("Login event: userId={}, email={}, success={}", userId, email, success);
+    }
+}

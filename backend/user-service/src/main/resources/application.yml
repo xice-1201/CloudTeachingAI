@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: user-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/user_db
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+server:
+  port: 8002
+
+cloud:
+  nacos:
+    discovery:
+      server-addr: localhost:8848
+      namespace: dev
+    config:
+      server-addr: localhost:8848
+      namespace: dev
+      file-extension: yaml
+
+logging:
+  level:
+    com.cloudteachingai: DEBUG
+    org.springframework.web: INFO
