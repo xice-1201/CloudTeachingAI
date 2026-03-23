@@ -67,11 +67,7 @@
           </el-breadcrumb>
         </div>
         <div class="header-right">
-          <el-badge :value="notifyStore.unreadCount" :hidden="notifyStore.unreadCount === 0" class="notify-badge">
-            <el-button circle text @click="$router.push('/notifications')">
-              <el-icon size="20"><Bell /></el-icon>
-            </el-button>
-          </el-badge>
+          <NotificationBell />
           <el-dropdown @command="handleCommand">
             <div class="user-info">
               <el-avatar :size="32" :src="userStore.user?.avatar">
@@ -102,6 +98,7 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import { useNotifyStore } from '@/store/notify'
+import NotificationBell from '@/components/NotificationBell.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -187,9 +184,6 @@ onUnmounted(() => {
   gap: 16px;
 }
 
-.notify-badge {
-  cursor: pointer;
-}
 
 .user-info {
   display: flex;

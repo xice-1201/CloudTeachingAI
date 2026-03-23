@@ -8,11 +8,11 @@ export const authApi = {
   logout: (): Promise<void> =>
     request.post('/auth/logout'),
 
-  refreshToken: (): Promise<{ token: string }> =>
-    request.post('/auth/refresh'),
+  refreshToken: (refreshToken: string): Promise<{ token: string; refreshToken?: string }> =>
+    request.post('/auth/refresh', { refreshToken }),
 
   sendResetEmail: (email: string): Promise<void> =>
-    request.post('/auth/password/reset-email', { email }),
+    request.post('/auth/password/reset-request', { email }),
 
   resetPassword: (token: string, newPassword: string): Promise<void> =>
     request.post('/auth/password/reset', { token, newPassword }),
