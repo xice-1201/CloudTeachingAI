@@ -5,11 +5,11 @@ export const authApi = {
   login: (data: LoginRequest): Promise<LoginResponse> =>
     request.post('/auth/login', data),
 
-  logout: (): Promise<void> =>
-    request.post('/auth/logout'),
+  logout: (refreshToken: string): Promise<void> =>
+    request.post(`/auth/logout?refreshToken=${encodeURIComponent(refreshToken)}`),
 
-  refreshToken: (refreshToken: string): Promise<{ token: string; refreshToken?: string }> =>
-    request.post('/auth/refresh', { refreshToken }),
+  refreshToken: (refreshToken: string): Promise<LoginResponse> =>
+    request.post(`/auth/refresh?refreshToken=${encodeURIComponent(refreshToken)}`),
 
   sendResetEmail: (email: string): Promise<void> =>
     request.post('/auth/password/reset-request', { email }),

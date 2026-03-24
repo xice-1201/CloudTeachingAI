@@ -78,18 +78,21 @@ request.interceptors.response.use(
             throw new Error('No refresh token')
           }
 
-          const { data: newToken } = await axios.post(
-            `${request.defaults.baseURL}/auth/refresh`,
-            { refreshToken }
+          // 后端期望 refreshToken 作为 query param
+          const response = await axios.post(
+            `${request.defaults.baseURL}/auth/refresh?refreshToken=${encodeURIComponent(refreshToken)}`
           )
 
-          localStorage.setItem('token', newToken.token)
-          if (newToken.refreshToken) {
-            localStorage.setItem('refreshToken', newToken.refreshToken)
+          // 后端返回格式: { code: 0, message: 'success', data: { accessToken, refreshToken, role, userId, user } }
+          const { data: loginData } = response.data
+
+          localStorage.setItem('token', loginData.accessToken)
+          if (loginData.refreshToken) {
+            localStorage.setItem('refreshToken', loginData.refreshToken)
           }
 
-          onTokenRefreshed(newToken.token)
-          originalRequest.headers.Authorization = `Bearer ${newToken.token}`
+          onTokenRefreshed(loginData.accessToken)
+          originalRequest.headers.Authorization = `Bearer ${loginData.accessToken}`
           return request(originalRequest)
         } catch (refreshError) {
           // 刷新失败，清除登录态
