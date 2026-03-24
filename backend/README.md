@@ -76,7 +76,13 @@ Content-Type: application/json
     "accessToken": "eyJhbGciOiJSUzI1NiJ9...",
     "refreshToken": "uuid-string",
     "role": "STUDENT",
-    "userId": 1
+    "userId": 1,
+    "user": {
+      "id": 1,
+      "username": "测试学生",
+      "email": "student@test.com",
+      "role": "STUDENT"
+    }
   }
 }
 ```
@@ -126,6 +132,34 @@ Content-Type: application/json
 #### 获取用户信息
 ```http
 GET /api/v1/users/{id}
+```
+
+#### 获取当前用户信息
+```http
+GET /api/v1/users/me
+X-User-Id: 1
+```
+
+#### 更新用户资料
+```http
+PUT /api/v1/users/me
+X-User-Id: 1
+Content-Type: application/json
+
+{
+  "username": "新用户名",
+  "avatar": "https://example.com/avatar.png"
+}
+```
+
+#### 获取学生列表
+```http
+GET /api/v1/users/students?keyword=张三&page=1&pageSize=20
+```
+
+#### 获取教师列表
+```http
+GET /api/v1/users/teachers?keyword=李&page=1&pageSize=20
 ```
 
 ## 数据库结构
