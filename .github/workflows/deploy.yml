@@ -31,6 +31,27 @@ jobs:
             echo "=== 开始部署 CloudTeachingAI ==="
             echo "时间: $(date)"
 
+            # 检测容器运行时 (Docker 或 Podman)
+            if command -v podman &> /dev/null; then
+              echo "检测到 Podman 运行时"
+              CONTAINER_CMD="podman"
+              # 检查 podman-compose 或 docker-compose
+              if command -v podman-compose &> /dev/null; then
+                COMPOSE_CMD="podman-compose"
+              else
+                COMPOSE_CMD="docker-compose"
+              fi
+            else
+              echo "使用 Docker 运行时"
+              CONTAINER_CMD="docker"
+              COMPOSE_CMD="docker-compose"
+            fi
+
+            # 启用 Podman Docker 兼容模式
+            if [ "$CONTAINER_CMD" = "podman" ]; then
+              export DOCKER_HOST=unix:///run/podman/podman.sock
+            fi
+
             # 创建部署目录
             mkdir -p ${{ env.DEPLOY_PATH }}
             cd ${{ env.DEPLOY_PATH }}
@@ -38,7 +59,7 @@ jobs:
             # 检查 Git 是否已初始化
             if [ -d .git ]; then
               echo "拉取最新代码..."
-              git pull origin main
+              git pull origin main || git fetch origin main && git reset --hard origin/main
             else
               echo "克隆仓库..."
               git clone https://github.com/${{ github.repository }}.git .
@@ -47,63 +68,62 @@ jobs:
             # 检出当前提交
             git checkout ${{ github.sha }}
 
-            # 创建 .env 文件（如果不存在）
-            if [ ! -f .env ]; then
-              echo "创建 .env 文件..."
-              cat > .env << 'ENVEOF'
+            # 创建 .env 文件
+            echo "创建 .env 文件..."
+            cat > .env << 'ENVEOF'
             DB_USER=postgres
             DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
             JWT_PRIVATE_KEY="${{ secrets.JWT_PRIVATE_KEY }}"
             JWT_PUBLIC_KEY="${{ secrets.JWT_PUBLIC_KEY }}"
             ENVEOF
-              echo ".env 文件已创建"
-            fi
 
             # 停止旧容器
             echo "停止旧容器..."
-            docker-compose -f docker-compose.prod.yml down --remove-orphans || true
+            $COMPOSE_CMD -f docker-compose.prod.yml down --remove-orphans || true
 
             # 构建并启动新容器
             echo "构建并启动新容器..."
-            docker-compose -f docker-compose.prod.yml build --no-cache
-            docker-compose -f docker-compose.prod.yml up -d
+            $COMPOSE_CMD -f docker-compose.prod.yml build --no-cache
+            $COMPOSE_CMD -f docker-compose.prod.yml up -d
 
             # 等待服务启动
             echo "等待服务启动..."
-            sleep 15
+            sleep 20
 
             # 检查服务状态
             echo "=== 服务状态 ==="
-            docker-compose -f docker-compose.prod.yml ps
+            $COMPOSE_CMD -f docker-compose.prod.yml ps
 
             # 健康检查
             echo "=== 健康检查 ==="
 
             # 检查 auth-service
-            if curl -sf http://localhost:8001/api/v1/auth/login -X POST -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1; then
+            if curl -sf http://localhost:8001/actuator/health > /dev/null 2>&1; then
               echo "✓ auth-service 运行正常"
             else
-              echo "⚠ auth-service 可能未完全启动"
+              echo "⚠ auth-service 可能未完全启动，查看日志..."
+              $COMPOSE_CMD -f docker-compose.prod.yml logs --tail=30 auth-service
             fi
 
             # 检查 user-service
-            if curl -sf http://localhost:8002/api/v1/users/1 > /dev/null 2>&1; then
+            if curl -sf http://localhost:8002/actuator/health > /dev/null 2>&1; then
               echo "✓ user-service 运行正常"
             else
-              echo "⚠ user-service 可能未完全启动"
+              echo "⚠ user-service 可能未完全启动，查看日志..."
+              $COMPOSE_CMD -f docker-compose.prod.yml logs --tail=30 user-service
             fi
 
             # 检查前端
             if curl -sf http://localhost:3000 > /dev/null 2>&1; then
               echo "✓ frontend 运行正常"
             else
-              echo "⚠ frontend 可能未完全启动"
+              echo "⚠ frontend 可能未完全启动，查看日志..."
+              $COMPOSE_CMD -f docker-compose.prod.yml logs --tail=30 frontend
             fi
 
             # 清理旧镜像
             echo "清理旧镜像..."
-            docker image prune -af --filter "until=24h"
+            $CONTAINER_CMD image prune -af --filter "until=24h" || true
 
             echo ""
             echo "=== 部署完成 ==="
