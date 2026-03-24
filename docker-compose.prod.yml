@@ -61,7 +61,7 @@ services:
 
   # auth-service
   auth-service:
-    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${NAMESPACE:-cloudteachingai}/auth-service:latest
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/auth-service:latest
     container_name: auth-service
     restart: unless-stopped
     depends_on:
@@ -91,7 +91,7 @@ services:
 
   # user-service
   user-service:
-    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${NAMESPACE:-cloudteachingai}/user-service:latest
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/user-service:latest
     container_name: user-service
     restart: unless-stopped
     depends_on:
@@ -117,7 +117,7 @@ services:
 
   # frontend
   frontend:
-    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${NAMESPACE:-cloudteachingai}/frontend:latest
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/frontend:latest
     container_name: frontend
     restart: unless-stopped
     depends_on:
