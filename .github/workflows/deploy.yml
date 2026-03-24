@@ -1,0 +1,112 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DEPLOY_PATH: /opt/cloudteachingai
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+
+            echo "=== 开始部署 CloudTeachingAI ==="
+            echo "时间: $(date)"
+
+            # 创建部署目录
+            mkdir -p ${{ env.DEPLOY_PATH }}
+            cd ${{ env.DEPLOY_PATH }}
+
+            # 检查 Git 是否已初始化
+            if [ -d .git ]; then
+              echo "拉取最新代码..."
+              git pull origin main
+            else
+              echo "克隆仓库..."
+              git clone https://github.com/${{ github.repository }}.git .
+            fi
+
+            # 检出当前提交
+            git checkout ${{ github.sha }}
+
+            # 创建 .env 文件（如果不存在）
+            if [ ! -f .env ]; then
+              echo "创建 .env 文件..."
+              cat > .env << 'ENVEOF'
+            DB_USER=postgres
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
+            JWT_PRIVATE_KEY="${{ secrets.JWT_PRIVATE_KEY }}"
+            JWT_PUBLIC_KEY="${{ secrets.JWT_PUBLIC_KEY }}"
+            ENVEOF
+              echo ".env 文件已创建"
+            fi
+
+            # 停止旧容器
+            echo "停止旧容器..."
+            docker-compose -f docker-compose.prod.yml down --remove-orphans || true
+
+            # 构建并启动新容器
+            echo "构建并启动新容器..."
+            docker-compose -f docker-compose.prod.yml build --no-cache
+            docker-compose -f docker-compose.prod.yml up -d
+
+            # 等待服务启动
+            echo "等待服务启动..."
+            sleep 15
+
+            # 检查服务状态
+            echo "=== 服务状态 ==="
+            docker-compose -f docker-compose.prod.yml ps
+
+            # 健康检查
+            echo "=== 健康检查 ==="
+
+            # 检查 auth-service
+            if curl -sf http://localhost:8001/api/v1/auth/login -X POST -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1; then
+              echo "✓ auth-service 运行正常"
+            else
+              echo "⚠ auth-service 可能未完全启动"
+            fi
+
+            # 检查 user-service
+            if curl -sf http://localhost:8002/api/v1/users/1 > /dev/null 2>&1; then
+              echo "✓ user-service 运行正常"
+            else
+              echo "⚠ user-service 可能未完全启动"
+            fi
+
+            # 检查前端
+            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+              echo "✓ frontend 运行正常"
+            else
+              echo "⚠ frontend 可能未完全启动"
+            fi
+
+            # 清理旧镜像
+            echo "清理旧镜像..."
+            docker image prune -af --filter "until=24h"
+
+            echo ""
+            echo "=== 部署完成 ==="
+            echo "前端地址: http://${{ secrets.SERVER_HOST }}:3000"
+            echo "auth-service: http://${{ secrets.SERVER_HOST }}:8001"
+            echo "user-service: http://${{ secrets.SERVER_HOST }}:8002"
