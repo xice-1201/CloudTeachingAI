@@ -2,7 +2,6 @@ package com.cloudteachingai.auth.util;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,20 +61,20 @@ public class JwtUtil {
         claims.put("role", role);
 
         return Jwts.builder()
-                .setClaims(claims)
-                .setSubject(userId.toString())
-                .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + accessTokenExpiration))
-                .signWith(privateKey, SignatureAlgorithm.RS256)
+                .claims(claims)
+                .subject(userId.toString())
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + accessTokenExpiration))
+                .signWith(privateKey)
                 .compact();
     }
 
     public Claims parseToken(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(publicKey)
+        return Jwts.parser()
+                .verifyWith(publicKey)
                 .build()
-                .parseClaimsJws(token)
-                .getBody();
+                .parseSignedClaims(token)
+                .getPayload();
     }
 
     public boolean validateToken(String token) {

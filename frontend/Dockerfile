@@ -3,9 +3,12 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# 配置 npm 使用淘宝镜像
+RUN npm config set registry https://registry.npmmirror.com
+
 # 复制 package 文件并安装依赖
 COPY package*.json ./
-RUN npm ci
+RUN npm ci || npm install
 
 # 复制源代码并构建
 COPY . .
