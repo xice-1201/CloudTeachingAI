@@ -38,6 +38,9 @@ public class User {
     @Builder.Default
     private Boolean isActive = true;
 
+    @Column(name = "avatar", length = 500)
+    private String avatar;
+
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

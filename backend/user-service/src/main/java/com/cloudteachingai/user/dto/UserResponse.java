@@ -19,6 +19,7 @@ public class UserResponse {
     private String email;
     private User.UserRole role;
     private Boolean isActive;
+    private String avatar;
     private LocalDateTime createdAt;
 
     public static UserResponse from(User user) {
@@ -28,6 +29,7 @@ public class UserResponse {
                 .email(user.getEmail())
                 .role(user.getRole())
                 .isActive(user.getIsActive())
+                .avatar(user.getAvatar())
                 .createdAt(user.getCreatedAt())
                 .build();
     }

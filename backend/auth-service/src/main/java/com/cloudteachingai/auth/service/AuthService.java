@@ -1,5 +1,7 @@
 package com.cloudteachingai.auth.service;
 
+import com.cloudteachingai.auth.client.UserRoleResponse;
+import com.cloudteachingai.auth.client.UserServiceClient;
 import com.cloudteachingai.auth.dto.LoginRequest;
 import com.cloudteachingai.auth.dto.LoginResponse;
 import com.cloudteachingai.auth.entity.AuthCredential;
@@ -28,6 +30,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final StringRedisTemplate redisTemplate;
     private final JwtUtil jwtUtil;
+    private final UserServiceClient userServiceClient;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder(12);
 
     private static final String LOGIN_FAIL_KEY_PREFIX = "login_fail:";
@@ -94,11 +97,14 @@ public class AuthService {
         // Publish login event to Kafka (for analysis-agent)
         publishLoginEvent(credential.getUserId(), email, true);
 
+        LoginResponse.UserInfo userInfo = buildUserInfo(credential.getUserId(), role);
+
         return LoginResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshTokenId)
                 .role(role)
                 .userId(credential.getUserId())
+                .user(userInfo)
                 .build();
     }
 
@@ -132,11 +138,14 @@ public class AuthService {
         // Generate new access token
         String accessToken = jwtUtil.generateAccessToken(refreshToken.getUserId(), role);
 
+        LoginResponse.UserInfo userInfo = buildUserInfo(refreshToken.getUserId(), role);
+
         return LoginResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshTokenId)
                 .role(role)
                 .userId(refreshToken.getUserId())
+                .user(userInfo)
                 .build();
     }
 
@@ -159,13 +168,40 @@ public class AuthService {
     }
 
     private String getUserRole(Long userId) {
-        // TODO: Call user-service via Feign to get user role
-        // For now, return a placeholder
+        try {
+            UserRoleResponse response = userServiceClient.getUserById(userId);
+            if (response != null && response.getData() != null) {
+                return response.getData().getRole();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to get user role from user-service for userId={}, defaulting to STUDENT", userId, e);
+        }
         return "STUDENT";
+    }
+
+    private LoginResponse.UserInfo buildUserInfo(Long userId, String role) {
+        try {
+            UserRoleResponse response = userServiceClient.getUserById(userId);
+            if (response != null && response.getData() != null) {
+                UserRoleResponse.UserData data = response.getData();
+                return LoginResponse.UserInfo.builder()
+                        .id(data.getId())
+                        .username(data.getUsername())
+                        .email(data.getEmail())
+                        .role(data.getRole())
+                        .build();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to get user info from user-service for userId={}", userId, e);
+        }
+        return LoginResponse.UserInfo.builder()
+                .id(userId)
+                .role(role)
+                .build();
     }
 
     private void publishLoginEvent(Long userId, String email, boolean success) {
         // TODO: Publish to Kafka topic "login.event"
-        log.info("Login event: userId={}, email={}, success={}", userId, email, success);
+        log.info("Login event: userId={}, email=, success={}", userId, email, success);
     }
 }
