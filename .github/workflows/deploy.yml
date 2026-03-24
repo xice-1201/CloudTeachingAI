@@ -8,9 +8,59 @@ on:
 
 env:
   DEPLOY_PATH: /opt/cloudteachingai
+  REGISTRY: registry.cn-hangzhou.aliyuncs.com
+  NAMESPACE: cloudteachingai
 
 jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Aliyun Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ALIYUN_USERNAME }}
+          password: ${{ secrets.ALIYUN_PASSWORD }}
+
+      - name: Build and push auth-service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/auth-service
+          dockerfile: ./backend/auth-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/auth-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/auth-service:latest
+
+      - name: Build and push user-service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/user-service
+          dockerfile: ./backend/user-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/user-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/user-service:latest
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          dockerfile: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/frontend:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/frontend:latest
+
   deploy:
+    needs: build-and-push
     runs-on: ubuntu-latest
 
     steps:
@@ -31,99 +81,83 @@ jobs:
             echo "=== 开始部署 CloudTeachingAI ==="
             echo "时间: $(date)"
 
-            # 检测容器运行时 (Docker 或 Podman)
-            if command -v podman &> /dev/null; then
-              echo "检测到 Podman 运行时"
-              CONTAINER_CMD="podman"
-              # 检查 podman-compose 或 docker-compose
-              if command -v podman-compose &> /dev/null; then
-                COMPOSE_CMD="podman-compose"
-              else
-                COMPOSE_CMD="docker-compose"
-              fi
-            else
-              echo "使用 Docker 运行时"
-              CONTAINER_CMD="docker"
-              COMPOSE_CMD="docker-compose"
-            fi
-
-            # 启用 Podman Docker 兼容模式
-            if [ "$CONTAINER_CMD" = "podman" ]; then
-              export DOCKER_HOST=unix:///run/podman/podman.sock
-            fi
-
-            # 创建部署目录
-            mkdir -p ${{ env.DEPLOY_PATH }}
             cd ${{ env.DEPLOY_PATH }}
 
-            # 检查 Git 是否已初始化
-            if [ -d .git ]; then
-              echo "拉取最新代码..."
-              git pull origin main || git fetch origin main && git reset --hard origin/main
-            else
-              echo "克隆仓库..."
-              git clone https://github.com/${{ github.repository }}.git .
-            fi
+            # 拉取最新代码
+            git pull origin main || git fetch origin main && git reset --hard origin/main
 
-            # 检出当前提交
-            git checkout ${{ github.sha }}
+            # 登录阿里云镜像仓库
+            podman login -u '${{ secrets.ALIYUN_USERNAME }}' -p '${{ secrets.ALIYUN_PASSWORD }}' ${{ env.REGISTRY }}
+
+            # 拉取基础镜像
+            echo "拉取基础镜像..."
+            podman pull ${{ env.REGISTRY }}/library/postgres:16-alpine || podman pull docker.io/library/postgres:16-alpine || echo "使用本地镜像"
+            podman pull ${{ env.REGISTRY }}/library/redis:7-alpine || podman pull docker.io/library/redis:7-alpine || echo "使用本地镜像"
+
+            # 拉取应用镜像
+            echo "拉取应用镜像..."
+            podman pull ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/auth-service:latest
+            podman pull ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/user-service:latest
+            podman pull ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/frontend:latest
+
+            # 标记镜像为本地名称
+            podman tag ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/auth-service:latest cloudteachingai-auth-service:latest || true
+            podman tag ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/user-service:latest cloudteachingai-user-service:latest || true
+            podman tag ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/frontend:latest cloudteachingai-frontend:latest || true
 
             # 创建 .env 文件
-            echo "创建 .env 文件..."
-            cat > .env << 'ENVEOF'
+            cat > .env << EOF
             DB_USER=postgres
             DB_PASSWORD=${{ secrets.DB_PASSWORD }}
             JWT_PRIVATE_KEY="${{ secrets.JWT_PRIVATE_KEY }}"
             JWT_PUBLIC_KEY="${{ secrets.JWT_PUBLIC_KEY }}"
-            ENVEOF
+            REGISTRY=${{ env.REGISTRY }}
+            NAMESPACE=${{ env.NAMESPACE }}
+            EOF
 
             # 停止旧容器
             echo "停止旧容器..."
-            $COMPOSE_CMD -f docker-compose.prod.yml down --remove-orphans || true
+            docker-compose -f docker-compose.prod.yml down --remove-orphans || true
 
-            # 构建并启动新容器
-            echo "构建并启动新容器..."
-            $COMPOSE_CMD -f docker-compose.prod.yml build --no-cache
-            $COMPOSE_CMD -f docker-compose.prod.yml up -d
+            # 启动服务
+            echo "启动服务..."
+            docker-compose -f docker-compose.prod.yml up -d
 
             # 等待服务启动
             echo "等待服务启动..."
-            sleep 20
+            sleep 30
 
             # 检查服务状态
             echo "=== 服务状态 ==="
-            $COMPOSE_CMD -f docker-compose.prod.yml ps
+            docker-compose -f docker-compose.prod.yml ps
 
             # 健康检查
             echo "=== 健康检查 ==="
 
-            # 检查 auth-service
             if curl -sf http://localhost:8001/actuator/health > /dev/null 2>&1; then
               echo "✓ auth-service 运行正常"
             else
-              echo "⚠ auth-service 可能未完全启动，查看日志..."
-              $COMPOSE_CMD -f docker-compose.prod.yml logs --tail=30 auth-service
+              echo "⚠ auth-service 可能未完全启动"
+              docker-compose -f docker-compose.prod.yml logs --tail=20 auth-service
             fi
 
-            # 检查 user-service
             if curl -sf http://localhost:8002/actuator/health > /dev/null 2>&1; then
               echo "✓ user-service 运行正常"
             else
-              echo "⚠ user-service 可能未完全启动，查看日志..."
-              $COMPOSE_CMD -f docker-compose.prod.yml logs --tail=30 user-service
+              echo "⚠ user-service 可能未完全启动"
+              docker-compose -f docker-compose.prod.yml logs --tail=20 user-service
             fi
 
-            # 检查前端
             if curl -sf http://localhost:3000 > /dev/null 2>&1; then
               echo "✓ frontend 运行正常"
             else
-              echo "⚠ frontend 可能未完全启动，查看日志..."
-              $COMPOSE_CMD -f docker-compose.prod.yml logs --tail=30 frontend
+              echo "⚠ frontend 可能未完全启动"
+              docker-compose -f docker-compose.prod.yml logs --tail=20 frontend
             fi
 
             # 清理旧镜像
             echo "清理旧镜像..."
-            $CONTAINER_CMD image prune -af --filter "until=24h" || true
+            podman image prune -af --filter "until=24h" || true
 
             echo ""
             echo "=== 部署完成 ==="

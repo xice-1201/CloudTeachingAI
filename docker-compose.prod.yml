@@ -61,9 +61,7 @@ services:
 
   # auth-service
   auth-service:
-    build:
-      context: ./backend/auth-service
-      dockerfile: Dockerfile
+    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${NAMESPACE:-cloudteachingai}/auth-service:latest
     container_name: auth-service
     restart: unless-stopped
     depends_on:
@@ -93,9 +91,7 @@ services:
 
   # user-service
   user-service:
-    build:
-      context: ./backend/user-service
-      dockerfile: Dockerfile
+    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${NAMESPACE:-cloudteachingai}/user-service:latest
     container_name: user-service
     restart: unless-stopped
     depends_on:
@@ -121,9 +117,7 @@ services:
 
   # frontend
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ${REGISTRY:-registry.cn-hangzhou.aliyuncs.com}/${NAMESPACE:-cloudteachingai}/frontend:latest
     container_name: frontend
     restart: unless-stopped
     depends_on:
