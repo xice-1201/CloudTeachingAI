@@ -29,6 +29,18 @@ jobs:
           username: ${{ secrets.ALIYUN_USERNAME }}
           password: ${{ secrets.ALIYUN_PASSWORD }}
 
+      - name: Pull and push base images
+        run: |
+          # Pull and push postgres
+          docker pull postgres:16-alpine
+          docker tag postgres:16-alpine ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/postgres:16-alpine
+          docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/postgres:16-alpine
+
+          # Pull and push redis
+          docker pull redis:7-alpine
+          docker tag redis:7-alpine ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/redis:7-alpine
+          docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/redis:7-alpine
+
       - name: Build and push auth-service
         uses: docker/build-push-action@v5
         with:
@@ -89,13 +101,10 @@ jobs:
             # 登录阿里云镜像仓库
             podman login -u '${{ secrets.ALIYUN_USERNAME }}' -p '${{ secrets.ALIYUN_PASSWORD }}' '${{ secrets.ALIYUN_REGISTRY }}'
 
-            # 拉取基础镜像
-            echo "拉取基础镜像..."
-            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/postgres:16-alpine || podman pull docker.io/library/postgres:16-alpine || echo "使用本地镜像"
-            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/redis:7-alpine || podman pull docker.io/library/redis:7-alpine || echo "使用本地镜像"
-
-            # 拉取应用镜像
-            echo "拉取应用镜像..."
+            # 拉取所有镜像
+            echo "拉取镜像..."
+            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/postgres:16-alpine
+            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/redis:7-alpine
             podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service:latest
             podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest
             podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest

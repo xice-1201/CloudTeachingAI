@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   # ============ 数据库层 ============
 
   # PostgreSQL for auth-service
   auth-db:
-    image: postgres:16-alpine
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/postgres:16-alpine
     container_name: auth-db
     restart: unless-stopped
     environment:
@@ -24,7 +22,7 @@ services:
 
   # PostgreSQL for user-service
   user-db:
-    image: postgres:16-alpine
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/postgres:16-alpine
     container_name: user-db
     restart: unless-stopped
     environment:
@@ -43,7 +41,7 @@ services:
 
   # Redis
   redis:
-    image: redis:7-alpine
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/redis:7-alpine
     container_name: redis
     restart: unless-stopped
     command: redis-server --appendonly yes
