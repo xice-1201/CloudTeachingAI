@@ -33,6 +33,17 @@ spring:
         enabled: false
       config:
         enabled: false
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: 1500065926@qq.com
+    password: uvtedubhebmeicdc
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
 server:
   port: 8001

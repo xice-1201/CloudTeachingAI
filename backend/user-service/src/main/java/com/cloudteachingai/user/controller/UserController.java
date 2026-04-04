@@ -29,6 +29,17 @@ public class UserController {
         return ApiResponse.success(response);
     }
 
+    @PostMapping("/internal/users/register")
+    public ApiResponse<UserResponse> registerUser(@Valid @RequestBody CreateUserRequest request) {
+        log.info("Register user request: email={}", request.getEmail());
+        // 注册用户默认角色为学生
+        if (request.getRole() == null) {
+            request.setRole(User.UserRole.STUDENT);
+        }
+        UserResponse response = userService.createUser(request);
+        return ApiResponse.success(response);
+    }
+
     @GetMapping("/users/{id}")
     public ApiResponse<UserResponse> getUserById(@PathVariable Long id) {
         UserResponse response = userService.getUserById(id);

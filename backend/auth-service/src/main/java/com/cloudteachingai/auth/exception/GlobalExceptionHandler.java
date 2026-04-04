@@ -50,12 +50,13 @@ public class GlobalExceptionHandler {
     }
 
     private HttpStatus getHttpStatus(Integer code) {
-        if (code >= 40000 && code < 41000) return HttpStatus.BAD_REQUEST;
+        // 更具体的条件先匹配
         if (code >= 40100 && code < 40200) return HttpStatus.UNAUTHORIZED;
         if (code >= 40300 && code < 40400) return HttpStatus.FORBIDDEN;
         if (code >= 40400 && code < 40500) return HttpStatus.NOT_FOUND;
         if (code >= 40900 && code < 41000) return HttpStatus.CONFLICT;
         if (code >= 42900 && code < 43000) return HttpStatus.TOO_MANY_REQUESTS;
+        if (code >= 40000 && code < 41000) return HttpStatus.BAD_REQUEST;
         if (code >= 50000 && code < 51000) return HttpStatus.INTERNAL_SERVER_ERROR;
         if (code >= 50300 && code < 50400) return HttpStatus.SERVICE_UNAVAILABLE;
         return HttpStatus.INTERNAL_SERVER_ERROR;

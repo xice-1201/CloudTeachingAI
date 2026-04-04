@@ -19,6 +19,5 @@ public class CreateUserRequest {
     @NotBlank(message = "密码不能为空")
     private String password;
 
-    @NotNull(message = "角色不能为空")
-    private User.UserRole role;
+    private User.UserRole role = User.UserRole.STUDENT;
 }

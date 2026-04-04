@@ -1,14 +1,19 @@
 package com.cloudteachingai.auth.service;
 
+import com.cloudteachingai.auth.client.RegisterUserRequest;
 import com.cloudteachingai.auth.client.UserRoleResponse;
 import com.cloudteachingai.auth.client.UserServiceClient;
 import com.cloudteachingai.auth.dto.LoginRequest;
 import com.cloudteachingai.auth.dto.LoginResponse;
+import com.cloudteachingai.auth.dto.RegisterRequest;
+import com.cloudteachingai.auth.dto.SendCodeRequest;
 import com.cloudteachingai.auth.entity.AuthCredential;
 import com.cloudteachingai.auth.entity.RefreshToken;
+import com.cloudteachingai.auth.entity.VerificationCode;
 import com.cloudteachingai.auth.exception.BusinessException;
 import com.cloudteachingai.auth.repository.AuthCredentialRepository;
 import com.cloudteachingai.auth.repository.RefreshTokenRepository;
+import com.cloudteachingai.auth.repository.VerificationCodeRepository;
 import com.cloudteachingai.auth.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +22,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -28,15 +34,20 @@ public class AuthService {
 
     private final AuthCredentialRepository authCredentialRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final VerificationCodeRepository verificationCodeRepository;
     private final StringRedisTemplate redisTemplate;
     private final JwtUtil jwtUtil;
     private final UserServiceClient userServiceClient;
+    private final MailService mailService;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder(12);
+    private final SecureRandom random = new SecureRandom();
 
     private static final String LOGIN_FAIL_KEY_PREFIX = "login_fail:";
     private static final String TOKEN_BLACKLIST_PREFIX = "token_blacklist:";
     private static final int MAX_LOGIN_ATTEMPTS = 5;
     private static final int LOCK_DURATION_MINUTES = 15;
+    private static final int CODE_EXPIRATION_MINUTES = 15;
+    private static final int CODE_LENGTH = 6;
 
     @Transactional
     public LoginResponse login(LoginRequest request) {
@@ -165,6 +176,104 @@ public class AuthService {
                 .build();
 
         authCredentialRepository.save(credential);
+    }
+
+    /**
+     * 发送验证码
+     */
+    @Transactional
+    public void sendVerificationCode(SendCodeRequest request) {
+        String email = request.getEmail();
+
+        // 检查邮箱是否已注册
+        if (authCredentialRepository.existsByEmail(email)) {
+            throw BusinessException.conflict("该邮箱已被注册");
+        }
+
+        // 检查是否有未过期的验证码（60秒内不能重复发送）
+        verificationCodeRepository.findTopByEmailAndUsedFalseOrderByCreatedAtDesc(email)
+                .ifPresent(existingCode -> {
+                    if (existingCode.getCreatedAt().plusSeconds(60).isAfter(LocalDateTime.now())) {
+                        throw BusinessException.conflict("验证码发送过于频繁，请60秒后重试");
+                    }
+                });
+
+        // 生成6位数字验证码
+        String code = generateCode();
+
+        // 保存验证码
+        VerificationCode verificationCode = VerificationCode.builder()
+                .email(email)
+                .code(code)
+                .expiresAt(LocalDateTime.now().plusMinutes(CODE_EXPIRATION_MINUTES))
+                .used(false)
+                .build();
+        verificationCodeRepository.save(verificationCode);
+
+        // 发送邮件
+        mailService.sendVerificationCode(email, code);
+
+        log.info("验证码发送成功: email={}", email);
+    }
+
+    /**
+     * 用户注册
+     */
+    @Transactional
+    public void register(RegisterRequest request) {
+        String email = request.getEmail();
+
+        // 检查邮箱是否已注册
+        if (authCredentialRepository.existsByEmail(email)) {
+            throw BusinessException.conflict("该邮箱已被注册");
+        }
+
+        // 验证验证码
+        VerificationCode verificationCode = verificationCodeRepository
+                .findTopByEmailAndUsedFalseOrderByCreatedAtDesc(email)
+                .orElseThrow(() -> BusinessException.unauthorized("验证码无效或已过期"));
+
+        if (!verificationCode.isValid()) {
+            throw BusinessException.unauthorized("验证码无效或已过期");
+        }
+
+        if (!verificationCode.getCode().equals(request.getCode())) {
+            throw BusinessException.unauthorized("验证码错误");
+        }
+
+        // 标记验证码为已使用
+        verificationCode.setUsed(true);
+        verificationCodeRepository.save(verificationCode);
+
+        // 创建用户（通过 user-service）
+        RegisterUserRequest registerUserRequest = RegisterUserRequest.builder()
+                .username(request.getUsername())
+                .email(email)
+                .password(request.getPassword())
+                .build();
+
+        UserRoleResponse response = userServiceClient.registerUser(registerUserRequest);
+        if (response == null || response.getData() == null) {
+            throw new RuntimeException("创建用户失败");
+        }
+
+        Long userId = response.getData().getId();
+
+        // 创建凭证
+        createCredential(userId, email, request.getPassword());
+
+        log.info("用户注册成功: email={}, userId={}", email, userId);
+    }
+
+    /**
+     * 生成6位数字验证码
+     */
+    private String generateCode() {
+        StringBuilder code = new StringBuilder();
+        for (int i = 0; i < CODE_LENGTH; i++) {
+            code.append(random.nextInt(10));
+        }
+        return code.toString();
     }
 
     private String getUserRole(Long userId) {

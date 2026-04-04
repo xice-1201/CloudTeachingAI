@@ -42,16 +42,31 @@
       </div>
     </div>
 
-    <!-- 右侧登录区域 -->
+    <!-- 右侧注册区域 -->
     <div class="login-right">
       <div class="login-card">
         <div class="login-header">
-          <h1>欢迎回来</h1>
-          <p>请登录您的账户</p>
+          <h1>创建账户</h1>
+          <p>加入智能教学平台</p>
         </div>
-        <el-form ref="formRef" :model="form" :rules="formRules" size="large" @submit.prevent="handleLogin">
+        <el-form ref="formRef" :model="form" :rules="formRules" size="large" @submit.prevent="handleRegister">
+          <el-form-item prop="username">
+            <el-input v-model="form.username" placeholder="用户名" :prefix-icon="User" />
+          </el-form-item>
           <el-form-item prop="email">
             <el-input v-model="form.email" placeholder="邮箱" :prefix-icon="Message" />
+          </el-form-item>
+          <el-form-item prop="code">
+            <div class="code-input">
+              <el-input v-model="form.code" placeholder="验证码" :prefix-icon="Key" maxlength="6" />
+              <el-button
+                :disabled="countdown > 0 || sendingCode"
+                :loading="sendingCode"
+                @click="handleSendCode"
+              >
+                {{ countdown > 0 ? `${countdown}s` : '获取验证码' }}
+              </el-button>
+            </div>
           </el-form-item>
           <el-form-item prop="password">
             <el-input
@@ -60,23 +75,26 @@
               placeholder="密码"
               :prefix-icon="Lock"
               show-password
-              @keyup.enter="handleLogin"
+            />
+          </el-form-item>
+          <el-form-item prop="confirmPassword">
+            <el-input
+              v-model="form.confirmPassword"
+              type="password"
+              placeholder="确认密码"
+              :prefix-icon="Lock"
+              show-password
+              @keyup.enter="handleRegister"
             />
           </el-form-item>
           <el-form-item>
-            <div class="form-row">
-              <el-checkbox v-model="form.remember">记住我</el-checkbox>
-              <el-link type="primary" @click="$router.push('/reset-password')">忘记密码？</el-link>
-            </div>
-          </el-form-item>
-          <el-form-item>
             <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">
-              登录
+              注册
             </el-button>
           </el-form-item>
           <div class="login-footer">
-            <span class="footer-text">还没有账户？</span>
-            <el-link type="primary" @click="$router.push('/register')">立即注册</el-link>
+            <span class="footer-text">已有账户？</span>
+            <el-link type="primary" @click="$router.push('/login')">立即登录</el-link>
           </div>
         </el-form>
       </div>
@@ -85,32 +103,78 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { Message, Lock } from '@element-plus/icons-vue'
+import { ref, reactive, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { User, Message, Lock, Key } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
-import { useUserStore } from '@/store/user'
 import { rules } from '@/utils/validate'
+import { authApi } from '@/api/auth'
 
 const router = useRouter()
-const route = useRoute()
-const userStore = useUserStore()
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+const sendingCode = ref(false)
+const countdown = ref(0)
+let timer: ReturnType<typeof setInterval> | null = null
+
 const form = reactive({
+  username: '',
   email: '',
+  code: '',
   password: '',
-  remember: false,
+  confirmPassword: '',
 })
 
-const formRules: FormRules = {
-  email: [rules.required('请输入邮箱'), rules.email()],
-  password: [rules.required('请输入密码'), rules.minLength(6, '密码至少6位')],
+const validateConfirmPassword = (_rule: unknown, value: string, callback: (error?: Error) => void) => {
+  if (value !== form.password) {
+    callback(new Error('两次输入的密码不一致'))
+  } else {
+    callback()
+  }
 }
 
-async function handleLogin() {
+const formRules: FormRules = {
+  username: [rules.required('请输入用户名'), rules.minLength(2, '用户名至少2个字符')],
+  email: [rules.required('请输入邮箱'), rules.email()],
+  code: [rules.required('请输入验证码'), rules.minLength(6, '验证码为6位数字')],
+  password: [rules.required('请输入密码'), rules.minLength(6, '密码至少6位')],
+  confirmPassword: [
+    rules.required('请确认密码'),
+    { validator: validateConfirmPassword, trigger: 'blur' }
+  ],
+}
+
+async function handleSendCode() {
+  // 先验证邮箱
+  try {
+    await formRef.value?.validateField('email')
+  } catch {
+    return
+  }
+
+  sendingCode.value = true
+  try {
+    await authApi.sendVerificationCode({ email: form.email })
+    ElMessage.success('验证码已发送，请查收邮件')
+    // 开始倒计时
+    countdown.value = 60
+    timer = setInterval(() => {
+      countdown.value--
+      if (countdown.value <= 0 && timer) {
+        clearInterval(timer)
+        timer = null
+      }
+    }, 1000)
+  } catch (error) {
+    console.error('Send code failed:', error)
+  } finally {
+    sendingCode.value = false
+  }
+}
+
+async function handleRegister() {
   if (!formRef.value) return
 
   try {
@@ -121,16 +185,26 @@ async function handleLogin() {
 
   loading.value = true
   try {
-    await userStore.login(form.email, form.password)
-    ElMessage.success('登录成功')
-    const redirect = (route.query.redirect as string) || '/dashboard'
-    router.push(redirect)
+    await authApi.register({
+      username: form.username,
+      email: form.email,
+      code: form.code,
+      password: form.password,
+    })
+    ElMessage.success('注册成功，请登录')
+    router.push('/login')
   } catch (error) {
-    console.error('Login failed:', error)
+    console.error('Register failed:', error)
   } finally {
     loading.value = false
   }
 }
+
+onUnmounted(() => {
+  if (timer) {
+    clearInterval(timer)
+  }
+})
 </script>
 
 <style scoped>
@@ -269,11 +343,18 @@ async function handleLogin() {
   font-size: 14px;
 }
 
-.form-row {
-  width: 100%;
+.code-input {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.code-input .el-input {
+  flex: 1;
+}
+
+.code-input .el-button {
+  width: 120px;
 }
 
 .login-footer {

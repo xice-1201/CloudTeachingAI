@@ -74,6 +74,8 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
       USER_SERVICE_URL: http://user-service:8002
+      SPRING_MAIL_USERNAME: ${MAIL_USERNAME:-1500065926@qq.com}
+      SPRING_MAIL_PASSWORD: ${MAIL_PASSWORD:-uvtedubhebmeicdc}
     volumes:
       - ./keys/private_key.pem:/app/keys/private_key.pem:ro
       - ./keys/public_key.pem:/app/keys/public_key.pem:ro
