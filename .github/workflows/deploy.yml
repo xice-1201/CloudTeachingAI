@@ -152,7 +152,7 @@ jobs:
               docker-compose -f docker-compose.prod.yml logs --tail=20 user-service
             fi
 
-            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+            if curl -sf http://localhost:80 > /dev/null 2>&1; then
               echo "✓ frontend 运行正常"
             else
               echo "⚠ frontend 可能未完全启动"
@@ -165,6 +165,6 @@ jobs:
 
             echo ""
             echo "=== 部署完成 ==="
-            echo "前端地址: http://${{ secrets.SERVER_HOST }}:3000"
+            echo "前端地址: http://${{ secrets.SERVER_HOST }}"
             echo "auth-service: http://${{ secrets.SERVER_HOST }}:8001"
             echo "user-service: http://${{ secrets.SERVER_HOST }}:8002"
