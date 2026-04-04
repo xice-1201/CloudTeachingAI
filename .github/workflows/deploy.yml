@@ -121,11 +121,11 @@ jobs:
 
             # 停止旧容器
             echo "停止旧容器..."
-            docker compose -f docker-compose.prod.yml down --remove-orphans || true
+            docker compose down --remove-orphans || true
 
             # 启动服务
             echo "启动服务..."
-            docker compose -f docker-compose.prod.yml up -d
+            docker compose up -d
 
             # 等待服务启动（Java 服务启动较慢）
             echo "等待服务启动..."
@@ -133,7 +133,7 @@ jobs:
 
             # 检查服务状态
             echo "=== 服务状态 ==="
-            docker compose -f docker-compose.prod.yml ps
+            docker compose ps
 
             # 健康检查（带重试）
             echo "=== 健康检查 ==="
