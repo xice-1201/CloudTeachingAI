@@ -117,10 +117,10 @@ jobs:
             ALIYUN_NAMESPACE=${{ secrets.ALIYUN_NAMESPACE }}
             EOF
 
-            # 创建 JWT 密钥文件
+            # 创建 JWT 密钥文件 (从 base64 解码)
             mkdir -p keys
-            echo "${{ secrets.JWT_PRIVATE_KEY }}" > keys/private_key.pem
-            echo "${{ secrets.JWT_PUBLIC_KEY }}" > keys/public_key.pem
+            echo '${{ secrets.JWT_PRIVATE_KEY_BASE64 }}' | base64 -d > keys/private_key.pem
+            echo '${{ secrets.JWT_PUBLIC_KEY_BASE64 }}' | base64 -d > keys/public_key.pem
             chmod 644 keys/*.pem
 
             # 停止旧容器
