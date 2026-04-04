@@ -127,36 +127,42 @@ jobs:
             echo "启动服务..."
             docker compose -f docker-compose.prod.yml up -d
 
-            # 等待服务启动
+            # 等待服务启动（Java 服务启动较慢）
             echo "等待服务启动..."
-            sleep 30
+            sleep 60
 
             # 检查服务状态
             echo "=== 服务状态 ==="
             docker compose -f docker-compose.prod.yml ps
 
-            # 健康检查
+            # 健康检查（带重试）
             echo "=== 健康检查 ==="
 
-            if curl -sf http://localhost:8001/actuator/health > /dev/null 2>&1; then
-              echo "✓ auth-service 运行正常"
-            else
-              echo "⚠ auth-service 可能未完全启动"
-              docker compose -f docker-compose.prod.yml logs --tail=20 auth-service
-            fi
+            # auth-service 健康检查
+            for i in 1 2 3; do
+              if curl -sf http://localhost:8001/actuator/health > /dev/null 2>&1; then
+                echo "✓ auth-service 运行正常"
+                break
+              fi
+              echo "等待 auth-service 启动... ($i/3)"
+              sleep 15
+            done
 
-            if curl -sf http://localhost:8002/actuator/health > /dev/null 2>&1; then
-              echo "✓ user-service 运行正常"
-            else
-              echo "⚠ user-service 可能未完全启动"
-              docker compose -f docker-compose.prod.yml logs --tail=20 user-service
-            fi
+            # user-service 健康检查
+            for i in 1 2 3; do
+              if curl -sf http://localhost:8002/actuator/health > /dev/null 2>&1; then
+                echo "✓ user-service 运行正常"
+                break
+              fi
+              echo "等待 user-service 启动... ($i/3)"
+              sleep 15
+            done
 
+            # frontend 健康检查
             if curl -sf http://localhost:80 > /dev/null 2>&1; then
               echo "✓ frontend 运行正常"
             else
               echo "⚠ frontend 可能未完全启动"
-              docker compose -f docker-compose.prod.yml logs --tail=20 frontend
             fi
 
             # 清理旧镜像
