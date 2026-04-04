@@ -113,11 +113,15 @@ jobs:
             cat > .env << EOF
             DB_USER=postgres
             DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            JWT_PRIVATE_KEY="${{ secrets.JWT_PRIVATE_KEY }}"
-            JWT_PUBLIC_KEY="${{ secrets.JWT_PUBLIC_KEY }}"
             ALIYUN_REGISTRY=${{ secrets.ALIYUN_REGISTRY }}
             ALIYUN_NAMESPACE=${{ secrets.ALIYUN_NAMESPACE }}
             EOF
+
+            # 创建 JWT 密钥文件
+            mkdir -p keys
+            echo "${{ secrets.JWT_PRIVATE_KEY }}" > keys/private_key.pem
+            echo "${{ secrets.JWT_PUBLIC_KEY }}" > keys/public_key.pem
+            chmod 600 keys/*.pem
 
             # 停止旧容器
             echo "停止旧容器..."

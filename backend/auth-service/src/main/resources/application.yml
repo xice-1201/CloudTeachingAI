@@ -38,41 +38,8 @@ server:
   port: 8001
 
 jwt:
-  private-key: |
-    -----BEGIN PRIVATE KEY-----
-    MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj
-    MzEfYyjiWA4R4/M2bS1+fWIcPm15A8+raZ4dp+/PJm+G/tY4kLCDJQreYIcS6IUf
-    OjKYMo4HKg9v+Ihk+ksz6BdH2PgGE8Yr07ZH8auj2vZ9ruF4hSRXD9xJWVYMvlz4
-    V5b1tqHaK12CQ6Sxq+wPt6kHkLTxTWy1izAJ4kR147EpQYneWYALN/A1k9lHgkTj
-    g1fgBMHUW5jIqLLgTGerKwK4F2vK/5mYinXWdpL/830dkyMTxy8ecIwfsNkeY1hN
-    /91nSYb6SzSHab6N+nw4tZivcRQYLfo6+UdgEGQphj2XvjRkwPtzkwIi8As3UQID
-    AQABAoIBABKb/dXuYh3n02xHpnRoKMhYAAuCh4+7lvUaQrqWaBXAnjQNgL0ZGxxA
-    507G47KyuzxDflJ84wGgLjvQdnOgNanZpjdEWW+Xot8KcK6et7tbDZ55OKqznYhp
-    4ega6xeIBkJdR26HEuH3bf5BIwraJC8EC3AkPgDqOGBER4GN/KTfYzCUEK4M8jAA
-    OpJDYKHtrlxQvyER3eCOx5Y+LVyYkqNQurCsxkUmWJpdSgHcWb7kOqDn0XCdmCsB
-    ScxA+B3yRUbPZU+dIRyen2xfHQp7NJtDSqhiqp1eN5EyknoH/Mqk0JwOrlkG5xTK
-    v/vqvZbzjBwZPOxmSyedmbHhQQb9SdkCgYEA6ePiZGdsZyXRjKq2i0sQr6eHD/tF
-    8o+def2UGqr+xOB0GXuHUCoVR7DjOCKMXCXh4k7ZQqBQGP00j+neLWCBo4pDx+DL
-    HqC5NW64MJT0aP0nN5Z2C3fuBMAa7AdKvzgwljlq7Y1IwtqgoIWRacH5DdqPp3CM
-    iYfGCvGCaim9vWUCgYEAzReS0MCeAhQ8w6bHHuPARLt0FEf4ZnDQJE/HtExJ4YI2
-    jxkLeS9AdBPcUiM7m8f0ikY4qxTr0V19KpqNov1y95GCrd8+6/mTJ1bl+v/eFRCs
-    6/UgNWiwRpZ/OIGR8+llJjo7zOFoJIK+Tm2v5AHpERRKqvyJYXQ5UuEXqobV+b8C
-    gYBp4yIIZQsZC6eXwA8BSfFC9hwKjE7a3w5xGrMjUi4Me4BC5TSfLDGkqDbaabcL
-    4WutWqkXHQpWkMtXqJe7isKUVmWnPPmuKnDBD0Juq/rHt+NpN+DW58+v8sCk55Gw
-    u1ruJKOd7PDee8N7/5Myc+ND/EIQeC3Ij+HdOQdNbsNlPQKBgQCaxvzQEdbc2jH7
-    sLKhT+4mFsUU94WrOZHO+0qiwBDaxMYor4k8hH/NNmfplS5kEZigbqUWKTSj3gpc
-    2nZnvwyVPHnAtYiPCkE+Mf/tkpn9UnPCL+BD/sdQYvd29FQ0ea+O47m3IvdFOlaG
-    3ZPkGkuSAZWqIVqzjGHs7ib7Wg==
-    -----END PRIVATE KEY-----
-  public-key: |
-    -----BEGIN PUBLIC KEY-----
-    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1SU1LfVLPHCozMxH2Mo
-    4lgOEePzNm0tfn1iHD5teQPPq2meHafvzyZvhv7WOJC wgyUK3mCHEuiFHzoymDKO
-    ByoPb/iIZPpLM+gXR9j4BhPGK9O2R/Gro9r2fa7heIUkVw/cSVlWDL5c+FeW9bah
-    2itdgkOksavsD7epB5C08U1stYswCeJEdeOxKUGJ3lmACzfwNZPZR4JE44NX4ATB
-    1FuYyKiy4Exnqy sCuBdryv+ZmIp11naS//N9HZMjE8cvHnCMH7DZHmNYTf/dZ0mG
-    +ks0h2m+jfp8OLWYr3EUGC36OvlHYBBkKYY9l740ZMD7c5MCIvALN1EwIDAQAB
-    -----END PUBLIC KEY-----
+  private-key-file: /app/keys/private_key.pem
+  public-key-file: /app/keys/public_key.pem
   access-token-expiration: 7200
   refresh-token-expiration: 604800
 

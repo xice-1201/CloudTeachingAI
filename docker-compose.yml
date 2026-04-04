@@ -74,8 +74,9 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
       USER_SERVICE_URL: http://user-service:8002
-      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
-      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
+    volumes:
+      - ./keys/private_key.pem:/app/keys/private_key.pem:ro
+      - ./keys/public_key.pem:/app/keys/public_key.pem:ro
     ports:
       - "8001:8001"
     networks:

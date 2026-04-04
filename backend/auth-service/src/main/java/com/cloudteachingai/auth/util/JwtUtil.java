@@ -2,11 +2,12 @@ package com.cloudteachingai.auth.util;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -27,32 +28,36 @@ public class JwtUtil {
     private final long refreshTokenExpiration;
 
     public JwtUtil(
-            @Value("${jwt.private-key}") String privateKeyStr,
-            @Value("${jwt.public-key}") String publicKeyStr,
+            @Value("${jwt.private-key-file}") String privateKeyPath,
+            @Value("${jwt.public-key-file}") String publicKeyPath,
             @Value("${jwt.access-token-expiration}") long accessTokenExpiration,
             @Value("${jwt.refresh-token-expiration}") long refreshTokenExpiration) throws Exception {
 
         this.accessTokenExpiration = accessTokenExpiration * 1000; // convert to milliseconds
         this.refreshTokenExpiration = refreshTokenExpiration * 1000;
 
-        // Parse private key
-        String privateKeyPEM = privateKeyStr
+        // Read and parse private key from file
+        String privateKeyPEM = new String(Files.readAllBytes(Paths.get(privateKeyPath)))
                 .replace("-----BEGIN PRIVATE KEY-----", "")
                 .replace("-----END PRIVATE KEY-----", "")
+                .replace("-----BEGIN RSA PRIVATE KEY-----", "")
+                .replace("-----END RSA PRIVATE KEY-----", "")
                 .replaceAll("\\s", "");
         byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyPEM);
         PKCS8EncodedKeySpec privateKeySpec = new PKCS8EncodedKeySpec(privateKeyBytes);
         KeyFactory keyFactory = KeyFactory.getInstance("RSA");
         this.privateKey = keyFactory.generatePrivate(privateKeySpec);
 
-        // Parse public key
-        String publicKeyPEM = publicKeyStr
+        // Read and parse public key from file
+        String publicKeyPEM = new String(Files.readAllBytes(Paths.get(publicKeyPath)))
                 .replace("-----BEGIN PUBLIC KEY-----", "")
                 .replace("-----END PUBLIC KEY-----", "")
                 .replaceAll("\\s", "");
         byte[] publicKeyBytes = Base64.getDecoder().decode(publicKeyPEM);
         X509EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(publicKeyBytes);
         this.publicKey = keyFactory.generatePublic(publicKeySpec);
+
+        log.info("JWT keys loaded successfully");
     }
 
     public String generateAccessToken(Long userId, String role) {
