@@ -121,11 +121,11 @@ jobs:
 
             # 停止旧容器
             echo "停止旧容器..."
-            docker-compose -f docker-compose.prod.yml down --remove-orphans || true
+            docker compose -f docker compose.prod.yml down --remove-orphans || true
 
             # 启动服务
             echo "启动服务..."
-            docker-compose -f docker-compose.prod.yml up -d
+            docker compose -f docker compose.prod.yml up -d
 
             # 等待服务启动
             echo "等待服务启动..."
@@ -133,7 +133,7 @@ jobs:
 
             # 检查服务状态
             echo "=== 服务状态 ==="
-            docker-compose -f docker-compose.prod.yml ps
+            docker compose -f docker compose.prod.yml ps
 
             # 健康检查
             echo "=== 健康检查 ==="
@@ -142,21 +142,21 @@ jobs:
               echo "✓ auth-service 运行正常"
             else
               echo "⚠ auth-service 可能未完全启动"
-              docker-compose -f docker-compose.prod.yml logs --tail=20 auth-service
+              docker compose -f docker compose.prod.yml logs --tail=20 auth-service
             fi
 
             if curl -sf http://localhost:8002/actuator/health > /dev/null 2>&1; then
               echo "✓ user-service 运行正常"
             else
               echo "⚠ user-service 可能未完全启动"
-              docker-compose -f docker-compose.prod.yml logs --tail=20 user-service
+              docker compose -f docker compose.prod.yml logs --tail=20 user-service
             fi
 
             if curl -sf http://localhost:80 > /dev/null 2>&1; then
               echo "✓ frontend 运行正常"
             else
               echo "⚠ frontend 可能未完全启动"
-              docker-compose -f docker-compose.prod.yml logs --tail=20 frontend
+              docker compose -f docker compose.prod.yml logs --tail=20 frontend
             fi
 
             # 清理旧镜像
