@@ -99,15 +99,15 @@ jobs:
             git pull origin main || git fetch origin main && git reset --hard origin/main
 
             # 登录阿里云镜像仓库
-            podman login -u '${{ secrets.ALIYUN_USERNAME }}' -p '${{ secrets.ALIYUN_PASSWORD }}' '${{ secrets.ALIYUN_REGISTRY }}'
+            docker login -u '${{ secrets.ALIYUN_USERNAME }}' -p '${{ secrets.ALIYUN_PASSWORD }}' '${{ secrets.ALIYUN_REGISTRY }}'
 
             # 拉取所有镜像
             echo "拉取镜像..."
-            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/postgres:16-alpine
-            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/redis:7-alpine
-            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service:latest
-            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest
-            podman pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest
+            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/postgres:16-alpine
+            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/redis:7-alpine
+            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service:latest
+            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest
+            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest
 
             # 创建 .env 文件
             cat > .env << EOF
@@ -161,7 +161,7 @@ jobs:
 
             # 清理旧镜像
             echo "清理旧镜像..."
-            podman image prune -af --filter "until=24h" || true
+            docker image prune -af --filter "until=24h" || true
 
             echo ""
             echo "=== 部署完成 ==="
