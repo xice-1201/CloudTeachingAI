@@ -25,7 +25,7 @@ public class MailService {
         message.setFrom(fromEmail);
         message.setTo(toEmail);
         message.setSubject("CloudTeachingAI - 邮箱验证码");
-        message.setContent(buildVerificationEmailContent(code));
+        message.setText(buildVerificationEmailContent(code));
 
         try {
             mailSender.send(message);
