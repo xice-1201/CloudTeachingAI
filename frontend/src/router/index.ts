@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { useUserStore } from '@/store/user'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -34,7 +35,6 @@ const routes: RouteRecordRaw[] = [
         name: 'Dashboard',
         component: () => import('@/views/DashboardView.vue'),
       },
-      // 课程
       {
         path: 'courses',
         name: 'CourseList',
@@ -62,7 +62,6 @@ const routes: RouteRecordRaw[] = [
         name: 'ResourceLearn',
         component: () => import('@/views/learn/ResourceLearnView.vue'),
       },
-      // 学习中心
       {
         path: 'learning',
         name: 'LearningCenter',
@@ -78,7 +77,6 @@ const routes: RouteRecordRaw[] = [
         name: 'LearningPath',
         component: () => import('@/views/learn/LearningPathView.vue'),
       },
-      // 作业
       {
         path: 'assignments',
         name: 'AssignmentList',
@@ -95,19 +93,16 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/assign/SubmissionListView.vue'),
         meta: { roles: ['TEACHER', 'ADMIN'] },
       },
-      // AI 助手
       {
         path: 'chat',
         name: 'Chat',
         component: () => import('@/views/chat/ChatView.vue'),
       },
-      // 通知
       {
         path: 'notifications',
         name: 'Notifications',
         component: () => import('@/views/NotificationsView.vue'),
       },
-      // 用户
       {
         path: 'profile',
         name: 'Profile',
@@ -118,7 +113,6 @@ const routes: RouteRecordRaw[] = [
         name: 'MentorRelation',
         component: () => import('@/views/user/MentorView.vue'),
       },
-      // 管理员
       {
         path: 'admin',
         name: 'Admin',
@@ -139,18 +133,30 @@ const router = createRouter({
   routes,
 })
 
-// 路由守卫
 router.beforeEach((to, _from, next) => {
+  const userStore = useUserStore()
   const token = localStorage.getItem('token')
   const requiresAuth = to.meta.requiresAuth !== false
+  const hasStoredSession = userStore.hasStoredSession()
 
-  // 已登录用户访问登录页，重定向到首页
-  if (to.name === 'Login' && token) {
+  if (to.name === 'Login' && token && hasStoredSession) {
     next({ name: 'Dashboard' })
     return
   }
 
+  if (to.name === 'Login' && token && !hasStoredSession) {
+    userStore.clearSession()
+    next()
+    return
+  }
+
   if (requiresAuth && !token) {
+    next({ name: 'Login', query: { redirect: to.fullPath } })
+    return
+  }
+
+  if (requiresAuth && token && !hasStoredSession) {
+    userStore.clearSession()
     next({ name: 'Login', query: { redirect: to.fullPath } })
     return
   }

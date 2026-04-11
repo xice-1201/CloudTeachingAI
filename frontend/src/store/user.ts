@@ -4,16 +4,55 @@ import type { User } from '@/types'
 import { authApi } from '@/api/auth'
 import { userApi } from '@/api/user'
 
+const USER_STORAGE_KEY = 'userInfo'
+
+function readStoredUser(): User | null {
+  const raw = localStorage.getItem(USER_STORAGE_KEY)
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return JSON.parse(raw) as User
+  } catch (_error) {
+    localStorage.removeItem(USER_STORAGE_KEY)
+    return null
+  }
+}
+
 export const useUserStore = defineStore('user', () => {
   const token = ref<string | null>(localStorage.getItem('token'))
   const refreshToken = ref<string | null>(localStorage.getItem('refreshToken'))
-  const user = ref<User | null>(null)
+  const user = ref<User | null>(readStoredUser())
 
   const isLoggedIn = computed(() => !!token.value)
   const isTeacher = computed(() => user.value?.role === 'TEACHER')
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
   const isStudent = computed(() => user.value?.role === 'STUDENT')
   const role = computed(() => user.value?.role ?? localStorage.getItem('userRole'))
+
+  function persistUser(userInfo: User | null) {
+    if (userInfo) {
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(userInfo))
+      localStorage.setItem('userRole', userInfo.role)
+    } else {
+      localStorage.removeItem(USER_STORAGE_KEY)
+      localStorage.removeItem('userRole')
+    }
+  }
+
+  function clearSession() {
+    token.value = null
+    refreshToken.value = null
+    user.value = null
+    localStorage.removeItem('token')
+    localStorage.removeItem('refreshToken')
+    persistUser(null)
+  }
+
+  function hasStoredSession() {
+    return !!token.value && !!user.value
+  }
 
   async function login(email: string, password: string) {
     const res = await authApi.login({ email, password })
@@ -22,7 +61,7 @@ export const useUserStore = defineStore('user', () => {
     user.value = res.user
     localStorage.setItem('token', res.accessToken)
     localStorage.setItem('refreshToken', res.refreshToken)
-    localStorage.setItem('userRole', res.user.role)
+    persistUser(res.user)
   }
 
   async function logout() {
@@ -31,20 +70,13 @@ export const useUserStore = defineStore('user', () => {
         await authApi.logout(refreshToken.value)
       }
     } finally {
-      token.value = null
-      refreshToken.value = null
-      user.value = null
-      localStorage.removeItem('token')
-      localStorage.removeItem('refreshToken')
-      localStorage.removeItem('userRole')
+      clearSession()
     }
   }
 
   async function fetchProfile() {
     user.value = await userApi.getProfile()
-    if (user.value) {
-      localStorage.setItem('userRole', user.value.role)
-    }
+    persistUser(user.value)
   }
 
   return {
@@ -59,5 +91,7 @@ export const useUserStore = defineStore('user', () => {
     login,
     logout,
     fetchProfile,
+    clearSession,
+    hasStoredSession,
   }
 })
