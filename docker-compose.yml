@@ -8,6 +8,7 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
       POSTGRES_DB: auth_db
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
@@ -28,6 +29,7 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
       POSTGRES_DB: user_db
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
