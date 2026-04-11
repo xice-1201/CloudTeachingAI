@@ -65,6 +65,18 @@ services:
       timeout: 5s
       retries: 5
 
+  course-service:
+    build:
+      context: ./course-service
+      dockerfile: Dockerfile
+    container_name: course-service
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ../keys/public_key.pem:/app/keys/public_key.pem:ro
+    ports:
+      - "8003:8003"
+
 volumes:
   auth-db-data:
   user-db-data:

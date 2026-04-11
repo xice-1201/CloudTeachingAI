@@ -69,6 +69,16 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/notify-service:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/notify-service:latest
 
+      - name: Build and push course-service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/course-service
+          dockerfile: ./backend/course-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/course-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/course-service:latest
+
       - name: Build and push frontend
         uses: docker/build-push-action@v5
         with:
@@ -113,6 +123,7 @@ jobs:
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service:latest
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service:latest
+            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service:latest
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest
 
             cat > .env << EOF
@@ -162,6 +173,7 @@ jobs:
             wait_for_service auth-service http://localhost:8001/actuator/health 3
             wait_for_service user-service http://localhost:8002/actuator/health 3
             wait_for_service notify-service http://localhost:8006/actuator/health 3
+            wait_for_service course-service http://localhost:8003/actuator/health 3
 
             if curl -sf http://localhost:80 > /dev/null 2>&1; then
               echo "frontend is healthy"
@@ -180,3 +192,4 @@ jobs:
             echo "auth-service: http://${{ secrets.SERVER_HOST }}:8001"
             echo "user-service: http://${{ secrets.SERVER_HOST }}:8002"
             echo "notify-service: http://${{ secrets.SERVER_HOST }}:8006"
+            echo "course-service: http://${{ secrets.SERVER_HOST }}:8003"

@@ -157,6 +157,25 @@
       retries: 3
       start_period: 60s
 
+  course-service:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/course-service:latest
+    container_name: course-service
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./keys/public_key.pem:/app/keys/public_key.pem:ro
+    ports:
+      - "8003:8003"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   frontend:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/frontend:latest
     container_name: frontend
@@ -167,6 +186,8 @@
       user-service:
         condition: service_healthy
       notify-service:
+        condition: service_healthy
+      course-service:
         condition: service_healthy
     environment:
       TZ: Asia/Shanghai
