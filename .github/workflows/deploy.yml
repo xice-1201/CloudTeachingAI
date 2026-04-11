@@ -1,4 +1,4 @@
-﻿name: Deploy to Production
+name: Deploy to Production
 
 on:
   push:
@@ -155,6 +155,7 @@ jobs:
               done
 
               echo "$name failed health check"
+              docker compose logs --tail=200 "$name" || true
               return 1
             }
 
