@@ -1,8 +1,10 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Notification } from '@/types'
 import { notifyApi } from '@/api/notify'
 import { ElNotification } from 'element-plus'
+
+const POLLING_TIMER_KEY = '__notifyPollingTimer'
 
 export const useNotifyStore = defineStore('notify', () => {
   const notifications = ref<Notification[]>([])
@@ -28,28 +30,33 @@ export const useNotifyStore = defineStore('notify', () => {
     return res
   }
 
-  async function markAsRead(id: string) {
-    await notifyApi.markAsRead(id)
-    const n = notifications.value.find((n) => n.id === id)
-    if (n && !n.read) {
-      n.read = true
+  async function markAsRead(id: number | string) {
+    const notificationId = Number(id)
+    await notifyApi.markAsRead(String(notificationId))
+    const notification = notifications.value.find((item) => item.id === notificationId)
+    if (notification && !notification.read) {
+      notification.read = true
       unreadCount.value = Math.max(0, unreadCount.value - 1)
     }
   }
 
   async function markAllAsRead() {
     await notifyApi.markAllAsRead()
-    notifications.value.forEach((n) => (n.read = true))
+    notifications.value.forEach((item) => {
+      item.read = true
+    })
     unreadCount.value = 0
   }
 
   function startHeartbeat() {
-    if (heartbeatTimer) clearInterval(heartbeatTimer)
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer)
+    }
     heartbeatTimer = window.setInterval(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ping' }))
       }
-    }, 30000) // 每 30 秒发送心跳
+    }, 30000)
   }
 
   function stopHeartbeat() {
@@ -59,8 +66,10 @@ export const useNotifyStore = defineStore('notify', () => {
     }
   }
 
-  function scheduleReconnect(userId: string) {
-    if (reconnectTimer) clearTimeout(reconnectTimer)
+  function scheduleReconnect(userId: string | number) {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+    }
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       console.warn('[WebSocket] Max reconnect attempts reached, falling back to polling')
       startPollingFallback()
@@ -69,14 +78,18 @@ export const useNotifyStore = defineStore('notify', () => {
 
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000)
     reconnectTimer = window.setTimeout(() => {
-      reconnectAttempts++
+      reconnectAttempts += 1
       console.log(`[WebSocket] Reconnecting... (attempt ${reconnectAttempts})`)
       connectWebSocket(userId)
     }, delay)
   }
 
   function startPollingFallback() {
-    // 降级为 30 秒轮询
+    const existingTimer = (window as any)[POLLING_TIMER_KEY] as number | undefined
+    if (existingTimer) {
+      clearInterval(existingTimer)
+    }
+
     const pollingTimer = window.setInterval(async () => {
       try {
         await fetchUnreadCount()
@@ -85,26 +98,27 @@ export const useNotifyStore = defineStore('notify', () => {
       }
     }, 30000)
 
-    // 保存 timer 以便后续清理
-    ;(window as any).__notifyPollingTimer = pollingTimer
+    ;(window as any)[POLLING_TIMER_KEY] = pollingTimer
   }
 
   function stopPollingFallback() {
-    const pollingTimer = (window as any).__notifyPollingTimer
+    const pollingTimer = (window as any)[POLLING_TIMER_KEY] as number | undefined
     if (pollingTimer) {
       clearInterval(pollingTimer)
-      delete (window as any).__notifyPollingTimer
+      delete (window as any)[POLLING_TIMER_KEY]
     }
   }
 
-  function connectWebSocket(userId: string) {
+  function connectWebSocket(userId: string | number) {
     const token = localStorage.getItem('token')
     if (!token) {
       console.warn('[WebSocket] No token found, skipping connection')
       return
     }
 
-    const wsUrl = `${import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8080'}/ws/notifications?token=${token}`
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    const wsBaseUrl = import.meta.env.VITE_WS_BASE_URL || `${protocol}://${window.location.host}`
+    const wsUrl = `${wsBaseUrl}/ws/notifications?token=${encodeURIComponent(token)}`
 
     try {
       ws = new WebSocket(wsUrl)
@@ -121,15 +135,13 @@ export const useNotifyStore = defineStore('notify', () => {
           const data = JSON.parse(event.data)
 
           if (data.type === 'pong') {
-            // 心跳响应，忽略
             return
           }
 
           const notification: Notification = data
           notifications.value.unshift(notification)
-          unreadCount.value++
+          unreadCount.value += 1
 
-          // 显示桌面通知
           ElNotification({
             title: notification.title,
             message: notification.content,
@@ -149,7 +161,6 @@ export const useNotifyStore = defineStore('notify', () => {
         console.log('[WebSocket] Disconnected', event.code, event.reason)
         stopHeartbeat()
 
-        // 非正常关闭，尝试重连
         if (event.code !== 1000) {
           scheduleReconnect(userId)
         }

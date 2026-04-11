@@ -1,4 +1,4 @@
-name: Deploy to Production
+﻿name: Deploy to Production
 
 on:
   push:
@@ -31,12 +31,10 @@ jobs:
 
       - name: Pull and push base images
         run: |
-          # Pull and push postgres
           docker pull postgres:16-alpine
           docker tag postgres:16-alpine ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/postgres:16-alpine
           docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/postgres:16-alpine
 
-          # Pull and push redis
           docker pull redis:7-alpine
           docker tag redis:7-alpine ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/redis:7-alpine
           docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/redis:7-alpine
@@ -60,6 +58,16 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/user-service:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/user-service:latest
+
+      - name: Build and push notify-service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/notify-service
+          dockerfile: ./backend/notify-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/notify-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/notify-service:latest
 
       - name: Build and push frontend
         uses: docker/build-push-action@v5
@@ -90,26 +98,23 @@ jobs:
           script: |
             set -e
 
-            echo "=== 开始部署 CloudTeachingAI ==="
-            echo "时间: $(date)"
+            echo "=== Deploying CloudTeachingAI ==="
+            echo "Time: $(date)"
 
             cd ${{ env.DEPLOY_PATH }}
 
-            # 拉取最新代码
             git pull origin main || git fetch origin main && git reset --hard origin/main
 
-            # 登录阿里云镜像仓库
             docker login -u '${{ secrets.ALIYUN_USERNAME }}' -p '${{ secrets.ALIYUN_PASSWORD }}' '${{ secrets.ALIYUN_REGISTRY }}'
 
-            # 拉取所有镜像
-            echo "拉取镜像..."
+            echo "Pulling images..."
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/postgres:16-alpine
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/redis:7-alpine
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service:latest
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest
+            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service:latest
             docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest
 
-            # 创建 .env 文件
             cat > .env << EOF
             DB_USER=postgres
             DB_PASSWORD=${{ secrets.DB_PASSWORD }}
@@ -117,64 +122,63 @@ jobs:
             ALIYUN_NAMESPACE=${{ secrets.ALIYUN_NAMESPACE }}
             EOF
 
-            # 创建 JWT 密钥文件 (从 base64 解码)
             mkdir -p keys
             echo '${{ secrets.JWT_PRIVATE_KEY_BASE64 }}' | base64 -d > keys/private_key.pem
             echo '${{ secrets.JWT_PUBLIC_KEY_BASE64 }}' | base64 -d > keys/public_key.pem
             chmod 644 keys/*.pem
 
-            # 停止旧容器
-            echo "停止旧容器..."
+            echo "Stopping old containers..."
             docker compose down --remove-orphans || true
 
-            # 启动服务
-            echo "启动服务..."
+            echo "Starting services..."
             docker compose up -d
 
-            # 等待服务启动（Java 服务启动较慢）
-            echo "等待服务启动..."
+            echo "Waiting for services..."
             sleep 60
 
-            # 检查服务状态
-            echo "=== 服务状态 ==="
+            echo "=== Service Status ==="
             docker compose ps
 
-            # 健康检查（带重试）
-            echo "=== 健康检查 ==="
-
-            # auth-service 健康检查
+            echo "=== Health Checks ==="
             for i in 1 2 3; do
               if curl -sf http://localhost:8001/actuator/health > /dev/null 2>&1; then
-                echo "✓ auth-service 运行正常"
+                echo "auth-service is healthy"
                 break
               fi
-              echo "等待 auth-service 启动... ($i/3)"
+              echo "Waiting for auth-service... ($i/3)"
               sleep 15
             done
 
-            # user-service 健康检查
             for i in 1 2 3; do
               if curl -sf http://localhost:8002/actuator/health > /dev/null 2>&1; then
-                echo "✓ user-service 运行正常"
+                echo "user-service is healthy"
                 break
               fi
-              echo "等待 user-service 启动... ($i/3)"
+              echo "Waiting for user-service... ($i/3)"
               sleep 15
             done
 
-            # frontend 健康检查
+            for i in 1 2 3; do
+              if curl -sf http://localhost:8006/actuator/health > /dev/null 2>&1; then
+                echo "notify-service is healthy"
+                break
+              fi
+              echo "Waiting for notify-service... ($i/3)"
+              sleep 15
+            done
+
             if curl -sf http://localhost:80 > /dev/null 2>&1; then
-              echo "✓ frontend 运行正常"
+              echo "frontend is healthy"
             else
-              echo "⚠ frontend 可能未完全启动"
+              echo "frontend may not be fully ready yet"
             fi
 
-            # 清理旧镜像
-            echo "清理旧镜像..."
+            echo "Cleaning old images..."
             docker image prune -af --filter "until=24h" || true
 
             echo ""
-            echo "=== 部署完成 ==="
-            echo "前端地址: http://${{ secrets.SERVER_HOST }}"
+            echo "=== Deployment Finished ==="
+            echo "frontend: http://${{ secrets.SERVER_HOST }}"
             echo "auth-service: http://${{ secrets.SERVER_HOST }}:8001"
             echo "user-service: http://${{ secrets.SERVER_HOST }}:8002"
+            echo "notify-service: http://${{ secrets.SERVER_HOST }}:8006"

@@ -1,7 +1,4 @@
-services:
-  # ============ 数据库层 ============
-
-  # PostgreSQL for auth-service
+﻿services:
   auth-db:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/postgres:16-alpine
     container_name: auth-db
@@ -22,7 +19,6 @@ services:
     networks:
       - backend
 
-  # PostgreSQL for user-service
   user-db:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/postgres:16-alpine
     container_name: user-db
@@ -43,7 +39,26 @@ services:
     networks:
       - backend
 
-  # Redis
+  notify-db:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/postgres:16-alpine
+    container_name: notify-db
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+      POSTGRES_DB: notify_db
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - notify-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
   redis:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/redis:7-alpine
     container_name: redis
@@ -59,9 +74,6 @@ services:
     networks:
       - backend
 
-  # ============ 业务服务层 ============
-
-  # auth-service
   auth-service:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/auth-service:latest
     container_name: auth-service
@@ -95,7 +107,6 @@ services:
       retries: 3
       start_period: 60s
 
-  # user-service
   user-service:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/user-service:latest
     container_name: user-service
@@ -109,6 +120,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
       AUTH_SERVICE_URL: http://auth-service:8001
+      NOTIFY_SERVICE_URL: http://notify-service:8006
     ports:
       - "8002:8002"
     networks:
@@ -120,9 +132,31 @@ services:
       retries: 3
       start_period: 60s
 
-  # ============ 前端层 ============
+  notify-service:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/notify-service:latest
+    container_name: notify-service
+    restart: unless-stopped
+    depends_on:
+      notify-db:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:postgresql://notify-db:5432/notify_db
+      SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - ./keys/public_key.pem:/app/keys/public_key.pem:ro
+    ports:
+      - "8006:8006"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-  # frontend
   frontend:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/frontend:latest
     container_name: frontend
@@ -130,6 +164,7 @@ services:
     depends_on:
       - auth-service
       - user-service
+      - notify-service
     environment:
       TZ: Asia/Shanghai
     ports:
@@ -144,4 +179,5 @@ networks:
 volumes:
   auth-db-data:
   user-db-data:
+  notify-db-data:
   redis-data:

@@ -1,6 +1,8 @@
 package com.cloudteachingai.user.service;
 
 import com.cloudteachingai.user.client.AuthServiceClient;
+import com.cloudteachingai.user.client.NotifyServiceClient;
+import com.cloudteachingai.user.dto.CreateNotificationRequest;
 import com.cloudteachingai.user.dto.CreateUserRequest;
 import com.cloudteachingai.user.dto.PageResponse;
 import com.cloudteachingai.user.dto.UpdateProfileRequest;
@@ -25,6 +27,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final AuthServiceClient authServiceClient;
+    private final NotifyServiceClient notifyServiceClient;
 
     @Transactional
     public UserResponse createUser(CreateUserRequest request) {
@@ -49,6 +52,7 @@ public class UserService {
         }
 
         log.info("User created successfully: id={}, email={}, role={}", user.getId(), user.getEmail(), user.getRole());
+        sendWelcomeNotification(user);
 
         return UserResponse.from(user);
     }
@@ -69,6 +73,7 @@ public class UserService {
         user = userRepository.save(user);
 
         log.info("User profile created successfully: id={}, email={}, role={}", user.getId(), user.getEmail(), user.getRole());
+        sendWelcomeNotification(user);
         return UserResponse.from(user);
     }
 
@@ -112,5 +117,18 @@ public class UserService {
         }
         List<UserResponse> items = users.getContent().stream().map(UserResponse::from).toList();
         return new PageResponse<>(items, (int) users.getTotalElements(), page, pageSize);
+    }
+
+    private void sendWelcomeNotification(User user) {
+        try {
+            notifyServiceClient.createNotification(new CreateNotificationRequest(
+                    user.getId(),
+                    "SYSTEM",
+                    "Welcome to CloudTeachingAI",
+                    "Your account is ready. Start exploring your courses and learning tasks."
+            ));
+        } catch (Exception e) {
+            log.warn("Failed to create welcome notification for user {}", user.getId(), e);
+        }
     }
 }
