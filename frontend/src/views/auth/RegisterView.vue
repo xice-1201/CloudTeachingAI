@@ -1,6 +1,5 @@
 <template>
   <div class="login-page">
-    <!-- 左侧装饰区域 -->
     <div class="login-left">
       <div class="decor-content">
         <div class="decor-icon">
@@ -42,7 +41,6 @@
       </div>
     </div>
 
-    <!-- 右侧注册区域 -->
     <div class="login-right">
       <div class="login-card">
         <div class="login-header">
@@ -60,9 +58,10 @@
             <div class="code-input">
               <el-input v-model="form.code" placeholder="验证码" :prefix-icon="Key" maxlength="6" />
               <el-button
+                native-type="button"
                 :disabled="countdown > 0 || sendingCode"
                 :loading="sendingCode"
-                @click="handleSendCode"
+                @click.prevent="handleSendCode"
               >
                 {{ countdown > 0 ? `${countdown}s` : '获取验证码' }}
               </el-button>
@@ -84,7 +83,6 @@
               placeholder="确认密码"
               :prefix-icon="Lock"
               show-password
-              @keyup.enter="handleRegister"
             />
           </el-form-item>
           <el-form-item>
@@ -136,29 +134,30 @@ const validateConfirmPassword = (_rule: unknown, value: string, callback: (error
 }
 
 const formRules: FormRules = {
-  username: [rules.required('请输入用户名'), rules.minLength(2, '用户名至少2个字符')],
+  username: [rules.required('请输入用户名'), rules.minLength(2, '用户名至少 2 个字符')],
   email: [rules.required('请输入邮箱'), rules.email()],
-  code: [rules.required('请输入验证码'), rules.minLength(6, '验证码为6位数字')],
-  password: [rules.required('请输入密码'), rules.minLength(6, '密码至少6位')],
+  code: [rules.required('请输入验证码'), rules.minLength(6, '验证码为 6 位数字')],
+  password: [rules.required('请输入密码'), rules.minLength(6, '密码至少 6 位')],
   confirmPassword: [
     rules.required('请确认密码'),
-    { validator: validateConfirmPassword, trigger: 'blur' }
+    { validator: validateConfirmPassword, trigger: 'blur' },
   ],
 }
 
 async function handleSendCode() {
-  // 先验证邮箱
-  try {
-    await formRef.value?.validateField('email')
-  } catch {
-    return
-  }
+  if (sendingCode.value) return
 
   sendingCode.value = true
   try {
+    await formRef.value?.validateField('email')
+  } catch {
+    sendingCode.value = false
+    return
+  }
+
+  try {
     await authApi.sendVerificationCode({ email: form.email })
     ElMessage.success('验证码已发送，请查收邮件')
-    // 开始倒计时
     countdown.value = 60
     timer = setInterval(() => {
       countdown.value--
@@ -175,15 +174,16 @@ async function handleSendCode() {
 }
 
 async function handleRegister() {
-  if (!formRef.value) return
+  if (!formRef.value || loading.value) return
 
+  loading.value = true
   try {
     await formRef.value.validate()
   } catch {
+    loading.value = false
     return
   }
 
-  loading.value = true
   try {
     await authApi.register({
       username: form.username,
@@ -213,7 +213,6 @@ onUnmounted(() => {
   display: flex;
 }
 
-/* 左侧装饰区域 */
 .login-left {
   flex: 1;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -277,7 +276,6 @@ onUnmounted(() => {
   font-size: 20px;
 }
 
-/* 装饰性形状 */
 .decor-shapes {
   position: absolute;
   inset: 0;
@@ -312,7 +310,6 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.03);
 }
 
-/* 右侧登录区域 */
 .login-right {
   width: 480px;
   display: flex;
@@ -386,7 +383,6 @@ onUnmounted(() => {
   box-shadow: 0 0 0 1px var(--el-color-primary) inset;
 }
 
-/* 响应式设计 */
 @media (max-width: 900px) {
   .login-left {
     display: none;
