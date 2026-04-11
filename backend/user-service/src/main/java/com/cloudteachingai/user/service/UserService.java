@@ -53,6 +53,25 @@ public class UserService {
         return UserResponse.from(user);
     }
 
+    @Transactional
+    public UserResponse createUserProfileOnly(CreateUserRequest request) {
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw BusinessException.conflict("邮箱已被注册");
+        }
+
+        User user = User.builder()
+                .username(request.getUsername())
+                .email(request.getEmail())
+                .role(request.getRole())
+                .isActive(true)
+                .build();
+
+        user = userRepository.save(user);
+
+        log.info("User profile created successfully: id={}, email={}, role={}", user.getId(), user.getEmail(), user.getRole());
+        return UserResponse.from(user);
+    }
+
     public UserResponse getUserById(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("用户不存在"));

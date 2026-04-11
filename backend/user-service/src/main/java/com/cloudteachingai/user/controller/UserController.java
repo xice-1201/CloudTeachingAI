@@ -36,7 +36,7 @@ public class UserController {
         if (request.getRole() == null) {
             request.setRole(User.UserRole.STUDENT);
         }
-        UserResponse response = userService.createUser(request);
+        UserResponse response = userService.createUserProfileOnly(request);
         return ApiResponse.success(response);
     }
 

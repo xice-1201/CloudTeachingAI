@@ -27,4 +27,8 @@ public class BusinessException extends RuntimeException {
     public static BusinessException conflict(String message) {
         return new BusinessException(40901, message);
     }
+
+    public static BusinessException internalError(String message) {
+        return new BusinessException(50001, message);
+    }
 }

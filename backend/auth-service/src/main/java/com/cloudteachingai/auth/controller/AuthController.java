@@ -5,6 +5,7 @@ import com.cloudteachingai.auth.dto.LoginRequest;
 import com.cloudteachingai.auth.dto.LoginResponse;
 import com.cloudteachingai.auth.dto.RegisterRequest;
 import com.cloudteachingai.auth.dto.SendCodeRequest;
+import com.cloudteachingai.auth.service.AuthRegistrationService;
 import com.cloudteachingai.auth.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final AuthRegistrationService authRegistrationService;
 
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
@@ -44,14 +46,14 @@ public class AuthController {
     @PostMapping("/send-code")
     public ApiResponse<Void> sendVerificationCode(@Valid @RequestBody SendCodeRequest request) {
         log.info("Send verification code request for email: {}", request.getEmail());
-        authService.sendVerificationCode(request);
+        authRegistrationService.sendVerificationCode(request);
         return ApiResponse.success(null);
     }
 
     @PostMapping("/register")
     public ApiResponse<Void> register(@Valid @RequestBody RegisterRequest request) {
         log.info("Register request for email: {}", request.getEmail());
-        authService.register(request);
+        authRegistrationService.register(request);
         return ApiResponse.success(null);
     }
 }
