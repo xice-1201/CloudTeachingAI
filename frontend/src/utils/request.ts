@@ -11,7 +11,6 @@ const request: AxiosInstance = axios.create({
   },
 })
 
-// Token 刷新状态
 let isRefreshing = false
 let refreshSubscribers: ((token: string) => void)[] = []
 
@@ -24,7 +23,11 @@ function onTokenRefreshed(token: string) {
   refreshSubscribers = []
 }
 
-// 请求拦截器
+function isSilentError(config?: InternalAxiosRequestConfig | any) {
+  const value = config?.headers?.['X-Silent-Error'] ?? config?.headers?.['x-silent-error']
+  return value === 'true' || value === true
+}
+
 request.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('token')
@@ -33,34 +36,32 @@ request.interceptors.request.use(
     }
     return config
   },
-  (error) => {
-    return Promise.reject(error)
-  }
+  (error) => Promise.reject(error)
 )
 
-// 响应拦截器
 request.interceptors.response.use(
   (response: AxiosResponse) => {
     const { code, message, data } = response.data
+    const silentError = isSilentError(response.config as InternalAxiosRequestConfig)
 
-    // 兼容后端返回 code: 0 表示成功的情况
     if (code === 0 || code === 200) {
       return data
-    } else {
-      ElMessage.error(message || '请求失败')
-      return Promise.reject(new Error(message || '请求失败'))
     }
+
+    if (!silentError) {
+      ElMessage.error(message || '请求失败')
+    }
+    return Promise.reject(new Error(message || '请求失败'))
   },
   async (error) => {
     const originalRequest = error.config
+    const silentError = isSilentError(originalRequest)
 
     if (error.response) {
       const { status, data } = error.response
 
-      // Token 过期，尝试刷新
       if (status === 401 && data?.code === 40102 && !originalRequest._retry) {
         if (isRefreshing) {
-          // 正在刷新，将请求加入队列
           return new Promise((resolve) => {
             subscribeTokenRefresh((token: string) => {
               originalRequest.headers.Authorization = `Bearer ${token}`
@@ -78,12 +79,10 @@ request.interceptors.response.use(
             throw new Error('No refresh token')
           }
 
-          // 后端期望 refreshToken 作为 query param
           const response = await axios.post(
             `${request.defaults.baseURL}/auth/refresh?refreshToken=${encodeURIComponent(refreshToken)}`
           )
 
-          // 后端返回格式: { code: 0, message: 'success', data: { accessToken, refreshToken, role, userId, user } }
           const { data: loginData } = response.data
 
           localStorage.setItem('token', loginData.accessToken)
@@ -95,11 +94,13 @@ request.interceptors.response.use(
           originalRequest.headers.Authorization = `Bearer ${loginData.accessToken}`
           return request(originalRequest)
         } catch (refreshError) {
-          // 刷新失败，清除登录态
           localStorage.removeItem('token')
           localStorage.removeItem('refreshToken')
           localStorage.removeItem('userRole')
-          ElMessage.error('登录已过期，请重新登录')
+          localStorage.removeItem('userInfo')
+          if (!silentError) {
+            ElMessage.error('登录已过期，请重新登录')
+          }
           router.push({ name: 'Login', query: { redirect: router.currentRoute.value.fullPath } })
           return Promise.reject(refreshError)
         } finally {
@@ -107,38 +108,54 @@ request.interceptors.response.use(
         }
       }
 
-      // 其他错误处理
       switch (status) {
         case 401:
           if (!originalRequest._retry) {
-            ElMessage.error('未授权，请重新登录')
             localStorage.removeItem('token')
             localStorage.removeItem('refreshToken')
             localStorage.removeItem('userRole')
+            localStorage.removeItem('userInfo')
+            if (!silentError) {
+              ElMessage.error(data?.message || '未授权，请重新登录')
+            }
             router.push({ name: 'Login', query: { redirect: router.currentRoute.value.fullPath } })
           }
           break
         case 403:
-          ElMessage.error(data?.message || '没有权限访问')
+          if (!silentError) {
+            ElMessage.error(data?.message || '没有权限访问')
+          }
           break
         case 404:
-          ElMessage.error('请求的资源不存在')
+          if (!silentError) {
+            ElMessage.error(data?.message || '请求的资源不存在')
+          }
           break
         case 429:
-          ElMessage.error('请求过于频繁，请稍后再试')
+          if (!silentError) {
+            ElMessage.error(data?.message || '请求过于频繁，请稍后再试')
+          }
           break
         case 500:
-          ElMessage.error('服务器错误，请稍后重试')
+          if (!silentError) {
+            ElMessage.error(data?.message || '服务器错误，请稍后重试')
+          }
           break
         case 503:
-          ElMessage.error('服务暂时不可用，请稍后重试')
+          if (!silentError) {
+            ElMessage.error(data?.message || '服务暂时不可用，请稍后重试')
+          }
           break
         default:
-          ElMessage.error(data?.message || '请求失败')
+          if (!silentError) {
+            ElMessage.error(data?.message || '请求失败')
+          }
       }
     } else if (error.code === 'ECONNABORTED') {
-      ElMessage.error('请求超时，请检查网络连接')
-    } else {
+      if (!silentError) {
+        ElMessage.error('请求超时，请检查网络连接')
+      }
+    } else if (!silentError) {
       ElMessage.error('网络错误，请检查网络连接')
     }
 

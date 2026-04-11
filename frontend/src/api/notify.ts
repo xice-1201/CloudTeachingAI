@@ -12,5 +12,7 @@ export const notifyApi = {
     request.put('/notifications/read-all'),
 
   getUnreadCount: (): Promise<{ count: number }> =>
-    request.get('/notifications/unread-count'),
+    request.get('/notifications/unread-count', {
+      headers: { 'X-Silent-Error': 'true' },
+    }),
 }

@@ -60,7 +60,7 @@
               placeholder="密码"
               :prefix-icon="Lock"
               show-password
-              @keyup.enter="handleLogin"
+              
             />
           </el-form-item>
           <el-form-item>
@@ -111,22 +111,20 @@ const formRules: FormRules = {
 }
 
 async function handleLogin() {
-  if (!formRef.value) return
+  if (!formRef.value || loading.value) return
+
+  loading.value = true
 
   try {
     await formRef.value.validate()
-  } catch {
-    return
-  }
-
-  loading.value = true
-  try {
     await userStore.login(form.email, form.password)
     ElMessage.success('登录成功')
     const redirect = (route.query.redirect as string) || '/dashboard'
     router.push(redirect)
   } catch (error) {
-    console.error('Login failed:', error)
+    if (error) {
+      console.error('Login failed:', error)
+    }
   } finally {
     loading.value = false
   }
