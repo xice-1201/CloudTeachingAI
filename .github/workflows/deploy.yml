@@ -140,32 +140,27 @@ jobs:
             docker compose ps
 
             echo "=== Health Checks ==="
-            for i in 1 2 3; do
-              if curl -sf http://localhost:8001/actuator/health > /dev/null 2>&1; then
-                echo "auth-service is healthy"
-                break
-              fi
-              echo "Waiting for auth-service... ($i/3)"
-              sleep 15
-            done
+            wait_for_service() {
+              local name="$1"
+              local url="$2"
+              local retries="$3"
 
-            for i in 1 2 3; do
-              if curl -sf http://localhost:8002/actuator/health > /dev/null 2>&1; then
-                echo "user-service is healthy"
-                break
-              fi
-              echo "Waiting for user-service... ($i/3)"
-              sleep 15
-            done
+              for i in $(seq 1 "$retries"); do
+                if curl -sf "$url" > /dev/null 2>&1; then
+                  echo "$name is healthy"
+                  return 0
+                fi
+                echo "Waiting for $name... ($i/$retries)"
+                sleep 15
+              done
 
-            for i in 1 2 3; do
-              if curl -sf http://localhost:8006/actuator/health > /dev/null 2>&1; then
-                echo "notify-service is healthy"
-                break
-              fi
-              echo "Waiting for notify-service... ($i/3)"
-              sleep 15
-            done
+              echo "$name failed health check"
+              return 1
+            }
+
+            wait_for_service auth-service http://localhost:8001/actuator/health 3
+            wait_for_service user-service http://localhost:8002/actuator/health 3
+            wait_for_service notify-service http://localhost:8006/actuator/health 3
 
             if curl -sf http://localhost:80 > /dev/null 2>&1; then
               echo "frontend is healthy"

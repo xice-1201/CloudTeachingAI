@@ -162,9 +162,12 @@
     container_name: frontend
     restart: unless-stopped
     depends_on:
-      - auth-service
-      - user-service
-      - notify-service
+      auth-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      notify-service:
+        condition: service_healthy
     environment:
       TZ: Asia/Shanghai
     ports:

@@ -54,6 +54,12 @@ jwt:
   access-token-expiration: 7200
   refresh-token-expiration: 604800
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
 logging:
   level:
     com.cloudteachingai: DEBUG

@@ -27,6 +27,12 @@ spring:
 server:
   port: 8002
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
 logging:
   level:
     com.cloudteachingai: DEBUG
