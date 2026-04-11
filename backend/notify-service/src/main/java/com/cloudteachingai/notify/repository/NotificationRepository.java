@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.repository;
+package com.cloudteachingai.notify.repository;
 
 import com.cloudteachingai.notify.entity.Notification;
 import org.springframework.data.domain.Page;

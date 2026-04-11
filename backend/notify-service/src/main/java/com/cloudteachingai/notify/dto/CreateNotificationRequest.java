@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.dto;
+package com.cloudteachingai.notify.dto;
 
 import com.cloudteachingai.notify.entity.Notification;
 import jakarta.validation.constraints.NotBlank;

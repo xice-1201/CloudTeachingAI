@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.config;
+package com.cloudteachingai.notify.config;
 
 import com.cloudteachingai.notify.websocket.NotificationWebSocketHandler;
 import lombok.RequiredArgsConstructor;

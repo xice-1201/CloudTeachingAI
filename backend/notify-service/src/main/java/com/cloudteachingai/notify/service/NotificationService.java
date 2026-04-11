@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.service;
+package com.cloudteachingai.notify.service;
 
 import com.cloudteachingai.notify.dto.CreateNotificationRequest;
 import com.cloudteachingai.notify.dto.NotificationResponse;

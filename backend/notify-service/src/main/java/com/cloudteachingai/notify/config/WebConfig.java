@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.config;
+package com.cloudteachingai.notify.config;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;

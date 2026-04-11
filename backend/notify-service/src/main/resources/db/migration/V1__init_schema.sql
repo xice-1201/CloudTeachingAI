@@ -1,4 +1,4 @@
-﻿CREATE TABLE notification (
+CREATE TABLE notification (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
     type VARCHAR(20) NOT NULL,

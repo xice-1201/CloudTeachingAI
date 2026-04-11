@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.exception;
+package com.cloudteachingai.notify.exception;
 
 import com.cloudteachingai.notify.dto.ApiResponse;
 import lombok.extern.slf4j.Slf4j;

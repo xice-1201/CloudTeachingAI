@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.entity;
+package com.cloudteachingai.notify.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

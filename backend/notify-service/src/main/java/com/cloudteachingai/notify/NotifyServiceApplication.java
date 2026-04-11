@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify;
+package com.cloudteachingai.notify;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

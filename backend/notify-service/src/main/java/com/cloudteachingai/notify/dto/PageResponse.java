@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.dto;
+package com.cloudteachingai.notify.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

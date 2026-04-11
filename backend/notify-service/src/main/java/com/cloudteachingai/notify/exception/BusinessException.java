@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.exception;
+package com.cloudteachingai.notify.exception;
 
 import lombok.Getter;
 

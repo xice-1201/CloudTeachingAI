@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.controller;
+package com.cloudteachingai.notify.controller;
 
 import com.cloudteachingai.notify.dto.ApiResponse;
 import com.cloudteachingai.notify.dto.CreateNotificationRequest;

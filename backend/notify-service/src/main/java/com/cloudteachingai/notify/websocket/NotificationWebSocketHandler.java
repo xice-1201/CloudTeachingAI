@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.websocket;
+package com.cloudteachingai.notify.websocket;
 
 import com.cloudteachingai.notify.service.NotificationPushService;
 import com.cloudteachingai.notify.util.JwtUtil;

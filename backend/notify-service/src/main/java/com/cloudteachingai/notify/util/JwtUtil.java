@@ -1,4 +1,4 @@
-﻿package com.cloudteachingai.notify.util;
+package com.cloudteachingai.notify.util;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
