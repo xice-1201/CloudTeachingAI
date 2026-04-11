@@ -167,6 +167,8 @@ jobs:
               echo "frontend is healthy"
             else
               echo "frontend may not be fully ready yet"
+              docker compose logs --tail=200 frontend || true
+              exit 1
             fi
 
             echo "Cleaning old images..."
