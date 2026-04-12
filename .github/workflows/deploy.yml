@@ -309,7 +309,13 @@ jobs:
             else
               echo "Applying incremental update..."
               for service in $SERVICES; do
-                docker compose up -d --no-deps "$service"
+                echo "Updating service: $service"
+                if ! docker compose up -d "$service"; then
+                  echo "Failed to update service: $service"
+                  docker compose ps || true
+                  docker compose logs --tail=200 "$service" || true
+                  exit 1
+                fi
               done
             fi
 
