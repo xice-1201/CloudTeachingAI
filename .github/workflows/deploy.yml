@@ -293,7 +293,8 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           script_stop: true
           script: |
-            set -e
+            set +e
+            set -u
 
             AUTH_CHANGED="${{ needs.detect-changes.outputs.auth_changed }}"
             USER_CHANGED="${{ needs.detect-changes.outputs.user_changed }}"
@@ -309,10 +310,35 @@ jobs:
             echo "Target services: $SERVICES"
 
             cd ${{ env.DEPLOY_PATH }}
+            if [ $? -ne 0 ]; then
+              echo "Failed to enter deploy path: ${{ env.DEPLOY_PATH }}"
+              exit 1
+            fi
 
-            git pull origin main || git fetch origin main && git reset --hard origin/main
+            git pull origin main
+            git_status=$?
+            if [ "$git_status" -ne 0 ]; then
+              echo "git pull failed, trying fetch + reset"
+              git fetch origin main
+              git_fetch_status=$?
+              if [ "$git_fetch_status" -ne 0 ]; then
+                echo "git fetch failed with exit code $git_fetch_status"
+                exit "$git_fetch_status"
+              fi
+              git reset --hard origin/main
+              git_reset_status=$?
+              if [ "$git_reset_status" -ne 0 ]; then
+                echo "git reset failed with exit code $git_reset_status"
+                exit "$git_reset_status"
+              fi
+            fi
 
             docker login -u '${{ secrets.ALIYUN_USERNAME }}' -p '${{ secrets.ALIYUN_PASSWORD }}' '${{ secrets.ALIYUN_REGISTRY }}'
+            docker_login_status=$?
+            if [ "$docker_login_status" -ne 0 ]; then
+              echo "docker login failed with exit code $docker_login_status"
+              exit "$docker_login_status"
+            fi
 
             cat > .env << EOF
             DB_USER=postgres
@@ -361,14 +387,13 @@ jobs:
             pull_image_if_needed "$COURSE_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service:latest"
             pull_image_if_needed "$FRONTEND_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest"
             echo "Finished image pull phase"
+            echo "Selecting compose update strategy..."
 
             if [ "$DEPLOY_ALL" = "true" ]; then
               echo "Applying full compose update..."
               compose_log=$(mktemp)
-              set +e
               docker compose up -d --remove-orphans >"$compose_log" 2>&1
               compose_status=$?
-              set -e
               cat "$compose_log"
               rm -f "$compose_log"
               if [ "$compose_status" -ne 0 ]; then
@@ -383,10 +408,8 @@ jobs:
               echo "Applying incremental update..."
               echo "Updating services: $SERVICES"
               compose_log=$(mktemp)
-              set +e
               docker compose up -d $SERVICES >"$compose_log" 2>&1
               compose_status=$?
-              set -e
               cat "$compose_log"
               rm -f "$compose_log"
               if [ "$compose_status" -ne 0 ]; then
