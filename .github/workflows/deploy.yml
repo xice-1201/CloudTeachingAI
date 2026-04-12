@@ -5,6 +5,19 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'Select services to deploy'
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - auth-service
+          - user-service
+          - notify-service
+          - course-service
+          - frontend
 
 env:
   DEPLOY_PATH: /opt/cloudteachingai
@@ -55,15 +68,59 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            auth_changed=true
-            user_changed=true
-            notify_changed=true
-            course_changed=true
-            frontend_changed=true
-            image_changed=true
-            deploy_all=true
+            deploy_target="${{ github.event.inputs.deploy_target }}"
+
+            auth_changed=false
+            user_changed=false
+            notify_changed=false
+            course_changed=false
+            frontend_changed=false
+            image_changed=false
+            deploy_all=false
             should_deploy=true
-            services="auth-service user-service notify-service course-service frontend"
+
+            if [ "$deploy_target" = "all" ]; then
+              auth_changed=true
+              user_changed=true
+              notify_changed=true
+              course_changed=true
+              frontend_changed=true
+              image_changed=true
+              deploy_all=true
+              services="auth-service user-service notify-service course-service frontend"
+            else
+              case "$deploy_target" in
+                auth-service)
+                  auth_changed=true
+                  image_changed=true
+                  services="auth-service"
+                  ;;
+                user-service)
+                  user_changed=true
+                  image_changed=true
+                  services="user-service"
+                  ;;
+                notify-service)
+                  notify_changed=true
+                  image_changed=true
+                  services="notify-service"
+                  ;;
+                course-service)
+                  course_changed=true
+                  image_changed=true
+                  services="course-service"
+                  ;;
+                frontend)
+                  frontend_changed=true
+                  image_changed=true
+                  services="frontend"
+                  ;;
+                *)
+                  echo "Unsupported deploy target: $deploy_target"
+                  exit 1
+                  ;;
+              esac
+            fi
           else
             auth_changed="${{ steps.changes.outputs.auth }}"
             user_changed="${{ steps.changes.outputs.user }}"
