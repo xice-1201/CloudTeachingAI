@@ -376,11 +376,13 @@ jobs:
 
             if [ "$DEPLOY_ALL" = "true" ]; then
               echo "Applying full compose update..."
+              compose_log=$(mktemp)
               set +e
-              compose_output=$(docker compose up -d --remove-orphans 2>&1)
+              docker compose up -d --remove-orphans >"$compose_log" 2>&1
               compose_status=$?
               set -e
-              echo "$compose_output"
+              cat "$compose_log"
+              rm -f "$compose_log"
               if [ "$compose_status" -ne 0 ]; then
                 echo "docker compose up failed with exit code $compose_status"
                 docker compose ps || true
@@ -392,11 +394,13 @@ jobs:
             else
               echo "Applying incremental update..."
               echo "Updating services: $SERVICES"
+              compose_log=$(mktemp)
               set +e
-              compose_output=$(docker compose up -d $SERVICES 2>&1)
+              docker compose up -d $SERVICES >"$compose_log" 2>&1
               compose_status=$?
               set -e
-              echo "$compose_output"
+              cat "$compose_log"
+              rm -f "$compose_log"
               if [ "$compose_status" -ne 0 ]; then
                 echo "docker compose up failed with exit code $compose_status"
                 docker compose ps || true
