@@ -3,29 +3,26 @@ package com.cloudteachingai.course.util;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.SecurityException;
-import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 
+@Slf4j
 @Component
 public class JwtUtil {
 
-    @Value("${jwt.public-key-file}")
-    private Resource publicKeyResource;
-
     private PublicKey publicKey;
 
-    @PostConstruct
-    public void init() throws Exception {
-        this.publicKey = loadPublicKey();
+    public JwtUtil(@Value("${jwt.public-key-file}") String publicKeyPath) throws Exception {
+        this.publicKey = loadPublicKey(publicKeyPath);
+        log.info("JWT public key loaded successfully");
     }
 
     public boolean validateToken(String token) {
@@ -53,8 +50,8 @@ public class JwtUtil {
         return Long.parseLong(String.valueOf(userId));
     }
 
-    private PublicKey loadPublicKey() throws Exception {
-        String pem = readResource(publicKeyResource);
+    private PublicKey loadPublicKey(String publicKeyPath) throws Exception {
+        String pem = Files.readString(Paths.get(publicKeyPath));
         String normalized = pem
                 .replace("-----BEGIN PUBLIC KEY-----", "")
                 .replace("-----END PUBLIC KEY-----", "")
@@ -62,11 +59,5 @@ public class JwtUtil {
         byte[] decoded = Base64.getDecoder().decode(normalized);
         X509EncodedKeySpec spec = new X509EncodedKeySpec(decoded);
         return KeyFactory.getInstance("RSA").generatePublic(spec);
-    }
-
-    private String readResource(Resource resource) throws IOException {
-        try (var inputStream = resource.getInputStream()) {
-            return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
     }
 }
