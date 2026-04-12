@@ -14,23 +14,23 @@
           </svg>
         </div>
         <h2 class="decor-title">CloudTeachingAI</h2>
-        <p class="decor-subtitle">ÖÇÄÜÔÆ¶Ë½ÌÑ§Æ½Ì¨</p>
+        <p class="decor-subtitle">æ™ºèƒ½äº‘ç«¯æ•™å­¦å¹³å°</p>
         <div class="decor-features">
           <div class="feature-item">
-            <span class="feature-icon">¿Î³Ì</span>
-            <span>¿Î³Ì×ÊÔ´¹ÜÀí</span>
+            <span class="feature-icon">è¯¾ç¨‹</span>
+            <span>è¯¾ç¨‹èµ„æºç®¡ç†</span>
           </div>
           <div class="feature-item">
-            <span class="feature-icon">ÄÜÁ¦</span>
-            <span>ÄÜÁ¦Í¼Æ×²âÊÔ</span>
+            <span class="feature-icon">èƒ½åŠ›</span>
+            <span>èƒ½åŠ›å›¾è°±æµ‹è¯•</span>
           </div>
           <div class="feature-item">
             <span class="feature-icon">AI</span>
-            <span>AI ÖÇÄÜÖúÊÖ</span>
+            <span>AI æ™ºèƒ½åŠ©æ‰‹</span>
           </div>
           <div class="feature-item">
-            <span class="feature-icon">·ÖÎö</span>
-            <span>Êý¾Ý·ÖÎö¶´²ì</span>
+            <span class="feature-icon">åˆ†æž</span>
+            <span>æ•°æ®åˆ†æžæ´žå¯Ÿ</span>
           </div>
         </div>
       </div>
@@ -44,36 +44,36 @@
     <div class="login-right">
       <div class="login-card">
         <div class="login-header">
-          <h1>»¶Ó­»ØÀ´</h1>
-          <p>ÇëµÇÂ¼ÄúµÄÕË»§</p>
+          <h1>æ¬¢è¿Žå›žæ¥</h1>
+          <p>è¯·ç™»å½•æ‚¨çš„è´¦æˆ·</p>
         </div>
         <el-form ref="formRef" :model="form" :rules="formRules" size="large" @submit.prevent="handleLogin">
           <el-form-item prop="email">
-            <el-input v-model="form.email" placeholder="ÓÊÏä" :prefix-icon="Message" />
+            <el-input v-model="form.email" placeholder="é‚®ç®±" :prefix-icon="Message" />
           </el-form-item>
           <el-form-item prop="password">
             <el-input
               v-model="form.password"
               type="password"
-              placeholder="ÃÜÂë"
+              placeholder="å¯†ç "
               :prefix-icon="Lock"
               show-password
             />
           </el-form-item>
           <el-form-item>
             <div class="form-row">
-              <el-checkbox v-model="form.remember">¼Ç×¡ÕË»§</el-checkbox>
-              <el-link type="primary" @click="$router.push('/reset-password')">Íü¼ÇÃÜÂë£¿</el-link>
+              <el-checkbox v-model="form.remember">è®°ä½è´¦æˆ·</el-checkbox>
+              <el-link type="primary" @click="$router.push('/reset-password')">å¿˜è®°å¯†ç ï¼Ÿ</el-link>
             </div>
           </el-form-item>
           <el-form-item>
             <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">
-              µÇÂ¼
+              ç™»å½•
             </el-button>
           </el-form-item>
           <div class="login-footer">
-            <span class="footer-text">»¹Ã»ÓÐÕË»§£¿</span>
-            <el-link type="primary" @click="$router.push('/register')">Á¢¼´×¢²á</el-link>
+            <span class="footer-text">è¿˜æ²¡æœ‰è´¦æˆ·ï¼Ÿ</span>
+            <el-link type="primary" @click="$router.push('/register')">ç«‹å³æ³¨å†Œ</el-link>
           </div>
         </el-form>
       </div>
@@ -103,8 +103,8 @@ const form = reactive({
 })
 
 const formRules: FormRules = {
-  email: [rules.required('ÇëÊäÈëÓÊÏä'), rules.email()],
-  password: [rules.required('ÇëÊäÈëÃÜÂë'), rules.minLength(6, 'ÃÜÂëÖÁÉÙ 6 Î»')],
+  email: [rules.required('è¯·è¾“å…¥é‚®ç®±'), rules.email()],
+  password: [rules.required('è¯·è¾“å…¥å¯†ç '), rules.minLength(6, 'å¯†ç è‡³å°‘ 6 ä½')],
 }
 
 async function handleLogin() {
@@ -115,7 +115,7 @@ async function handleLogin() {
   try {
     await formRef.value.validate()
     await userStore.login(form.email, form.password)
-    ElMessage.success('µÇÂ¼³É¹¦')
+    ElMessage.success('ç™»å½•æˆåŠŸ')
     const defaultRedirect = userStore.isAdmin ? '/admin' : '/dashboard'
     const redirect = (route.query.redirect as string) || defaultRedirect
     router.push(redirect)
@@ -130,7 +130,7 @@ async function handleLogin() {
 
 onMounted(() => {
   if (route.query.expired === '1') {
-    ElMessage.warning('Éí·ÝÑéÖ¤ÒÑ¹ýÆÚ£¬ÇëÖØÐÂµÇÂ¼')
+    ElMessage.warning('èº«ä»½éªŒè¯å·²è¿‡æœŸï¼Œè¯·é‡æ–°ç™»å½•')
     const nextQuery = { ...route.query }
     delete nextQuery.expired
     router.replace({ name: 'Login', query: nextQuery })

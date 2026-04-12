@@ -19,40 +19,40 @@
         <el-sub-menu v-if="!userStore.isAdmin" index="courses">
           <template #title>
             <el-icon><Reading /></el-icon>
-            <span>¿Î³Ì¹ÜÀí</span>
+            <span>è¯¾ç¨‹ç®¡ç†</span>
           </template>
-          <el-menu-item index="/courses">¿Î³ÌÁĞ±í</el-menu-item>
-          <el-menu-item v-if="!userStore.isStudent" index="/courses/create">´´½¨¿Î³Ì</el-menu-item>
+          <el-menu-item index="/courses">è¯¾ç¨‹åˆ—è¡¨</el-menu-item>
+          <el-menu-item v-if="!userStore.isStudent" index="/courses/create">åˆ›å»ºè¯¾ç¨‹</el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu v-if="userStore.isStudent" index="learning">
           <template #title>
             <el-icon><TrendCharts /></el-icon>
-            <span>Ñ§Ï°ÖĞĞÄ</span>
+            <span>å­¦ä¹ ä¸­å¿ƒ</span>
           </template>
-          <el-menu-item index="/learning">Ñ§Ï°¸ÅÀÀ</el-menu-item>
-          <el-menu-item index="/learning/ability-test">ÄÜÁ¦²âÊÔ</el-menu-item>
-          <el-menu-item index="/learning/path">Ñ§Ï°Â·Ïß</el-menu-item>
+          <el-menu-item index="/learning">å­¦ä¹ æ¦‚è§ˆ</el-menu-item>
+          <el-menu-item index="/learning/ability-test">èƒ½åŠ›æµ‹è¯•</el-menu-item>
+          <el-menu-item index="/learning/path">å­¦ä¹ è·¯çº¿</el-menu-item>
         </el-sub-menu>
 
         <el-menu-item v-if="!userStore.isAdmin" index="/assignments">
           <el-icon><EditPen /></el-icon>
-          <span>×÷Òµ¹ÜÀí</span>
+          <span>ä½œä¸šç®¡ç†</span>
         </el-menu-item>
 
         <el-menu-item v-if="!userStore.isAdmin" index="/chat">
           <el-icon><ChatDotRound /></el-icon>
-          <span>AI ÖúÊÖ</span>
+          <span>AI åŠ©æ‰‹</span>
         </el-menu-item>
 
         <el-menu-item v-if="userStore.isStudent" index="/mentor">
           <el-icon><UserFilled /></el-icon>
-          <span>µ¼Ê¦¹ØÏµ</span>
+          <span>å¯¼å¸ˆå…³ç³»</span>
         </el-menu-item>
 
         <el-menu-item v-if="userStore.isAdmin" index="/admin">
           <el-icon><Setting /></el-icon>
-          <span>ÏµÍ³¹ÜÀí</span>
+          <span>ç³»ç»Ÿç®¡ç†</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -78,8 +78,8 @@
             </div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="profile">¸öÈË×ÊÁÏ</el-dropdown-item>
-                <el-dropdown-item command="logout" divided>ÍË³öµÇÂ¼</el-dropdown-item>
+                <el-dropdown-item command="profile">ä¸ªäººèµ„æ–™</el-dropdown-item>
+                <el-dropdown-item command="logout" divided>é€€å‡ºç™»å½•</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -108,7 +108,7 @@ const notifyStore = useNotifyStore()
 const sidebarWidth = 220
 
 const homeMenuPath = computed(() => (userStore.isAdmin ? '/admin' : '/dashboard'))
-const homeMenuLabel = computed(() => (userStore.isAdmin ? '¹ÜÀíÊ×Ò³' : 'Ê×Ò³'))
+const homeMenuLabel = computed(() => (userStore.isAdmin ? 'ç®¡ç†é¦–é¡µ' : 'é¦–é¡µ'))
 const activeMenu = computed(() => {
   if (userStore.isAdmin && route.path.startsWith('/admin')) {
     return '/admin'
