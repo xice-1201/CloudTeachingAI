@@ -246,6 +246,19 @@ jobs:
             DEPLOY_ALL="${{ needs.detect-changes.outputs.deploy_all }}"
             SERVICES="${{ needs.detect-changes.outputs.services }}"
 
+            on_error() {
+              local exit_code="$?"
+              local failed_line="$1"
+              echo "Deployment failed at line ${failed_line} with exit code ${exit_code}"
+              docker compose ps || true
+              for service in $SERVICES; do
+                docker compose logs --tail=200 "$service" || true
+              done
+              exit "$exit_code"
+            }
+
+            trap 'on_error $LINENO' ERR
+
             echo "=== Deploying CloudTeachingAI ==="
             echo "Time: $(date)"
             echo "Deploy all: $DEPLOY_ALL"
@@ -308,15 +321,8 @@ jobs:
               docker compose up -d --remove-orphans
             else
               echo "Applying incremental update..."
-              for service in $SERVICES; do
-                echo "Updating service: $service"
-                if ! docker compose up -d "$service"; then
-                  echo "Failed to update service: $service"
-                  docker compose ps || true
-                  docker compose logs --tail=200 "$service" || true
-                  exit 1
-                fi
-              done
+              echo "Updating services: $SERVICES"
+              docker compose up -d $SERVICES
             fi
 
             echo "=== Service Status ==="
