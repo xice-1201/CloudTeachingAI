@@ -24,6 +24,8 @@ export const useUserStore = defineStore('user', () => {
   const token = ref<string | null>(localStorage.getItem('token'))
   const refreshToken = ref<string | null>(localStorage.getItem('refreshToken'))
   const user = ref<User | null>(readStoredUser())
+  const sessionValidated = ref(false)
+  let sessionValidationPromise: Promise<boolean> | null = null
 
   const isLoggedIn = computed(() => !!token.value)
   const isTeacher = computed(() => user.value?.role === 'TEACHER')
@@ -45,6 +47,8 @@ export const useUserStore = defineStore('user', () => {
     token.value = null
     refreshToken.value = null
     user.value = null
+    sessionValidated.value = false
+    sessionValidationPromise = null
     localStorage.removeItem('token')
     localStorage.removeItem('refreshToken')
     persistUser(null)
@@ -59,6 +63,8 @@ export const useUserStore = defineStore('user', () => {
     token.value = res.accessToken
     refreshToken.value = res.refreshToken
     user.value = res.user
+    sessionValidated.value = true
+    sessionValidationPromise = null
     localStorage.setItem('token', res.accessToken)
     localStorage.setItem('refreshToken', res.refreshToken)
     persistUser(res.user)
@@ -74,9 +80,45 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  async function fetchProfile() {
-    user.value = await userApi.getProfile()
+  async function fetchProfile(config?: Record<string, any>) {
+    user.value = await userApi.getProfile(config)
     persistUser(user.value)
+    sessionValidated.value = true
+    return user.value
+  }
+
+  async function validateSession() {
+    if (!token.value || !user.value) {
+      sessionValidated.value = false
+      return false
+    }
+
+    if (sessionValidated.value) {
+      return true
+    }
+
+    if (sessionValidationPromise) {
+      return sessionValidationPromise
+    }
+
+    sessionValidationPromise = (async () => {
+      try {
+        await fetchProfile({
+          headers: {
+            'X-Silent-Error': 'true',
+            'X-Skip-Auth-Redirect': 'true',
+          },
+        })
+        return true
+      } catch (_error) {
+        clearSession()
+        return false
+      } finally {
+        sessionValidationPromise = null
+      }
+    })()
+
+    return sessionValidationPromise
   }
 
   return {
@@ -91,6 +133,7 @@ export const useUserStore = defineStore('user', () => {
     login,
     logout,
     fetchProfile,
+    validateSession,
     clearSession,
     hasStoredSession,
   }

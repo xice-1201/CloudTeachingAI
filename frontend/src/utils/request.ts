@@ -23,9 +23,25 @@ function onTokenRefreshed(token: string) {
   refreshSubscribers = []
 }
 
+function readHeaderFlag(config: InternalAxiosRequestConfig | any, headerName: string) {
+  const directValue = config?.headers?.[headerName]
+  const lowerCaseValue = config?.headers?.[headerName.toLowerCase()]
+  return directValue === 'true' || directValue === true || lowerCaseValue === 'true' || lowerCaseValue === true
+}
+
 function isSilentError(config?: InternalAxiosRequestConfig | any) {
-  const value = config?.headers?.['X-Silent-Error'] ?? config?.headers?.['x-silent-error']
-  return value === 'true' || value === true
+  return readHeaderFlag(config, 'X-Silent-Error')
+}
+
+function shouldSkipAuthRedirect(config?: InternalAxiosRequestConfig | any) {
+  return readHeaderFlag(config, 'X-Skip-Auth-Redirect')
+}
+
+function clearStoredSession() {
+  localStorage.removeItem('token')
+  localStorage.removeItem('refreshToken')
+  localStorage.removeItem('userRole')
+  localStorage.removeItem('userInfo')
 }
 
 request.interceptors.request.use(
@@ -56,6 +72,7 @@ request.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
     const silentError = isSilentError(originalRequest)
+    const skipAuthRedirect = shouldSkipAuthRedirect(originalRequest)
 
     if (error.response) {
       const { status, data } = error.response
@@ -94,14 +111,13 @@ request.interceptors.response.use(
           originalRequest.headers.Authorization = `Bearer ${loginData.accessToken}`
           return request(originalRequest)
         } catch (refreshError) {
-          localStorage.removeItem('token')
-          localStorage.removeItem('refreshToken')
-          localStorage.removeItem('userRole')
-          localStorage.removeItem('userInfo')
+          clearStoredSession()
           if (!silentError) {
             ElMessage.error('登录已过期，请重新登录')
           }
-          router.push({ name: 'Login', query: { redirect: router.currentRoute.value.fullPath } })
+          if (!skipAuthRedirect) {
+            router.push({ name: 'Login', query: { redirect: router.currentRoute.value.fullPath, expired: '1' } })
+          }
           return Promise.reject(refreshError)
         } finally {
           isRefreshing = false
@@ -111,14 +127,13 @@ request.interceptors.response.use(
       switch (status) {
         case 401:
           if (!originalRequest._retry) {
-            localStorage.removeItem('token')
-            localStorage.removeItem('refreshToken')
-            localStorage.removeItem('userRole')
-            localStorage.removeItem('userInfo')
+            clearStoredSession()
             if (!silentError) {
               ElMessage.error(data?.message || '未授权，请重新登录')
             }
-            router.push({ name: 'Login', query: { redirect: router.currentRoute.value.fullPath } })
+            if (!skipAuthRedirect) {
+              router.push({ name: 'Login', query: { redirect: router.currentRoute.value.fullPath, expired: '1' } })
+            }
           }
           break
         case 403:

@@ -133,32 +133,52 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const userStore = useUserStore()
   const token = localStorage.getItem('token')
   const requiresAuth = to.meta.requiresAuth !== false
   const hasStoredSession = userStore.hasStoredSession()
+  const loginRedirect = { name: 'Login' as const, query: { redirect: to.fullPath } }
+  const expiredRedirect = { name: 'Login' as const, query: { redirect: to.fullPath, expired: '1' } }
 
-  if (to.name === 'Login' && token && hasStoredSession) {
-    next({ name: 'Dashboard' })
-    return
-  }
+  if (to.name === 'Login') {
+    if (!token) {
+      next()
+      return
+    }
 
-  if (to.name === 'Login' && token && !hasStoredSession) {
-    userStore.clearSession()
-    next()
+    if (!hasStoredSession) {
+      userStore.clearSession()
+      next()
+      return
+    }
+
+    const valid = await userStore.validateSession()
+    if (valid) {
+      next({ name: 'Dashboard' })
+    } else {
+      next()
+    }
     return
   }
 
   if (requiresAuth && !token) {
-    next({ name: 'Login', query: { redirect: to.fullPath } })
+    next(loginRedirect)
     return
   }
 
   if (requiresAuth && token && !hasStoredSession) {
     userStore.clearSession()
-    next({ name: 'Login', query: { redirect: to.fullPath } })
+    next(expiredRedirect)
     return
+  }
+
+  if (requiresAuth && token && hasStoredSession) {
+    const valid = await userStore.validateSession()
+    if (!valid) {
+      next(expiredRedirect)
+      return
+    }
   }
 
   if (to.meta.roles) {

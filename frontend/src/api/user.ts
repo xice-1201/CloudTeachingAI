@@ -2,8 +2,8 @@ import request from '@/utils/request'
 import type { User, PageResponse } from '@/types'
 
 export const userApi = {
-  getProfile: (): Promise<User> =>
-    request.get('/users/me'),
+  getProfile: (config?: Record<string, any>): Promise<User> =>
+    request.get('/users/me', config),
 
   updateProfile: (data: Partial<User>): Promise<User> =>
     request.put('/users/me', data),

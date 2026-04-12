@@ -85,7 +85,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Message, Lock } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -129,6 +129,15 @@ async function handleLogin() {
     loading.value = false
   }
 }
+
+onMounted(() => {
+  if (route.query.expired === '1') {
+    ElMessage.warning('身份验证已过期，请重新登录')
+    const nextQuery = { ...route.query }
+    delete nextQuery.expired
+    router.replace({ name: 'Login', query: nextQuery })
+  }
+})
 </script>
 
 <style scoped>
