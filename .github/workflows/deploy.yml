@@ -303,19 +303,6 @@ jobs:
             DEPLOY_ALL="${{ needs.detect-changes.outputs.deploy_all }}"
             SERVICES="${{ needs.detect-changes.outputs.services }}"
 
-            on_error() {
-              local exit_code="$?"
-              local failed_line="$1"
-              echo "Deployment failed at line ${failed_line} with exit code ${exit_code}"
-              docker compose ps || true
-              for service in $SERVICES; do
-                docker compose logs --tail=200 "$service" || true
-              done
-              exit "$exit_code"
-            }
-
-            trap 'on_error $LINENO' ERR
-
             echo "=== Deploying CloudTeachingAI ==="
             echo "Time: $(date)"
             echo "Deploy all: $DEPLOY_ALL"
@@ -373,6 +360,7 @@ jobs:
             pull_image_if_needed "$NOTIFY_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service:latest"
             pull_image_if_needed "$COURSE_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service:latest"
             pull_image_if_needed "$FRONTEND_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest"
+            echo "Finished image pull phase"
 
             if [ "$DEPLOY_ALL" = "true" ]; then
               echo "Applying full compose update..."
@@ -410,6 +398,7 @@ jobs:
                 exit "$compose_status"
               fi
             fi
+            echo "Compose update phase completed"
 
             echo "=== Service Status ==="
             docker compose ps
