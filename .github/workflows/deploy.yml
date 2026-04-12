@@ -389,38 +389,45 @@ jobs:
             echo "Finished image pull phase"
             echo "Selecting compose update strategy..."
 
-            if [ "$DEPLOY_ALL" = "true" ]; then
-              echo "Applying full compose update..."
-              compose_log=$(mktemp)
-              docker compose up -d --remove-orphans >"$compose_log" 2>&1
-              compose_status=$?
-              cat "$compose_log"
-              rm -f "$compose_log"
-              if [ "$compose_status" -ne 0 ]; then
-                echo "docker compose up failed with exit code $compose_status"
-                docker compose ps || true
-                for service in $SERVICES; do
-                  docker compose logs --tail=200 "$service" || true
-                done
-                exit "$compose_status"
-              fi
-            else
-              echo "Applying incremental update..."
-              echo "Updating services: $SERVICES"
-              compose_log=$(mktemp)
-              docker compose up -d $SERVICES >"$compose_log" 2>&1
-              compose_status=$?
-              cat "$compose_log"
-              rm -f "$compose_log"
-              if [ "$compose_status" -ne 0 ]; then
-                echo "docker compose up failed with exit code $compose_status"
-                docker compose ps || true
-                for service in $SERVICES; do
-                  docker compose logs --tail=200 "$service" || true
-                done
-                exit "$compose_status"
-              fi
-            fi
+            case "$DEPLOY_ALL" in
+              true)
+                echo "Applying full compose update..."
+                compose_log=$(mktemp)
+                docker compose up -d --remove-orphans >"$compose_log" 2>&1
+                compose_status=$?
+                cat "$compose_log"
+                rm -f "$compose_log"
+                if [ "$compose_status" -ne 0 ]; then
+                  echo "docker compose up failed with exit code $compose_status"
+                  docker compose ps || true
+                  for service in $SERVICES; do
+                    docker compose logs --tail=200 "$service" || true
+                  done
+                  exit "$compose_status"
+                fi
+                ;;
+              false)
+                echo "Applying incremental update..."
+                echo "Updating services: $SERVICES"
+                compose_log=$(mktemp)
+                docker compose up -d $SERVICES >"$compose_log" 2>&1
+                compose_status=$?
+                cat "$compose_log"
+                rm -f "$compose_log"
+                if [ "$compose_status" -ne 0 ]; then
+                  echo "docker compose up failed with exit code $compose_status"
+                  docker compose ps || true
+                  for service in $SERVICES; do
+                    docker compose logs --tail=200 "$service" || true
+                  done
+                  exit "$compose_status"
+                fi
+                ;;
+              *)
+                echo "Unexpected DEPLOY_ALL value: $DEPLOY_ALL"
+                exit 1
+                ;;
+            esac
             echo "Compose update phase completed"
 
             echo "=== Service Status ==="
