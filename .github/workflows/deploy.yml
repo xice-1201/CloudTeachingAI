@@ -289,6 +289,7 @@ jobs:
                 echo "Pulling $image"
                 docker pull "$image"
               fi
+              return 0
             }
 
             wait_for_service() {
@@ -318,11 +319,35 @@ jobs:
 
             if [ "$DEPLOY_ALL" = "true" ]; then
               echo "Applying full compose update..."
-              docker compose up -d --remove-orphans
+              set +e
+              compose_output=$(docker compose up -d --remove-orphans 2>&1)
+              compose_status=$?
+              set -e
+              echo "$compose_output"
+              if [ "$compose_status" -ne 0 ]; then
+                echo "docker compose up failed with exit code $compose_status"
+                docker compose ps || true
+                for service in $SERVICES; do
+                  docker compose logs --tail=200 "$service" || true
+                done
+                exit "$compose_status"
+              fi
             else
               echo "Applying incremental update..."
               echo "Updating services: $SERVICES"
-              docker compose up -d $SERVICES
+              set +e
+              compose_output=$(docker compose up -d $SERVICES 2>&1)
+              compose_status=$?
+              set -e
+              echo "$compose_output"
+              if [ "$compose_status" -ne 0 ]; then
+                echo "docker compose up failed with exit code $compose_status"
+                docker compose ps || true
+                for service in $SERVICES; do
+                  docker compose logs --tail=200 "$service" || true
+                done
+                exit "$compose_status"
+              fi
             fi
 
             echo "=== Service Status ==="
