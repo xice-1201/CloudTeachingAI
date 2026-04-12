@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="login-page">
     <div class="login-left">
       <div class="decor-content">
@@ -21,7 +21,7 @@
             <span>课程资源管理</span>
           </div>
           <div class="feature-item">
-            <span class="feature-icon">🎯</span>
+            <span class="feature-icon">🧭</span>
             <span>能力图谱测试</span>
           </div>
           <div class="feature-item">
@@ -50,6 +50,12 @@
         <el-form ref="formRef" :model="form" :rules="formRules" size="large" @submit.prevent="handleRegister">
           <el-form-item prop="username">
             <el-input v-model="form.username" placeholder="用户名" :prefix-icon="User" />
+          </el-form-item>
+          <el-form-item prop="role">
+            <el-radio-group v-model="form.role" class="role-group">
+              <el-radio-button label="STUDENT">注册为学生</el-radio-button>
+              <el-radio-button label="TEACHER">注册为教师</el-radio-button>
+            </el-radio-group>
           </el-form-item>
           <el-form-item prop="email">
             <el-input v-model="form.email" placeholder="邮箱" :prefix-icon="Message" />
@@ -119,6 +125,7 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 const form = reactive({
   username: '',
+  role: 'STUDENT',
   email: '',
   code: '',
   password: '',
@@ -135,6 +142,7 @@ const validateConfirmPassword = (_rule: unknown, value: string, callback: (error
 
 const formRules: FormRules = {
   username: [rules.required('请输入用户名'), rules.minLength(2, '用户名至少 2 个字符')],
+  role: [rules.required('请选择注册身份')],
   email: [rules.required('请输入邮箱'), rules.email()],
   code: [rules.required('请输入验证码'), rules.minLength(6, '验证码为 6 位数字')],
   password: [rules.required('请输入密码'), rules.minLength(6, '密码至少 6 位')],
@@ -185,6 +193,11 @@ async function handleRegister() {
   }
 
   try {
+    if (form.role === 'TEACHER') {
+      ElMessage.error('教师注册接口暂未实现')
+      return
+    }
+
     await authApi.register({
       username: form.username,
       email: form.email,
@@ -338,6 +351,19 @@ onUnmounted(() => {
 .login-header p {
   color: #909399;
   font-size: 14px;
+}
+
+.role-group {
+  width: 100%;
+  display: flex;
+}
+
+.role-group :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.role-group :deep(.el-radio-button__inner) {
+  width: 100%;
 }
 
 .code-input {
