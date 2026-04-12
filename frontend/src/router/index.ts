@@ -2,6 +2,10 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useUserStore } from '@/store/user'
 
+function getHomeRouteByRole(role?: string | null) {
+  return role === 'ADMIN' ? { name: 'Admin' as const } : { name: 'Dashboard' as const }
+}
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -28,12 +32,13 @@ const routes: RouteRecordRaw[] = [
     children: [
       {
         path: '',
-        redirect: '/dashboard',
+        redirect: () => getHomeRouteByRole(localStorage.getItem('userRole')),
       },
       {
         path: 'dashboard',
         name: 'Dashboard',
         component: () => import('@/views/DashboardView.vue'),
+        meta: { roles: ['STUDENT', 'TEACHER'] },
       },
       {
         path: 'courses',
@@ -155,7 +160,7 @@ router.beforeEach(async (to, _from, next) => {
 
     const valid = await userStore.validateSession()
     if (valid) {
-      next({ name: 'Dashboard' })
+      next(getHomeRouteByRole(localStorage.getItem('userRole')))
     } else {
       next()
     }
@@ -185,7 +190,7 @@ router.beforeEach(async (to, _from, next) => {
     const userRole = localStorage.getItem('userRole')
     const allowedRoles = to.meta.roles as string[]
     if (!userRole || !allowedRoles.includes(userRole)) {
-      next({ name: 'Dashboard' })
+      next(getHomeRouteByRole(userRole))
       return
     }
   }

@@ -11,48 +11,48 @@
         text-color="#ffffffa6"
         active-text-color="#ffffff"
       >
-        <el-menu-item index="/dashboard">
+        <el-menu-item :index="homeMenuPath">
           <el-icon><Odometer /></el-icon>
-          <span>首页</span>
+          <span>{{ homeMenuLabel }}</span>
         </el-menu-item>
 
-        <el-sub-menu index="courses">
+        <el-sub-menu v-if="!userStore.isAdmin" index="courses">
           <template #title>
             <el-icon><Reading /></el-icon>
-            <span>课程管理</span>
+            <span>�γ̹���</span>
           </template>
-          <el-menu-item index="/courses">课程列表</el-menu-item>
-          <el-menu-item v-if="!userStore.isStudent" index="/courses/create">创建课程</el-menu-item>
+          <el-menu-item index="/courses">�γ��б�</el-menu-item>
+          <el-menu-item v-if="!userStore.isStudent" index="/courses/create">�����γ�</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="learning">
+        <el-sub-menu v-if="userStore.isStudent" index="learning">
           <template #title>
             <el-icon><TrendCharts /></el-icon>
-            <span>学习中心</span>
+            <span>ѧϰ����</span>
           </template>
-          <el-menu-item index="/learning">学习概览</el-menu-item>
-          <el-menu-item index="/learning/ability-test">能力测试</el-menu-item>
-          <el-menu-item index="/learning/path">学习路线</el-menu-item>
+          <el-menu-item index="/learning">ѧϰ����</el-menu-item>
+          <el-menu-item index="/learning/ability-test">��������</el-menu-item>
+          <el-menu-item index="/learning/path">ѧϰ·��</el-menu-item>
         </el-sub-menu>
 
-        <el-menu-item index="/assignments">
+        <el-menu-item v-if="!userStore.isAdmin" index="/assignments">
           <el-icon><EditPen /></el-icon>
-          <span>作业管理</span>
+          <span>��ҵ����</span>
         </el-menu-item>
 
-        <el-menu-item index="/chat">
+        <el-menu-item v-if="!userStore.isAdmin" index="/chat">
           <el-icon><ChatDotRound /></el-icon>
-          <span>AI 助手</span>
+          <span>AI ����</span>
         </el-menu-item>
 
         <el-menu-item v-if="userStore.isStudent" index="/mentor">
           <el-icon><UserFilled /></el-icon>
-          <span>导师关系</span>
+          <span>��ʦ��ϵ</span>
         </el-menu-item>
 
         <el-menu-item v-if="userStore.isAdmin" index="/admin">
           <el-icon><Setting /></el-icon>
-          <span>系统管理</span>
+          <span>ϵͳ����</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -78,8 +78,8 @@
             </div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="profile">个人资料</el-dropdown-item>
-                <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+                <el-dropdown-item command="profile">��������</el-dropdown-item>
+                <el-dropdown-item command="logout" divided>�˳���¼</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -107,7 +107,14 @@ const notifyStore = useNotifyStore()
 
 const sidebarWidth = 220
 
-const activeMenu = computed(() => route.path)
+const homeMenuPath = computed(() => (userStore.isAdmin ? '/admin' : '/dashboard'))
+const homeMenuLabel = computed(() => (userStore.isAdmin ? '������ҳ' : '��ҳ'))
+const activeMenu = computed(() => {
+  if (userStore.isAdmin && route.path.startsWith('/admin')) {
+    return '/admin'
+  }
+  return route.path
+})
 
 const breadcrumbs = computed(() => {
   return route.matched
@@ -183,7 +190,6 @@ onUnmounted(() => {
   align-items: center;
   gap: 16px;
 }
-
 
 .user-info {
   display: flex;

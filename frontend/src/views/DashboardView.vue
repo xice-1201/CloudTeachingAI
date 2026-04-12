@@ -1,83 +1,214 @@
 <template>
   <div class="page-container">
     <div class="page-header">
-      <span class="page-title">é¦–é¡µ</span>
+      <span class="page-title">{{ pageTitle }}</span>
     </div>
 
-    <el-row :gutter="20" class="stat-cards">
-      <el-col :span="6" v-for="stat in stats" :key="stat.label">
-        <el-card shadow="never">
-          <div class="stat-card">
-            <el-icon :size="36" :color="stat.color"><component :is="stat.icon" /></el-icon>
-            <div class="stat-info">
-              <div class="stat-value">{{ stat.value }}</div>
-              <div class="stat-label">{{ stat.label }}</div>
+    <template v-if="isTeacherView">
+      <el-row :gutter="20" class="stat-cards">
+        <el-col :span="6" v-for="stat in teacherStats" :key="stat.label">
+          <el-card shadow="never">
+            <div class="stat-card">
+              <el-icon :size="36" :color="stat.color"><component :is="stat.icon" /></el-icon>
+              <div class="stat-info">
+                <div class="stat-value">{{ stat.value }}</div>
+                <div class="stat-label">{{ stat.label }}</div>
+              </div>
             </div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+          </el-card>
+        </el-col>
+      </el-row>
 
-    <el-row :gutter="20" style="margin-top: 20px">
-      <el-col :span="16">
-        <el-card shadow="never" header="æœ€è¿‘å­¦ä¹ ">
-          <el-table :data="recentCourses" style="width: 100%">
-            <el-table-column prop="title" label="è¯¾ç¨‹åç§°" />
-            <el-table-column prop="teacherName" label="æ•™å¸ˆ" width="120" />
-            <el-table-column label="è¿›åº¦" width="160">
-              <template #default="{ row }">
-                <el-progress :percentage="row.progress" :stroke-width="8" />
-              </template>
-            </el-table-column>
-            <el-table-column label="æ“ä½œ" width="100">
-              <template #default="{ row }">
-                <el-button type="primary" link @click="$router.push(`/courses/${row.id}`)">ç»§ç»­å­¦ä¹ </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </el-col>
-      <el-col :span="8">
-        <el-card shadow="never" header="å¾…å®Œæˆä½œä¸š">
-          <div v-if="pendingAssignments.length === 0" class="empty-tip">æš‚æ— å¾…å®Œæˆä½œä¸š</div>
-          <div v-for="a in pendingAssignments" :key="a.id" class="assignment-item" @click="$router.push(`/assignments/${a.id}`)">
-            <div class="assignment-title">{{ a.title }}</div>
-            <div class="assignment-due">æˆªæ­¢ï¼š{{ formatDate(a.dueDate) }}</div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+      <el-row :gutter="20" style="margin-top: 20px">
+        <el-col :span="16">
+          <el-card shadow="never" header="ÎÒµÄ¿Î³Ì">
+            <el-table :data="teacherCourses" style="width: 100%">
+              <el-table-column prop="title" label="¿Î³ÌÃû³Æ" />
+              <el-table-column prop="status" label="×´Ì¬" width="120">
+                <template #default="{ row }">
+                  <el-tag :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="updatedAt" label="×î½ü¸üĞÂ" width="180">
+                <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
+              </el-table-column>
+              <el-table-column label="²Ù×÷" width="120">
+                <template #default="{ row }">
+                  <el-button type="primary" link @click="$router.push(`/courses/${row.id}`)">½øÈë¿Î³Ì</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div v-if="!teacherLoading && teacherCourses.length === 0" class="empty-tip">ÔİÎŞ¿Î³Ì£¬¿ÉÏÈ´´½¨µÚÒ»ÃÅ¿Î³Ì¡£</div>
+          </el-card>
+        </el-col>
+        <el-col :span="8">
+          <el-card shadow="never" header="¿ì½İ²Ù×÷">
+            <div class="quick-actions">
+              <div class="quick-action" @click="router.push('/courses/create')">
+                <div class="quick-action-title">´´½¨¿Î³Ì</div>
+                <div class="quick-action-desc">¿ªÊ¼´î½¨ĞÂµÄ½ÌÑ§ÄÚÈİ</div>
+              </div>
+              <div class="quick-action" @click="router.push('/courses')">
+                <div class="quick-action-title">¿Î³ÌÁĞ±í</div>
+                <div class="quick-action-desc">²é¿´ºÍÎ¬»¤ÒÑÓĞ¿Î³Ì</div>
+              </div>
+              <div class="quick-action" @click="router.push('/assignments')">
+                <div class="quick-action-title">×÷Òµ¹ÜÀí</div>
+                <div class="quick-action-desc">²é¿´¿Î³Ì×÷ÒµÓëÌá½»Çé¿ö</div>
+              </div>
+              <div class="quick-action" @click="router.push('/chat')">
+                <div class="quick-action-title">AI ÖúÊÖ</div>
+                <div class="quick-action-desc">¸¨Öú±¸¿ÎÓë´ğÒÉ</div>
+              </div>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+    </template>
+
+    <template v-else>
+      <el-row :gutter="20" class="stat-cards">
+        <el-col :span="6" v-for="stat in studentStats" :key="stat.label">
+          <el-card shadow="never">
+            <div class="stat-card">
+              <el-icon :size="36" :color="stat.color"><component :is="stat.icon" /></el-icon>
+              <div class="stat-info">
+                <div class="stat-value">{{ stat.value }}</div>
+                <div class="stat-label">{{ stat.label }}</div>
+              </div>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+
+      <el-row :gutter="20" style="margin-top: 20px">
+        <el-col :span="16">
+          <el-card shadow="never" header="×î½üÑ§Ï°">
+            <el-table :data="recentCourses" style="width: 100%">
+              <el-table-column prop="title" label="¿Î³ÌÃû³Æ" />
+              <el-table-column prop="teacherName" label="½ÌÊ¦" width="120" />
+              <el-table-column label="½ø¶È" width="160">
+                <template #default="{ row }">
+                  <el-progress :percentage="row.progress" :stroke-width="8" />
+                </template>
+              </el-table-column>
+              <el-table-column label="²Ù×÷" width="100">
+                <template #default="{ row }">
+                  <el-button type="primary" link @click="$router.push(`/courses/${row.id}`)">¼ÌĞøÑ§Ï°</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div v-if="!studentLoading && recentCourses.length === 0" class="empty-tip">ÔİÎŞÒÑÑ¡¿Î³Ì¡£</div>
+          </el-card>
+        </el-col>
+        <el-col :span="8">
+          <el-card shadow="never" header="´ıÍê³É×÷Òµ">
+            <div v-if="pendingAssignments.length === 0" class="empty-tip">ÔİÎŞ´ıÍê³É×÷Òµ¡£</div>
+            <div v-for="assignment in pendingAssignments" :key="assignment.id" class="assignment-item" @click="$router.push(`/assignments/${assignment.id}`)">
+              <div class="assignment-title">{{ assignment.title }}</div>
+              <div class="assignment-due">½ØÖ¹£º{{ formatDate(assignment.dueDate) }}</div>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { Reading, EditPen, TrendCharts, ChatDotRound } from '@element-plus/icons-vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { Reading, EditPen, TrendCharts, ChatDotRound, Collection, Promotion, Document } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
-import type { Assignment } from '@/types'
+import { useUserStore } from '@/store/user'
+import type { Assignment, Course } from '@/types'
 
-const recentCourses = ref<any[]>([])
+const router = useRouter()
+const userStore = useUserStore()
+
+const isTeacherView = computed(() => userStore.isTeacher)
+const pageTitle = computed(() => (isTeacherView.value ? '½ÌÊ¦Ê×Ò³' : 'Ñ§Ï°Ê×Ò³'))
+
+const recentCourses = ref<Array<Course & { progress: number }>>([])
 const pendingAssignments = ref<Assignment[]>([])
+const teacherCourses = ref<Course[]>([])
+const studentLoading = ref(false)
+const teacherLoading = ref(false)
 
-const stats = ref([
-  { label: 'å·²é€‰è¯¾ç¨‹', value: 0, icon: Reading, color: '#409eff' },
-  { label: 'å­¦ä¹ è¿›åº¦', value: '0%', icon: TrendCharts, color: '#67c23a' },
-  { label: 'å¾…å®Œæˆä½œä¸š', value: 0, icon: EditPen, color: '#e6a23c' },
-  { label: 'AI å¯¹è¯æ¬¡æ•°', value: 0, icon: ChatDotRound, color: '#909399' },
+const studentStats = ref([
+  { label: 'ÒÑÑ¡¿Î³Ì', value: 0, icon: Reading, color: '#409eff' },
+  { label: 'Ñ§Ï°½ø¶È', value: '0%', icon: TrendCharts, color: '#67c23a' },
+  { label: '´ıÍê³É×÷Òµ', value: 0, icon: EditPen, color: '#e6a23c' },
+  { label: 'AI ¶Ô»°´ÎÊı', value: 0, icon: ChatDotRound, color: '#909399' },
+])
+
+const teacherStats = ref([
+  { label: 'ÎÒµÄ¿Î³Ì', value: 0, icon: Collection, color: '#409eff' },
+  { label: 'ÒÑ·¢²¼¿Î³Ì', value: 0, icon: Promotion, color: '#67c23a' },
+  { label: '²İ¸å¿Î³Ì', value: 0, icon: EditPen, color: '#e6a23c' },
+  { label: '¹éµµ¿Î³Ì', value: 0, icon: Document, color: '#909399' },
 ])
 
 function formatDate(date: string) {
   return new Date(date).toLocaleDateString('zh-CN')
 }
 
-onMounted(async () => {
-  const [coursesRes] = await Promise.allSettled([
-    courseApi.listEnrolledCourses({ page: 1, pageSize: 5 }),
-  ])
-  if (coursesRes.status === 'fulfilled') {
-    recentCourses.value = coursesRes.value.items.map((c) => ({ ...c, progress: Math.floor(Math.random() * 100) }))
-    stats.value[0].value = coursesRes.value.total
+function formatDateTime(date: string) {
+  return new Date(date).toLocaleString('zh-CN')
+}
+
+function statusLabel(status: string) {
+  return { DRAFT: '²İ¸å', PUBLISHED: 'ÒÑ·¢²¼', ARCHIVED: 'ÒÑ¹éµµ' }[status] ?? status
+}
+
+function statusTagType(status: string) {
+  return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info'
+}
+
+async function loadStudentDashboard() {
+  studentLoading.value = true
+  try {
+    const response = await courseApi.listEnrolledCourses({ page: 1, pageSize: 5 })
+    recentCourses.value = response.items.map((course) => ({
+      ...course,
+      progress: Math.floor(Math.random() * 100),
+    }))
+
+    studentStats.value[0].value = response.total
+
+    if (recentCourses.value.length > 0) {
+      const averageProgress = Math.round(
+        recentCourses.value.reduce((sum, course) => sum + course.progress, 0) / recentCourses.value.length,
+      )
+      studentStats.value[1].value = `${averageProgress}%`
+    }
+  } finally {
+    studentLoading.value = false
   }
+}
+
+async function loadTeacherDashboard() {
+  teacherLoading.value = true
+  try {
+    const response = await courseApi.listCourses({ page: 1, pageSize: 5 })
+    teacherCourses.value = response.items
+
+    teacherStats.value[0].value = response.total
+    teacherStats.value[1].value = response.items.filter((course) => course.status === 'PUBLISHED').length
+    teacherStats.value[2].value = response.items.filter((course) => course.status === 'DRAFT').length
+    teacherStats.value[3].value = response.items.filter((course) => course.status === 'ARCHIVED').length
+  } finally {
+    teacherLoading.value = false
+  }
+}
+
+onMounted(async () => {
+  if (isTeacherView.value) {
+    await loadTeacherDashboard()
+    return
+  }
+
+  await loadStudentDashboard()
 })
 </script>
 
@@ -85,42 +216,59 @@ onMounted(async () => {
 .stat-cards {
   margin-bottom: 4px;
 }
+
 .stat-card {
   display: flex;
   align-items: center;
   gap: 16px;
 }
+
 .stat-value {
   font-size: 28px;
   font-weight: 700;
   color: #303133;
 }
+
 .stat-label {
   font-size: 13px;
   color: #909399;
   margin-top: 4px;
 }
-.assignment-item {
+
+.assignment-item,
+.quick-action {
   padding: 12px 0;
   border-bottom: 1px solid #f0f0f0;
   cursor: pointer;
 }
-.assignment-item:last-child {
+
+.assignment-item:last-child,
+.quick-action:last-child {
   border-bottom: none;
 }
-.assignment-title {
+
+.assignment-title,
+.quick-action-title {
   font-size: 14px;
   color: #303133;
 }
-.assignment-due {
+
+.assignment-due,
+.quick-action-desc {
   font-size: 12px;
-  color: #f56c6c;
+  color: #909399;
   margin-top: 4px;
 }
+
 .empty-tip {
   color: #909399;
   font-size: 14px;
   text-align: center;
   padding: 20px 0;
+}
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
 }
 </style>
