@@ -12,7 +12,127 @@ env:
   NAMESPACE: ${{ secrets.ALIYUN_NAMESPACE }}
 
 jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      auth_changed: ${{ steps.flags.outputs.auth_changed }}
+      user_changed: ${{ steps.flags.outputs.user_changed }}
+      notify_changed: ${{ steps.flags.outputs.notify_changed }}
+      course_changed: ${{ steps.flags.outputs.course_changed }}
+      frontend_changed: ${{ steps.flags.outputs.frontend_changed }}
+      image_changed: ${{ steps.flags.outputs.image_changed }}
+      deploy_all: ${{ steps.flags.outputs.deploy_all }}
+      should_deploy: ${{ steps.flags.outputs.should_deploy }}
+      services: ${{ steps.flags.outputs.services }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: changes
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            auth:
+              - 'backend/auth-service/**'
+            user:
+              - 'backend/user-service/**'
+            notify:
+              - 'backend/notify-service/**'
+            course:
+              - 'backend/course-service/**'
+            frontend:
+              - 'frontend/**'
+            infra:
+              - 'docker-compose.yml'
+
+      - name: Prepare deploy flags
+        id: flags
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            auth_changed=true
+            user_changed=true
+            notify_changed=true
+            course_changed=true
+            frontend_changed=true
+            image_changed=true
+            deploy_all=true
+            should_deploy=true
+            services="auth-service user-service notify-service course-service frontend"
+          else
+            auth_changed="${{ steps.changes.outputs.auth }}"
+            user_changed="${{ steps.changes.outputs.user }}"
+            notify_changed="${{ steps.changes.outputs.notify }}"
+            course_changed="${{ steps.changes.outputs.course }}"
+            frontend_changed="${{ steps.changes.outputs.frontend }}"
+            infra_changed="${{ steps.changes.outputs.infra }}"
+
+            image_changed=false
+            should_deploy=false
+            deploy_all=false
+            services=""
+
+            for service_flag in "$auth_changed" "$user_changed" "$notify_changed" "$course_changed" "$frontend_changed"; do
+              if [ "$service_flag" = "true" ]; then
+                image_changed=true
+                should_deploy=true
+              fi
+            done
+
+            if [ "$infra_changed" = "true" ]; then
+              deploy_all=true
+              should_deploy=true
+              services="auth-service user-service notify-service course-service frontend"
+            else
+              if [ "$auth_changed" = "true" ]; then
+                services="$services auth-service"
+              fi
+              if [ "$user_changed" = "true" ]; then
+                services="$services user-service"
+              fi
+              if [ "$notify_changed" = "true" ]; then
+                services="$services notify-service"
+              fi
+              if [ "$course_changed" = "true" ]; then
+                services="$services course-service"
+              fi
+              if [ "$frontend_changed" = "true" ]; then
+                services="$services frontend"
+              fi
+            fi
+
+            services="$(echo "$services" | xargs)"
+          fi
+
+          echo "auth_changed=$auth_changed" >> "$GITHUB_OUTPUT"
+          echo "user_changed=$user_changed" >> "$GITHUB_OUTPUT"
+          echo "notify_changed=$notify_changed" >> "$GITHUB_OUTPUT"
+          echo "course_changed=$course_changed" >> "$GITHUB_OUTPUT"
+          echo "frontend_changed=$frontend_changed" >> "$GITHUB_OUTPUT"
+          echo "image_changed=$image_changed" >> "$GITHUB_OUTPUT"
+          echo "deploy_all=$deploy_all" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=$should_deploy" >> "$GITHUB_OUTPUT"
+          echo "services=$services" >> "$GITHUB_OUTPUT"
+
+          echo "=== Change Summary ==="
+          echo "auth_changed=$auth_changed"
+          echo "user_changed=$user_changed"
+          echo "notify_changed=$notify_changed"
+          echo "course_changed=$course_changed"
+          echo "frontend_changed=$frontend_changed"
+          echo "image_changed=$image_changed"
+          echo "deploy_all=$deploy_all"
+          echo "should_deploy=$should_deploy"
+          echo "services=$services"
+
   build-and-push:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -20,77 +140,87 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
+        if: needs.detect-changes.outputs.image_changed == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Aliyun Container Registry
+        if: needs.detect-changes.outputs.image_changed == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.ALIYUN_USERNAME }}
           password: ${{ secrets.ALIYUN_PASSWORD }}
 
-      - name: Pull and push base images
-        run: |
-          docker pull postgres:16-alpine
-          docker tag postgres:16-alpine ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/postgres:16-alpine
-          docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/postgres:16-alpine
-
-          docker pull redis:7-alpine
-          docker tag redis:7-alpine ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/redis:7-alpine
-          docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/redis:7-alpine
-
       - name: Build and push auth-service
+        if: needs.detect-changes.outputs.auth_changed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./backend/auth-service
           dockerfile: ./backend/auth-service/Dockerfile
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/auth-service:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/auth-service:latest
 
       - name: Build and push user-service
+        if: needs.detect-changes.outputs.user_changed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./backend/user-service
           dockerfile: ./backend/user-service/Dockerfile
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/user-service:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/user-service:latest
 
       - name: Build and push notify-service
+        if: needs.detect-changes.outputs.notify_changed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./backend/notify-service
           dockerfile: ./backend/notify-service/Dockerfile
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/notify-service:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/notify-service:latest
 
       - name: Build and push course-service
+        if: needs.detect-changes.outputs.course_changed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./backend/course-service
           dockerfile: ./backend/course-service/Dockerfile
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/course-service:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/course-service:latest
 
       - name: Build and push frontend
+        if: needs.detect-changes.outputs.frontend_changed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
           dockerfile: ./frontend/Dockerfile
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/frontend:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/frontend:latest
 
   deploy:
-    needs: build-and-push
+    needs:
+      - detect-changes
+      - build-and-push
+    if: needs.detect-changes.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -108,23 +238,24 @@ jobs:
           script: |
             set -e
 
+            AUTH_CHANGED="${{ needs.detect-changes.outputs.auth_changed }}"
+            USER_CHANGED="${{ needs.detect-changes.outputs.user_changed }}"
+            NOTIFY_CHANGED="${{ needs.detect-changes.outputs.notify_changed }}"
+            COURSE_CHANGED="${{ needs.detect-changes.outputs.course_changed }}"
+            FRONTEND_CHANGED="${{ needs.detect-changes.outputs.frontend_changed }}"
+            DEPLOY_ALL="${{ needs.detect-changes.outputs.deploy_all }}"
+            SERVICES="${{ needs.detect-changes.outputs.services }}"
+
             echo "=== Deploying CloudTeachingAI ==="
             echo "Time: $(date)"
+            echo "Deploy all: $DEPLOY_ALL"
+            echo "Target services: $SERVICES"
 
             cd ${{ env.DEPLOY_PATH }}
 
             git pull origin main || git fetch origin main && git reset --hard origin/main
 
             docker login -u '${{ secrets.ALIYUN_USERNAME }}' -p '${{ secrets.ALIYUN_PASSWORD }}' '${{ secrets.ALIYUN_REGISTRY }}'
-
-            echo "Pulling images..."
-            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/postgres:16-alpine
-            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/redis:7-alpine
-            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service:latest
-            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest
-            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service:latest
-            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service:latest
-            docker pull ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest
 
             cat > .env << EOF
             DB_USER=postgres
@@ -138,19 +269,15 @@ jobs:
             echo '${{ secrets.JWT_PUBLIC_KEY_BASE64 }}' | base64 -d > keys/public_key.pem
             chmod 644 keys/*.pem
 
-            echo "Stopping old containers..."
-            docker compose down --remove-orphans || true
+            pull_image_if_needed() {
+              local flag="$1"
+              local image="$2"
+              if [ "$flag" = "true" ] || [ "$DEPLOY_ALL" = "true" ]; then
+                echo "Pulling $image"
+                docker pull "$image"
+              fi
+            }
 
-            echo "Starting services..."
-            docker compose up -d
-
-            echo "Waiting for services..."
-            sleep 60
-
-            echo "=== Service Status ==="
-            docker compose ps
-
-            echo "=== Health Checks ==="
             wait_for_service() {
               local name="$1"
               local url="$2"
@@ -170,17 +297,47 @@ jobs:
               return 1
             }
 
-            wait_for_service auth-service http://localhost:8001/actuator/health 3
-            wait_for_service user-service http://localhost:8002/actuator/health 3
-            wait_for_service notify-service http://localhost:8006/actuator/health 3
-            wait_for_service course-service http://localhost:8003/actuator/health 3
+            pull_image_if_needed "$AUTH_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service:latest"
+            pull_image_if_needed "$USER_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest"
+            pull_image_if_needed "$NOTIFY_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service:latest"
+            pull_image_if_needed "$COURSE_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service:latest"
+            pull_image_if_needed "$FRONTEND_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest"
 
-            if curl -sf http://localhost:80 > /dev/null 2>&1; then
-              echo "frontend is healthy"
+            if [ "$DEPLOY_ALL" = "true" ]; then
+              echo "Applying full compose update..."
+              docker compose up -d --remove-orphans
             else
-              echo "frontend may not be fully ready yet"
-              docker compose logs --tail=200 frontend || true
-              exit 1
+              echo "Applying incremental update..."
+              for service in $SERVICES; do
+                docker compose up -d --no-deps "$service"
+              done
+            fi
+
+            echo "=== Service Status ==="
+            docker compose ps
+
+            echo "=== Health Checks ==="
+            if [ "$DEPLOY_ALL" = "true" ] || [ "$AUTH_CHANGED" = "true" ]; then
+              wait_for_service auth-service http://localhost:8001/actuator/health 3
+            fi
+            if [ "$DEPLOY_ALL" = "true" ] || [ "$USER_CHANGED" = "true" ]; then
+              wait_for_service user-service http://localhost:8002/actuator/health 3
+            fi
+            if [ "$DEPLOY_ALL" = "true" ] || [ "$NOTIFY_CHANGED" = "true" ]; then
+              wait_for_service notify-service http://localhost:8006/actuator/health 3
+            fi
+            if [ "$DEPLOY_ALL" = "true" ] || [ "$COURSE_CHANGED" = "true" ]; then
+              wait_for_service course-service http://localhost:8003/actuator/health 3
+            fi
+
+            if [ "$DEPLOY_ALL" = "true" ] || [ "$FRONTEND_CHANGED" = "true" ]; then
+              if curl -sf http://localhost:80 > /dev/null 2>&1; then
+                echo "frontend is healthy"
+              else
+                echo "frontend may not be fully ready yet"
+                docker compose logs --tail=200 frontend || true
+                exit 1
+              fi
             fi
 
             echo "Cleaning old images..."
