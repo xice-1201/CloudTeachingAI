@@ -99,6 +99,26 @@
     networks:
       - backend
 
+  assign-db:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/postgres:16-alpine
+    container_name: assign-db
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+      POSTGRES_DB: assign_db
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - assign-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
   redis:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/redis:7-alpine
     container_name: redis
@@ -251,6 +271,34 @@
       retries: 3
       start_period: 60s
 
+  assign-service:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/assign-service:latest
+    container_name: assign-service
+    restart: unless-stopped
+    depends_on:
+      assign-db:
+        condition: service_healthy
+      course-service:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:postgresql://assign-db:5432/assign_db
+      SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+      COURSE_SERVICE_URL: http://course-service:8003
+    volumes:
+      - ./keys/public_key.pem:/app/keys/public_key.pem:ro
+    ports:
+      - "8005:8005"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   frontend:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/frontend:latest
     container_name: frontend
@@ -265,6 +313,8 @@
       course-service:
         condition: service_healthy
       learn-service:
+        condition: service_healthy
+      assign-service:
         condition: service_healthy
     environment:
       TZ: Asia/Shanghai
@@ -283,4 +333,5 @@ volumes:
   notify-db-data:
   course-db-data:
   learn-db-data:
+  assign-db-data:
   redis-data:

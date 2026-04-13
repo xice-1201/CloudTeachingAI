@@ -121,6 +121,7 @@ import { useRouter } from 'vue-router'
 import { Reading, EditPen, TrendCharts, ChatDotRound, Collection, Promotion, Document } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
+import { assignApi } from '@/api/assign'
 import { useUserStore } from '@/store/user'
 import type { Assignment, Course } from '@/types'
 
@@ -197,12 +198,17 @@ async function loadStudentDashboard() {
       .slice(0, 5)
 
     studentStats.value[0].value = response.total
+    const pending = await assignApi.listPendingAssignments({ pageSize: 100 }).catch(() => [])
+    pendingAssignments.value = pending.slice(0, 5)
+    studentStats.value[2].value = pending.length
 
     if (coursesWithProgress.length > 0) {
       const averageProgress = Math.round(
         coursesWithProgress.reduce((sum, course) => sum + course.progress, 0) / coursesWithProgress.length,
       )
       studentStats.value[1].value = `${averageProgress}%`
+    } else {
+      studentStats.value[1].value = '0%'
     }
   } finally {
     studentLoading.value = false

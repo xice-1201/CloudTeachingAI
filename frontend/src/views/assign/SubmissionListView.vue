@@ -1,11 +1,16 @@
-<template>
+﻿<template>
   <div class="page-container" v-loading="loading">
     <div class="page-header">
       <span class="page-title">提交列表</span>
     </div>
 
     <el-table :data="submissions" style="width: 100%">
-      <el-table-column prop="studentId" label="学生 ID" width="160" />
+      <el-table-column prop="studentId" label="学生 ID" width="120" />
+      <el-table-column label="提交内容" min-width="260">
+        <template #default="{ row }">
+          <div class="content-preview">{{ row.content }}</div>
+        </template>
+      </el-table-column>
       <el-table-column label="提交时间" width="180">
         <template #default="{ row }">{{ formatDate(row.submittedAt) }}</template>
       </el-table-column>
@@ -22,21 +27,18 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="reviewVisible" title="复核作业" width="600px">
+    <el-dialog v-model="reviewVisible" title="复核作业" width="640px">
       <template v-if="reviewing">
-        <div style="margin-bottom: 16px">
-          <div style="font-size: 13px; color: #909399; margin-bottom: 8px">学生答案</div>
-          <p style="color: #303133; line-height: 1.7; background: #f5f7fa; padding: 12px; border-radius: 4px">
-            {{ reviewing.content }}
-          </p>
-        </div>
-        <el-form :model="reviewForm" label-width="80px">
+        <div class="section-label">学生答案</div>
+        <div class="answer-box">{{ reviewing.content }}</div>
+
+        <el-form :model="reviewForm" label-width="80px" style="margin-top: 20px">
           <el-form-item label="得分">
             <el-input-number v-model="reviewForm.score" :min="0" :max="maxScore" />
             <span style="margin-left: 8px; color: #909399">/ {{ maxScore }}</span>
           </el-form-item>
           <el-form-item label="反馈">
-            <el-input v-model="reviewForm.feedback" type="textarea" :rows="4" placeholder="输入反馈意见..." />
+            <el-input v-model="reviewForm.feedback" type="textarea" :rows="5" placeholder="输入教师反馈..." />
           </el-form-item>
         </el-form>
       </template>
@@ -49,42 +51,68 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { assignApi } from '@/api/assign'
 import type { Submission } from '@/types'
 
 const route = useRoute()
+
 const loading = ref(false)
 const submitting = ref(false)
 const submissions = ref<Submission[]>([])
 const reviewing = ref<Submission | null>(null)
 const reviewVisible = ref(false)
 const maxScore = ref(100)
-const reviewForm = reactive({ score: 0, feedback: '' })
+const reviewForm = reactive({
+  score: 0,
+  feedback: '',
+})
 
-function formatDate(d: string) { return new Date(d).toLocaleString('zh-CN') }
-function tagType(s: string) { return { PENDING: 'warning', GRADED: 'info', REVIEWED: 'success' }[s] ?? 'info' }
-function statusLabel(s: string) { return { PENDING: '待批改', GRADED: 'AI已批改', REVIEWED: '已复核' }[s] ?? s }
+function formatDate(value: string) {
+  return new Date(value).toLocaleString('zh-CN')
+}
 
-function openReview(sub: Submission) {
-  reviewing.value = sub
-  reviewForm.score = sub.score ?? 0
-  reviewForm.feedback = sub.feedback ?? ''
+function tagType(status: string) {
+  return {
+    SUBMITTED: 'warning',
+    AI_GRADING: 'warning',
+    AI_GRADED: 'info',
+    GRADING_FAILED: 'danger',
+    PENDING_MANUAL: 'warning',
+    REVIEWED: 'success',
+  }[status] ?? 'info'
+}
+
+function statusLabel(status: string) {
+  return {
+    SUBMITTED: '已提交',
+    AI_GRADING: 'AI 批改中',
+    AI_GRADED: 'AI 已批改',
+    GRADING_FAILED: '批改失败',
+    PENDING_MANUAL: '待人工批改',
+    REVIEWED: '已复核',
+  }[status] ?? status
+}
+
+function openReview(submission: Submission) {
+  reviewing.value = submission
+  reviewForm.score = submission.score ?? 0
+  reviewForm.feedback = submission.feedback ?? ''
   reviewVisible.value = true
 }
 
 async function handleReview() {
   submitting.value = true
   try {
-    await assignApi.reviewSubmission(reviewing.value!.id, reviewForm)
-    ElMessage.success('复核完成')
-    reviewVisible.value = false
-    const idx = submissions.value.findIndex((s) => s.id === reviewing.value!.id)
-    if (idx !== -1) {
-      submissions.value[idx] = { ...submissions.value[idx], ...reviewForm, status: 'REVIEWED' }
+    const reviewed = await assignApi.reviewSubmission(String(reviewing.value!.id), reviewForm)
+    const index = submissions.value.findIndex((submission) => submission.id === reviewed.id)
+    if (index !== -1) {
+      submissions.value[index] = reviewed
     }
+    reviewVisible.value = false
+    ElMessage.success('复核完成')
   } finally {
     submitting.value = false
   }
@@ -93,13 +121,34 @@ async function handleReview() {
 onMounted(async () => {
   loading.value = true
   try {
-    const id = route.params.id as string
-    const assignment = await assignApi.getAssignment(id)
+    const assignmentId = String(route.params.id)
+    const assignment = await assignApi.getAssignment(assignmentId)
     maxScore.value = assignment.maxScore
-    const res = await assignApi.listSubmissions(id, { page: 1, pageSize: 100 })
-    submissions.value = res.items
+    const response = await assignApi.listSubmissions(assignmentId, { page: 1, pageSize: 100 })
+    submissions.value = response.items
   } finally {
     loading.value = false
   }
 })
 </script>
+
+<style scoped>
+.content-preview,
+.answer-box {
+  color: #606266;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.answer-box {
+  background: #f5f7fa;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.section-label {
+  font-size: 13px;
+  color: #909399;
+  margin-bottom: 8px;
+}
+</style>

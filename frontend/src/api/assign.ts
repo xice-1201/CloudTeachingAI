@@ -5,6 +5,9 @@ export const assignApi = {
   listAssignments: (courseId: string, params?: { page?: number; pageSize?: number }): Promise<PageResponse<Assignment>> =>
     request.get(`/courses/${courseId}/assignments`, { params }),
 
+  listPendingAssignments: (params?: { pageSize?: number }): Promise<Assignment[]> =>
+    request.get('/assignments/pending', { params }),
+
   getAssignment: (id: string): Promise<Assignment> =>
     request.get(`/assignments/${id}`),
 

@@ -95,8 +95,12 @@ export interface PathResource {
 export interface Assignment {
   id: number
   courseId: number
+  courseTitle?: string
+  teacherId?: number
   title: string
   description: string
+  gradingCriteria?: string
+  submitType?: 'TEXT' | 'FILE' | 'BOTH'
   dueDate: string
   maxScore: number
   createdAt: string
@@ -110,7 +114,7 @@ export interface Submission {
   attachments?: string[]
   score?: number
   feedback?: string
-  status: 'PENDING' | 'GRADED' | 'REVIEWED'
+  status: 'SUBMITTED' | 'AI_GRADING' | 'AI_GRADED' | 'GRADING_FAILED' | 'PENDING_MANUAL' | 'REVIEWED'
   submittedAt: string
   gradedAt?: string
 }

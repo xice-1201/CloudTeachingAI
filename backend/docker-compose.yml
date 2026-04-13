@@ -86,6 +86,23 @@ services:
       timeout: 5s
       retries: 5
 
+  assign-db:
+    image: postgres:16
+    container_name: assign-db
+    environment:
+      POSTGRES_DB: assign_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5437:5432"
+    volumes:
+      - assign-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:7
     container_name: redis
@@ -136,11 +153,33 @@ services:
     ports:
       - "8004:8004"
 
+  assign-service:
+    build:
+      context: ./assign-service
+      dockerfile: Dockerfile
+    container_name: assign-service
+    depends_on:
+      assign-db:
+        condition: service_healthy
+      course-service:
+        condition: service_started
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:postgresql://assign-db:5432/assign_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      COURSE_SERVICE_URL: http://course-service:8003
+    volumes:
+      - ../keys/public_key.pem:/app/keys/public_key.pem:ro
+    ports:
+      - "8005:8005"
+
 volumes:
   auth-db-data:
   user-db-data:
   notify-db-data:
   course-db-data:
   learn-db-data:
+  assign-db-data:
   redis-data:
 

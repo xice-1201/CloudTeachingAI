@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-container" v-loading="loading">
     <template v-if="assignment">
       <div class="page-header">
@@ -11,10 +11,13 @@
       <el-row :gutter="20">
         <el-col :span="16">
           <el-card shadow="never" header="作业说明" style="margin-bottom: 20px">
-            <p style="line-height: 1.8; color: #606266">{{ assignment.description }}</p>
+            <p class="description">{{ assignment.description }}</p>
+            <div v-if="assignment.gradingCriteria" class="criteria">
+              <div class="section-label">评分标准</div>
+              <p class="description">{{ assignment.gradingCriteria }}</p>
+            </div>
           </el-card>
 
-          <!-- 学生提交区 -->
           <el-card v-if="userStore.isStudent" shadow="never" :header="submission ? '我的提交' : '提交作业'">
             <template v-if="submission">
               <el-descriptions :column="2" border>
@@ -26,18 +29,38 @@
                   {{ submission.score }} / {{ assignment.maxScore }}
                 </el-descriptions-item>
               </el-descriptions>
-              <div v-if="submission.feedback" style="margin-top: 16px">
-                <div style="font-size: 13px; color: #909399; margin-bottom: 8px">教师反馈</div>
-                <p style="color: #606266; line-height: 1.7">{{ submission.feedback }}</p>
+              <div class="section-block">
+                <div class="section-label">提交内容</div>
+                <p class="description">{{ submission.content }}</p>
+              </div>
+              <div v-if="submission.feedback" class="section-block">
+                <div class="section-label">教师反馈</div>
+                <p class="description">{{ submission.feedback }}</p>
               </div>
             </template>
+
             <template v-else>
+              <el-alert
+                v-if="isOverdue"
+                type="warning"
+                :closable="false"
+                title="当前作业已过截止时间，不能再提交"
+                style="margin-bottom: 16px"
+              />
               <el-form ref="formRef" :model="form" :rules="rules">
                 <el-form-item prop="content">
-                  <el-input v-model="form.content" type="textarea" :rows="8" placeholder="请输入作业内容..." />
+                  <el-input
+                    v-model="form.content"
+                    type="textarea"
+                    :rows="10"
+                    placeholder="请输入作业内容..."
+                    :disabled="isOverdue"
+                  />
                 </el-form-item>
                 <el-form-item>
-                  <el-button type="primary" :loading="submitting" @click="handleSubmit">提交作业</el-button>
+                  <el-button type="primary" :loading="submitting" :disabled="isOverdue" @click="handleSubmit">
+                    提交作业
+                  </el-button>
                 </el-form-item>
               </el-form>
             </template>
@@ -47,8 +70,11 @@
         <el-col :span="8">
           <el-card shadow="never" header="作业信息">
             <el-descriptions :column="1" border>
+              <el-descriptions-item label="所属课程">{{ assignment.courseTitle || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="提交方式">{{ submitTypeLabel(assignment.submitType) }}</el-descriptions-item>
               <el-descriptions-item label="满分">{{ assignment.maxScore }} 分</el-descriptions-item>
               <el-descriptions-item label="截止时间">{{ formatDate(assignment.dueDate) }}</el-descriptions-item>
+              <el-descriptions-item label="发布时间">{{ formatDate(assignment.createdAt) }}</el-descriptions-item>
             </el-descriptions>
           </el-card>
         </el-col>
@@ -58,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -68,6 +94,7 @@ import type { Assignment, Submission } from '@/types'
 
 const route = useRoute()
 const userStore = useUserStore()
+
 const loading = ref(false)
 const submitting = ref(false)
 const assignment = ref<Assignment | null>(null)
@@ -75,21 +102,51 @@ const submission = ref<Submission | null>(null)
 const formRef = ref<FormInstance>()
 const form = reactive({ content: '' })
 
-const isOverdue = computed(() => assignment.value ? new Date(assignment.value.dueDate) < new Date() : false)
+const isOverdue = computed(() => assignment.value ? new Date(assignment.value.dueDate).getTime() < Date.now() : false)
 
 const rules: FormRules = {
   content: [{ required: true, message: '请输入作业内容', trigger: 'blur' }],
 }
 
-function formatDate(d: string) { return new Date(d).toLocaleString('zh-CN') }
-function submissionTagType(s: string) { return { PENDING: 'warning', GRADED: 'info', REVIEWED: 'success' }[s] ?? 'info' }
-function submissionLabel(s: string) { return { PENDING: '待批改', GRADED: 'AI已批改', REVIEWED: '已复核' }[s] ?? s }
+function formatDate(value: string) {
+  return new Date(value).toLocaleString('zh-CN')
+}
+
+function submitTypeLabel(type?: string) {
+  return {
+    TEXT: '文本',
+    FILE: '文件',
+    BOTH: '文本 + 文件',
+  }[type ?? 'TEXT'] ?? type ?? '-'
+}
+
+function submissionTagType(status: string) {
+  return {
+    SUBMITTED: 'warning',
+    AI_GRADING: 'warning',
+    AI_GRADED: 'info',
+    GRADING_FAILED: 'danger',
+    PENDING_MANUAL: 'warning',
+    REVIEWED: 'success',
+  }[status] ?? 'info'
+}
+
+function submissionLabel(status: string) {
+  return {
+    SUBMITTED: '已提交',
+    AI_GRADING: 'AI 批改中',
+    AI_GRADED: 'AI 已批改',
+    GRADING_FAILED: '批改失败',
+    PENDING_MANUAL: '待人工批改',
+    REVIEWED: '已复核',
+  }[status] ?? status
+}
 
 async function handleSubmit() {
   await formRef.value?.validate()
   submitting.value = true
   try {
-    submission.value = await assignApi.submitAssignment(assignment.value!.id, { content: form.content })
+    submission.value = await assignApi.submitAssignment(String(assignment.value!.id), { content: form.content })
     ElMessage.success('作业已提交')
   } finally {
     submitting.value = false
@@ -99,13 +156,32 @@ async function handleSubmit() {
 onMounted(async () => {
   loading.value = true
   try {
-    const id = route.params.id as string
-    assignment.value = await assignApi.getAssignment(id)
+    const assignmentId = String(route.params.id)
+    assignment.value = await assignApi.getAssignment(assignmentId)
     if (userStore.isStudent) {
-      submission.value = await assignApi.getMySubmission(id).catch(() => null)
+      submission.value = await assignApi.getMySubmission(assignmentId).catch(() => null)
     }
   } finally {
     loading.value = false
   }
 })
 </script>
+
+<style scoped>
+.description {
+  color: #606266;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.criteria,
+.section-block {
+  margin-top: 16px;
+}
+
+.section-label {
+  font-size: 13px;
+  color: #909399;
+  margin-bottom: 8px;
+}
+</style>
