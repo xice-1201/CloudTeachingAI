@@ -208,6 +208,7 @@ public class UserService {
 
         sendWelcomeNotification(user);
         sendTeacherApprovalNotification(user);
+        sendTeacherApprovalEmail(user);
         log.info("Teacher registration application approved: applicationId={}, userId={}", applicationId, user.getId());
         return TeacherRegistrationApplicationResponse.from(application);
     }
@@ -273,6 +274,14 @@ public class UserService {
             ));
         } catch (Exception e) {
             log.warn("Failed to send teacher approval notification for user {}", user.getId(), e);
+        }
+    }
+
+    private void sendTeacherApprovalEmail(User user) {
+        try {
+            authServiceClient.sendTeacherApprovalEmail(user.getEmail(), user.getUsername());
+        } catch (Exception e) {
+            log.warn("Failed to send teacher approval email for user {}", user.getId(), e);
         }
     }
 

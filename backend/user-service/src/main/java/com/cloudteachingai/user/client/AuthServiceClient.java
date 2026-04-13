@@ -20,4 +20,10 @@ public interface AuthServiceClient {
             @RequestParam String email,
             @RequestParam String passwordHash
     );
+
+    @PostMapping("/api/v1/auth/internal/send-teacher-approval-email")
+    void sendTeacherApprovalEmail(
+            @RequestParam String email,
+            @RequestParam String username
+    );
 }

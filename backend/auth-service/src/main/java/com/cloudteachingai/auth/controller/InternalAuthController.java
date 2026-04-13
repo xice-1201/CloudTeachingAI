@@ -2,6 +2,7 @@ package com.cloudteachingai.auth.controller;
 
 import com.cloudteachingai.auth.dto.ApiResponse;
 import com.cloudteachingai.auth.service.AuthService;
+import com.cloudteachingai.auth.service.MailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 public class InternalAuthController {
 
     private final AuthService authService;
+    private final MailService mailService;
 
     @PostMapping("/create-credential")
     public ApiResponse<Void> createCredential(
@@ -31,6 +33,15 @@ public class InternalAuthController {
             @RequestParam String passwordHash) {
         log.info("Create credential with hash request: userId={}, email={}", userId, email);
         authService.createCredentialWithHash(userId, email, passwordHash);
+        return ApiResponse.success(null);
+    }
+
+    @PostMapping("/send-teacher-approval-email")
+    public ApiResponse<Void> sendTeacherApprovalEmail(
+            @RequestParam String email,
+            @RequestParam String username) {
+        log.info("Send teacher approval email request: email={}", email);
+        mailService.sendTeacherApprovalEmail(email, username);
         return ApiResponse.success(null);
     }
 }
