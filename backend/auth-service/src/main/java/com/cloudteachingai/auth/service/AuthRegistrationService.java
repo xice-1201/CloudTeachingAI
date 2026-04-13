@@ -141,9 +141,10 @@ public class AuthRegistrationService {
         try {
             UserRoleResponse response = userServiceClient.getUserByEmail(email);
             return response != null && response.getData() != null;
-        } catch (FeignException.NotFound e) {
-            return false;
         } catch (FeignException e) {
+            if (isNotFoundResponse(e)) {
+                return false;
+            }
             log.error("Failed to verify user existence for email={}", email, e);
             throw BusinessException.internalError("用户服务暂时不可用，请稍后重试");
         }
@@ -154,12 +155,26 @@ public class AuthRegistrationService {
             TeacherRegistrationApplicationClientResponse response =
                     userServiceClient.getPendingTeacherRegistrationApplicationByEmail(email);
             return response != null && response.getData() != null;
-        } catch (FeignException.NotFound e) {
-            return false;
         } catch (FeignException e) {
+            if (isNotFoundResponse(e)) {
+                return false;
+            }
             log.error("Failed to verify teacher registration application for email={}", email, e);
             throw BusinessException.internalError("用户服务暂时不可用，请稍后重试");
         }
+    }
+
+    private boolean isNotFoundResponse(FeignException e) {
+        if (e.status() == 404) {
+            return true;
+        }
+
+        if (e.status() != 400) {
+            return false;
+        }
+
+        String content = e.contentUTF8();
+        return content != null && content.contains("\"code\":40401");
     }
 
     private String generateCode() {
