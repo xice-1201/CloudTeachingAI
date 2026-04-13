@@ -120,6 +120,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Reading, EditPen, TrendCharts, ChatDotRound, Collection, Promotion, Document } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
+import { learnApi } from '@/api/learn'
 import { useUserStore } from '@/store/user'
 import type { Assignment, Course } from '@/types'
 
@@ -168,17 +169,38 @@ function statusTagType(status: string) {
 async function loadStudentDashboard() {
   studentLoading.value = true
   try {
-    const response = await courseApi.listEnrolledCourses({ page: 1, pageSize: 5 })
-    recentCourses.value = response.items.map((course) => ({
-      ...course,
-      progress: Math.floor(Math.random() * 100),
-    }))
+    const response = await courseApi.listEnrolledCourses({ page: 1, pageSize: 100 })
+    const coursesWithProgress = await Promise.all(
+      response.items.map(async (course) => {
+        const progress = await learnApi.getCourseProgress(String(course.id)).catch(() => ({
+          courseId: course.id,
+          progress: 0,
+          totalResources: 0,
+          completedResources: 0,
+          lastLearnedAt: null,
+        }))
+
+        return {
+          ...course,
+          progress: Math.round(progress.progress * 100),
+          lastLearnedAt: progress.lastLearnedAt,
+        }
+      }),
+    )
+
+    recentCourses.value = coursesWithProgress
+      .sort((a, b) => {
+        const aTime = a.lastLearnedAt ? new Date(a.lastLearnedAt).getTime() : 0
+        const bTime = b.lastLearnedAt ? new Date(b.lastLearnedAt).getTime() : 0
+        return bTime - aTime
+      })
+      .slice(0, 5)
 
     studentStats.value[0].value = response.total
 
-    if (recentCourses.value.length > 0) {
+    if (coursesWithProgress.length > 0) {
       const averageProgress = Math.round(
-        recentCourses.value.reduce((sum, course) => sum + course.progress, 0) / recentCourses.value.length,
+        coursesWithProgress.reduce((sum, course) => sum + course.progress, 0) / coursesWithProgress.length,
       )
       studentStats.value[1].value = `${averageProgress}%`
     }

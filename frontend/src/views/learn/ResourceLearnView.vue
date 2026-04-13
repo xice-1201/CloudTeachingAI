@@ -53,16 +53,22 @@ async function handleTimeUpdate() {
 
 async function handleEnded() {
   if (!resource.value) return
-  await learnApi.updateProgress(resource.value.id, { progress: 1 })
+  await learnApi.updateProgress(resource.value.id, {
+    courseId: Number(route.params.courseId),
+    progress: 1,
+    lastPosition: videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined,
+  })
   if (progress.value) { progress.value.progress = 1; progress.value.completed = true }
 }
 
 async function saveProgress() {
-  if (!resource.value || !videoEl.value) return
-  const pct = videoEl.value.currentTime / (videoEl.value.duration || 1)
+  if (!resource.value) return
+  const isVideo = resource.value.type === 'VIDEO'
+  const pct = isVideo && videoEl.value ? videoEl.value.currentTime / (videoEl.value.duration || 1) : 1
   await learnApi.updateProgress(resource.value.id, {
+    courseId: Number(route.params.courseId),
     progress: pct,
-    lastPosition: Math.floor(videoEl.value.currentTime),
+    lastPosition: isVideo && videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined,
   })
 }
 
@@ -83,6 +89,12 @@ onMounted(async () => {
       if (res.type === 'VIDEO' && videoEl.value) {
         videoEl.value.src = url
         if (prog?.lastPosition) videoEl.value.currentTime = prog.lastPosition
+      } else if (!prog?.completed) {
+        const saved = await learnApi.updateProgress(res.id, {
+          courseId: Number(route.params.courseId),
+          progress: 1,
+        })
+        progress.value = saved
       }
     }
 

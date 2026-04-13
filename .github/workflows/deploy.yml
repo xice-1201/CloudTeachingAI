@@ -17,6 +17,7 @@ on:
           - user-service
           - notify-service
           - course-service
+          - learn-service
           - frontend
 
 env:
@@ -32,6 +33,7 @@ jobs:
       user_changed: ${{ steps.flags.outputs.user_changed }}
       notify_changed: ${{ steps.flags.outputs.notify_changed }}
       course_changed: ${{ steps.flags.outputs.course_changed }}
+      learn_changed: ${{ steps.flags.outputs.learn_changed }}
       frontend_changed: ${{ steps.flags.outputs.frontend_changed }}
       image_changed: ${{ steps.flags.outputs.image_changed }}
       deploy_all: ${{ steps.flags.outputs.deploy_all }}
@@ -58,6 +60,8 @@ jobs:
               - 'backend/notify-service/**'
             course:
               - 'backend/course-service/**'
+            learn:
+              - 'backend/learn-service/**'
             frontend:
               - 'frontend/**'
             infra:
@@ -74,6 +78,7 @@ jobs:
             user_changed=false
             notify_changed=false
             course_changed=false
+            learn_changed=false
             frontend_changed=false
             image_changed=false
             deploy_all=false
@@ -84,10 +89,11 @@ jobs:
               user_changed=true
               notify_changed=true
               course_changed=true
+              learn_changed=true
               frontend_changed=true
               image_changed=true
               deploy_all=true
-              services="auth-service user-service notify-service course-service frontend"
+              services="auth-service user-service notify-service course-service learn-service frontend"
             else
               case "$deploy_target" in
                 auth-service)
@@ -110,6 +116,11 @@ jobs:
                   image_changed=true
                   services="course-service frontend"
                   ;;
+                learn-service)
+                  learn_changed=true
+                  image_changed=true
+                  services="learn-service frontend"
+                  ;;
                 frontend)
                   frontend_changed=true
                   image_changed=true
@@ -126,6 +137,7 @@ jobs:
             user_changed="${{ steps.changes.outputs.user }}"
             notify_changed="${{ steps.changes.outputs.notify }}"
             course_changed="${{ steps.changes.outputs.course }}"
+            learn_changed="${{ steps.changes.outputs.learn }}"
             frontend_changed="${{ steps.changes.outputs.frontend }}"
             infra_changed="${{ steps.changes.outputs.infra }}"
 
@@ -134,7 +146,7 @@ jobs:
             deploy_all=false
             services=""
 
-            for service_flag in "$auth_changed" "$user_changed" "$notify_changed" "$course_changed" "$frontend_changed"; do
+            for service_flag in "$auth_changed" "$user_changed" "$notify_changed" "$course_changed" "$learn_changed" "$frontend_changed"; do
               if [ "$service_flag" = "true" ]; then
                 image_changed=true
                 should_deploy=true
@@ -144,7 +156,7 @@ jobs:
             if [ "$infra_changed" = "true" ]; then
               deploy_all=true
               should_deploy=true
-              services="auth-service user-service notify-service course-service frontend"
+              services="auth-service user-service notify-service course-service learn-service frontend"
             else
               if [ "$auth_changed" = "true" ]; then
                 services="$services auth-service"
@@ -158,7 +170,10 @@ jobs:
               if [ "$course_changed" = "true" ]; then
                 services="$services course-service"
               fi
-              if [ "$auth_changed" = "true" ] || [ "$user_changed" = "true" ] || [ "$notify_changed" = "true" ] || [ "$course_changed" = "true" ]; then
+              if [ "$learn_changed" = "true" ]; then
+                services="$services learn-service"
+              fi
+              if [ "$auth_changed" = "true" ] || [ "$user_changed" = "true" ] || [ "$notify_changed" = "true" ] || [ "$course_changed" = "true" ] || [ "$learn_changed" = "true" ]; then
                 services="$services frontend"
               fi
               if [ "$frontend_changed" = "true" ]; then
@@ -173,6 +188,7 @@ jobs:
           echo "user_changed=$user_changed" >> "$GITHUB_OUTPUT"
           echo "notify_changed=$notify_changed" >> "$GITHUB_OUTPUT"
           echo "course_changed=$course_changed" >> "$GITHUB_OUTPUT"
+          echo "learn_changed=$learn_changed" >> "$GITHUB_OUTPUT"
           echo "frontend_changed=$frontend_changed" >> "$GITHUB_OUTPUT"
           echo "image_changed=$image_changed" >> "$GITHUB_OUTPUT"
           echo "deploy_all=$deploy_all" >> "$GITHUB_OUTPUT"
@@ -184,6 +200,7 @@ jobs:
           echo "user_changed=$user_changed"
           echo "notify_changed=$notify_changed"
           echo "course_changed=$course_changed"
+          echo "learn_changed=$learn_changed"
           echo "frontend_changed=$frontend_changed"
           echo "image_changed=$image_changed"
           echo "deploy_all=$deploy_all"
@@ -263,6 +280,19 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/course-service:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/course-service:latest
 
+      - name: Build and push learn-service
+        if: needs.detect-changes.outputs.learn_changed == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/learn-service
+          dockerfile: ./backend/learn-service/Dockerfile
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/learn-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/learn-service:latest
+
       - name: Build and push frontend
         if: needs.detect-changes.outputs.frontend_changed == 'true'
         uses: docker/build-push-action@v5
@@ -303,6 +333,7 @@ jobs:
             USER_CHANGED="${{ needs.detect-changes.outputs.user_changed }}"
             NOTIFY_CHANGED="${{ needs.detect-changes.outputs.notify_changed }}"
             COURSE_CHANGED="${{ needs.detect-changes.outputs.course_changed }}"
+            LEARN_CHANGED="${{ needs.detect-changes.outputs.learn_changed }}"
             FRONTEND_CHANGED="${{ needs.detect-changes.outputs.frontend_changed }}"
             DEPLOY_ALL="${{ needs.detect-changes.outputs.deploy_all }}"
             SERVICES="${{ needs.detect-changes.outputs.services }}"
@@ -388,6 +419,7 @@ jobs:
             pull_image_if_needed "$USER_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest"
             pull_image_if_needed "$NOTIFY_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service:latest"
             pull_image_if_needed "$COURSE_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service:latest"
+            pull_image_if_needed "$LEARN_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/learn-service:latest"
             pull_image_if_needed "$FRONTEND_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest"
             echo "Finished image pull phase"
             echo "Selecting compose update strategy..."
@@ -449,6 +481,9 @@ jobs:
             if [ "$DEPLOY_ALL" = "true" ] || [ "$COURSE_CHANGED" = "true" ]; then
               wait_for_service course-service http://localhost:8003/actuator/health 3
             fi
+            if [ "$DEPLOY_ALL" = "true" ] || [ "$LEARN_CHANGED" = "true" ]; then
+              wait_for_service learn-service http://localhost:8004/actuator/health 3
+            fi
 
             if [ "$DEPLOY_ALL" = "true" ] || [ "$FRONTEND_CHANGED" = "true" ]; then
               if curl -sf http://localhost:80 > /dev/null 2>&1; then
@@ -470,3 +505,4 @@ jobs:
             echo "user-service: http://${{ secrets.SERVER_HOST }}:8002"
             echo "notify-service: http://${{ secrets.SERVER_HOST }}:8006"
             echo "course-service: http://${{ secrets.SERVER_HOST }}:8003"
+            echo "learn-service: http://${{ secrets.SERVER_HOST }}:8004"

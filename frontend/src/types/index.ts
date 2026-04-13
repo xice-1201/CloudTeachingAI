@@ -62,6 +62,14 @@ export interface LearningProgress {
   lastAccessedAt: string
 }
 
+export interface CourseProgress {
+  courseId: number
+  progress: number
+  totalResources: number
+  completedResources: number
+  lastLearnedAt?: string | null
+}
+
 export interface AbilityMap {
   knowledgePointId: number
   knowledgePointName: string
