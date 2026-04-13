@@ -43,6 +43,9 @@ export const courseApi = {
   listResources: (chapterId: string): Promise<Resource[]> =>
     request.get(`/chapters/${chapterId}/resources`),
 
+  getResource: (resourceId: string): Promise<Resource> =>
+    request.get(`/resources/${resourceId}`),
+
   createResource: (chapterId: string, data: Partial<Resource>): Promise<Resource> =>
     request.post(`/chapters/${chapterId}/resources`, data),
 

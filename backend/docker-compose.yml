@@ -52,6 +52,23 @@ services:
       timeout: 5s
       retries: 5
 
+  course-db:
+    image: postgres:16
+    container_name: course-db
+    environment:
+      POSTGRES_DB: course_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+    volumes:
+      - course-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:7
     container_name: redis
@@ -70,8 +87,14 @@ services:
       context: ./course-service
       dockerfile: Dockerfile
     container_name: course-service
+    depends_on:
+      course-db:
+        condition: service_healthy
     environment:
       TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:postgresql://course-db:5432/course_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
     volumes:
       - ../keys/public_key.pem:/app/keys/public_key.pem:ro
     ports:
@@ -81,5 +104,6 @@ volumes:
   auth-db-data:
   user-db-data:
   notify-db-data:
+  course-db-data:
   redis-data:
 

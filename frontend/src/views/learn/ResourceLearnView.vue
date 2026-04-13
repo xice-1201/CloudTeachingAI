@@ -71,7 +71,7 @@ onMounted(async () => {
   try {
     const resourceId = route.params.resourceId as string
     const [res, prog] = await Promise.all([
-      courseApi.listResources(route.params.courseId as string).then((rs) => rs.find((r) => r.id === resourceId)),
+      courseApi.getResource(resourceId),
       learnApi.getProgress(resourceId).catch(() => null),
     ])
     resource.value = res ?? null

@@ -50,6 +50,16 @@ public class JwtUtil {
         return Long.parseLong(String.valueOf(userId));
     }
 
+    public String getRoleFromToken(String token) {
+        Claims claims = Jwts.parser()
+                .verifyWith(publicKey)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+        Object role = claims.get("role");
+        return role == null ? null : String.valueOf(role);
+    }
+
     private PublicKey loadPublicKey(String publicKeyPath) throws Exception {
         String pem = Files.readString(Paths.get(publicKeyPath));
         String normalized = pem

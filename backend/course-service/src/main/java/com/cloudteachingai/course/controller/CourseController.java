@@ -15,6 +15,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -41,8 +42,8 @@ public class CourseController {
             @RequestParam(defaultValue = "20") int pageSize,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String status) {
-        extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.listCourses(page, pageSize));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.listCourses(userContext, page, pageSize, keyword, status));
     }
 
     @GetMapping("/courses/enrolled")
@@ -50,24 +51,24 @@ public class CourseController {
             @RequestHeader("Authorization") String authorization,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.listEnrolledCourses(page, pageSize));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.listEnrolledCourses(userContext, page, pageSize));
     }
 
     @GetMapping("/courses/{id}")
     public ApiResponse<CourseResponse> getCourse(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long id) {
-        Long userId = extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.getCourse(id, userId));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.getCourse(id, userContext));
     }
 
     @PostMapping("/courses")
     public ApiResponse<CourseResponse> createCourse(
             @RequestHeader("Authorization") String authorization,
             @Valid @RequestBody CourseUpsertRequest request) {
-        Long userId = extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.createCourse(request, userId));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.createCourse(request, userContext));
     }
 
     @PutMapping("/courses/{id}")
@@ -75,13 +76,16 @@ public class CourseController {
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long id,
             @Valid @RequestBody CourseUpsertRequest request) {
-        Long userId = extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.updateCourse(id, request, userId));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.updateCourse(id, request, userContext));
     }
 
     @DeleteMapping("/courses/{id}")
-    public ApiResponse<Void> deleteCourse(@RequestHeader("Authorization") String authorization, @PathVariable Long id) {
-        extractUserId(authorization);
+    public ApiResponse<Void> deleteCourse(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long id) {
+        UserContext userContext = extractUserContext(authorization);
+        courseFacadeService.deleteCourse(id, userContext);
         return ApiResponse.success(null);
     }
 
@@ -89,13 +93,25 @@ public class CourseController {
     public ApiResponse<CourseResponse> publishCourse(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long id) {
-        Long userId = extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.publishCourse(id, userId));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.publishCourse(id, userContext));
     }
 
     @PostMapping("/courses/{id}/enroll")
-    public ApiResponse<Void> enrollCourse(@RequestHeader("Authorization") String authorization, @PathVariable Long id) {
-        extractUserId(authorization);
+    public ApiResponse<Void> enrollCourse(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long id) {
+        UserContext userContext = extractUserContext(authorization);
+        courseFacadeService.enrollCourse(id, userContext);
+        return ApiResponse.success(null);
+    }
+
+    @DeleteMapping("/courses/{id}/enroll")
+    public ApiResponse<Void> unenrollCourse(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long id) {
+        UserContext userContext = extractUserContext(authorization);
+        courseFacadeService.unenrollCourse(id, userContext);
         return ApiResponse.success(null);
     }
 
@@ -103,8 +119,8 @@ public class CourseController {
     public ApiResponse<List<ChapterResponse>> listChapters(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long courseId) {
-        extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.listChapters(courseId));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.listChapters(courseId, userContext));
     }
 
     @PostMapping("/courses/{courseId}/chapters")
@@ -112,8 +128,8 @@ public class CourseController {
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long courseId,
             @Valid @RequestBody ChapterUpsertRequest request) {
-        extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.createChapter(courseId, request));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.createChapter(courseId, request, userContext));
     }
 
     @PutMapping("/courses/{courseId}/chapters/{chapterId}")
@@ -122,8 +138,8 @@ public class CourseController {
             @PathVariable Long courseId,
             @PathVariable Long chapterId,
             @Valid @RequestBody ChapterUpsertRequest request) {
-        extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.updateChapter(courseId, chapterId, request));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.updateChapter(courseId, chapterId, request, userContext));
     }
 
     @DeleteMapping("/courses/{courseId}/chapters/{chapterId}")
@@ -131,7 +147,8 @@ public class CourseController {
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long courseId,
             @PathVariable Long chapterId) {
-        extractUserId(authorization);
+        UserContext userContext = extractUserContext(authorization);
+        courseFacadeService.deleteChapter(courseId, chapterId, userContext);
         return ApiResponse.success(null);
     }
 
@@ -139,8 +156,16 @@ public class CourseController {
     public ApiResponse<List<ResourceResponse>> listResources(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long chapterId) {
-        extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.listResources(chapterId));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.listResources(chapterId, userContext));
+    }
+
+    @GetMapping("/resources/{resourceId}")
+    public ApiResponse<ResourceResponse> getResource(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long resourceId) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.getResource(resourceId, userContext));
     }
 
     @PostMapping("/chapters/{chapterId}/resources")
@@ -148,8 +173,8 @@ public class CourseController {
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long chapterId,
             @Valid @RequestBody ResourceUpsertRequest request) {
-        extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.createResource(chapterId, request));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.createResource(chapterId, request, userContext));
     }
 
     @PutMapping("/resources/{resourceId}")
@@ -157,19 +182,29 @@ public class CourseController {
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long resourceId,
             @Valid @RequestBody ResourceUpsertRequest request) {
-        extractUserId(authorization);
-        return ApiResponse.success(courseFacadeService.updateResource(resourceId, request));
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.updateResource(resourceId, request, userContext));
     }
 
     @DeleteMapping("/resources/{resourceId}")
     public ApiResponse<Void> deleteResource(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long resourceId) {
-        extractUserId(authorization);
+        UserContext userContext = extractUserContext(authorization);
+        courseFacadeService.deleteResource(resourceId, userContext);
         return ApiResponse.success(null);
     }
 
-    private Long extractUserId(String authorization) {
+    @PatchMapping("/resources/{resourceId}/tags")
+    public ApiResponse<Void> confirmResourceTags(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long resourceId) {
+        UserContext userContext = extractUserContext(authorization);
+        courseFacadeService.assertCanManageResource(resourceId, userContext);
+        return ApiResponse.success(null);
+    }
+
+    private UserContext extractUserContext(String authorization) {
         if (authorization == null || authorization.isBlank() || !authorization.startsWith("Bearer ")) {
             throw BusinessException.unauthorized("Missing or invalid Authorization header");
         }
@@ -179,6 +214,14 @@ public class CourseController {
             throw BusinessException.unauthorized("Invalid token");
         }
 
-        return jwtUtil.getUserIdFromToken(token);
+        Long userId = jwtUtil.getUserIdFromToken(token);
+        String role = jwtUtil.getRoleFromToken(token);
+        if (userId == null || role == null || role.isBlank()) {
+            throw BusinessException.unauthorized("Invalid token claims");
+        }
+        return new UserContext(userId, role);
+    }
+
+    public record UserContext(Long userId, String role) {
     }
 }

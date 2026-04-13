@@ -59,6 +59,26 @@
     networks:
       - backend
 
+  course-db:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/postgres:16-alpine
+    container_name: course-db
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+      POSTGRES_DB: course_db
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - course-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
   redis:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/redis:7-alpine
     container_name: redis
@@ -161,8 +181,15 @@
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/course-service:latest
     container_name: course-service
     restart: unless-stopped
+    depends_on:
+      course-db:
+        condition: service_healthy
     environment:
       TZ: Asia/Shanghai
+      SPRING_DATASOURCE_URL: jdbc:postgresql://course-db:5432/course_db
+      SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+      USER_SERVICE_URL: http://user-service:8002
     volumes:
       - ./keys/public_key.pem:/app/keys/public_key.pem:ro
     ports:
@@ -204,4 +231,5 @@ volumes:
   auth-db-data:
   user-db-data:
   notify-db-data:
+  course-db-data:
   redis-data:
