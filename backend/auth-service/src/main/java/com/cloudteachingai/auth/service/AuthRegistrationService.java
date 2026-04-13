@@ -1,6 +1,8 @@
 package com.cloudteachingai.auth.service;
 
+import com.cloudteachingai.auth.client.CreateTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.auth.client.RegisterUserRequest;
+import com.cloudteachingai.auth.client.TeacherRegistrationApplicationClientResponse;
 import com.cloudteachingai.auth.client.UserRoleResponse;
 import com.cloudteachingai.auth.client.UserServiceClient;
 import com.cloudteachingai.auth.dto.RegisterRequest;
@@ -76,13 +78,19 @@ public class AuthRegistrationService {
             throw BusinessException.unauthorized("验证码错误");
         }
 
-        verificationCode.setUsed(true);
-        verificationCodeRepository.save(verificationCode);
+        if ("TEACHER".equals(request.getRole())) {
+            submitTeacherRegistrationApplication(request);
+            verificationCode.setUsed(true);
+            verificationCodeRepository.save(verificationCode);
+            log.info("Teacher registration application submitted: email={}", email);
+            return;
+        }
 
         RegisterUserRequest registerUserRequest = RegisterUserRequest.builder()
                 .username(request.getUsername())
                 .email(email)
                 .password(request.getPassword())
+                .role("STUDENT")
                 .build();
 
         UserRoleResponse response = userServiceClient.registerUser(registerUserRequest);
@@ -93,12 +101,31 @@ public class AuthRegistrationService {
         Long userId = response.getData().getId();
         authService.createCredential(userId, email, request.getPassword());
 
-        log.info("User registered successfully: email={}, userId={}", email, userId);
+        verificationCode.setUsed(true);
+        verificationCodeRepository.save(verificationCode);
+        log.info("Student registered successfully: email={}, userId={}", email, userId);
+    }
+
+    private void submitTeacherRegistrationApplication(RegisterRequest request) {
+        String passwordHash = authService.encodePassword(request.getPassword());
+        CreateTeacherRegistrationApplicationRequest applicationRequest = CreateTeacherRegistrationApplicationRequest.builder()
+                .username(request.getUsername())
+                .email(request.getEmail())
+                .passwordHash(passwordHash)
+                .build();
+        userServiceClient.submitTeacherRegistrationApplication(applicationRequest);
     }
 
     private void ensureEmailAvailable(String email) {
+        if (hasPendingTeacherRegistration(email)) {
+            throw BusinessException.conflict("教师注册申请已提交，请等待管理员审核");
+        }
+
         AuthCredential existingCredential = authCredentialRepository.findByEmail(email).orElse(null);
         if (existingCredential == null) {
+            if (userExistsByEmail(email)) {
+                throw BusinessException.conflict("邮箱已被注册");
+            }
             return;
         }
 
@@ -118,6 +145,19 @@ public class AuthRegistrationService {
             return false;
         } catch (FeignException e) {
             log.error("Failed to verify user existence for email={}", email, e);
+            throw BusinessException.internalError("用户服务暂时不可用，请稍后重试");
+        }
+    }
+
+    private boolean hasPendingTeacherRegistration(String email) {
+        try {
+            TeacherRegistrationApplicationClientResponse response =
+                    userServiceClient.getPendingTeacherRegistrationApplicationByEmail(email);
+            return response != null && response.getData() != null;
+        } catch (FeignException.NotFound e) {
+            return false;
+        } catch (FeignException e) {
+            log.error("Failed to verify teacher registration application for email={}", email, e);
             throw BusinessException.internalError("用户服务暂时不可用，请稍后重试");
         }
     }

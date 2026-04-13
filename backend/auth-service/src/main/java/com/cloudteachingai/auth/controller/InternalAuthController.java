@@ -23,4 +23,14 @@ public class InternalAuthController {
         authService.createCredential(userId, email, password);
         return ApiResponse.success(null);
     }
+
+    @PostMapping("/create-credential-with-hash")
+    public ApiResponse<Void> createCredentialWithHash(
+            @RequestParam Long userId,
+            @RequestParam String email,
+            @RequestParam String passwordHash) {
+        log.info("Create credential with hash request: userId={}, email={}", userId, email);
+        authService.createCredentialWithHash(userId, email, passwordHash);
+        return ApiResponse.success(null);
+    }
 }

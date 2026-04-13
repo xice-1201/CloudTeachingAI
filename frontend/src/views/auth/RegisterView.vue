@@ -193,17 +193,24 @@ async function handleRegister() {
   }
 
   try {
-    if (form.role === 'TEACHER') {
-      ElMessage.error('教师注册接口暂未实现')
-      return
-    }
-
     await authApi.register({
       username: form.username,
       email: form.email,
       code: form.code,
       password: form.password,
+      role: form.role,
     })
+
+    if (form.role === 'TEACHER') {
+      ElMessage.success('教师注册申请已提交，请等待管理员审核通过后再登录')
+      form.username = ''
+      form.email = ''
+      form.code = ''
+      form.password = ''
+      form.confirmPassword = ''
+      return
+    }
+
     ElMessage.success('注册成功，请登录')
     router.push('/login')
   } catch (error) {

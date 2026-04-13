@@ -32,6 +32,13 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class AuthService {
 
+    private static final String LOGIN_FAIL_KEY_PREFIX = "login_fail:";
+    private static final String TOKEN_BLACKLIST_PREFIX = "token_blacklist:";
+    private static final int MAX_LOGIN_ATTEMPTS = 5;
+    private static final int LOCK_DURATION_MINUTES = 15;
+    private static final int CODE_EXPIRATION_MINUTES = 15;
+    private static final int CODE_LENGTH = 6;
+
     private final AuthCredentialRepository authCredentialRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final VerificationCodeRepository verificationCodeRepository;
@@ -42,18 +49,9 @@ public class AuthService {
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder(12);
     private final SecureRandom random = new SecureRandom();
 
-    private static final String LOGIN_FAIL_KEY_PREFIX = "login_fail:";
-    private static final String TOKEN_BLACKLIST_PREFIX = "token_blacklist:";
-    private static final int MAX_LOGIN_ATTEMPTS = 5;
-    private static final int LOCK_DURATION_MINUTES = 15;
-    private static final int CODE_EXPIRATION_MINUTES = 15;
-    private static final int CODE_LENGTH = 6;
-
     @Transactional
     public LoginResponse login(LoginRequest request) {
         String email = request.getEmail();
-
-        // Check login failure count in Redis
         String failKey = LOGIN_FAIL_KEY_PREFIX + email;
         String failCountStr = redisTemplate.opsForValue().get(failKey);
         int failCount = failCountStr != null ? Integer.parseInt(failCountStr) : 0;
@@ -62,18 +60,14 @@ public class AuthService {
             throw BusinessException.forbidden("账号已锁定，请 15 分钟后重试");
         }
 
-        // Find user credentials
         AuthCredential credential = authCredentialRepository.findByEmail(email)
                 .orElseThrow(() -> BusinessException.unauthorized("用户名或密码错误"));
 
-        // Check if account is locked
         if (credential.isLocked()) {
             throw BusinessException.forbidden("账号已锁定，请稍后重试");
         }
 
-        // Verify password
         if (!passwordEncoder.matches(request.getPassword(), credential.getPasswordHash())) {
-            // Increment fail count
             redisTemplate.opsForValue().increment(failKey);
             redisTemplate.expire(failKey, LOCK_DURATION_MINUTES, TimeUnit.MINUTES);
 
@@ -83,20 +77,15 @@ public class AuthService {
             throw BusinessException.unauthorized("用户名或密码错误");
         }
 
-        // Login successful - reset fail count
         redisTemplate.delete(failKey);
         credential.resetFailCount();
         credential.setLastLoginAt(LocalDateTime.now());
         authCredentialRepository.save(credential);
 
-        // Get user role from user-service (for now, we'll use a placeholder)
         String role = getUserRole(credential.getUserId());
-
-        // Generate tokens
         String accessToken = jwtUtil.generateAccessToken(credential.getUserId(), role);
         String refreshTokenId = UUID.randomUUID().toString();
 
-        // Save refresh token to database
         RefreshToken refreshToken = RefreshToken.builder()
                 .tokenId(refreshTokenId)
                 .userId(credential.getUserId())
@@ -105,9 +94,7 @@ public class AuthService {
                 .build();
         refreshTokenRepository.save(refreshToken);
 
-        // Publish login event to Kafka (for analysis-agent)
         publishLoginEvent(credential.getUserId(), email, true);
-
         LoginResponse.UserInfo userInfo = buildUserInfo(credential.getUserId(), role);
 
         return LoginResponse.builder()
@@ -121,12 +108,9 @@ public class AuthService {
 
     @Transactional
     public void logout(String accessToken, String refreshTokenId) {
-        // Add access token to blacklist
-        Long userId = jwtUtil.getUserIdFromToken(accessToken);
         String blacklistKey = TOKEN_BLACKLIST_PREFIX + accessToken;
         redisTemplate.opsForValue().set(blacklistKey, "1", 2, TimeUnit.HOURS);
 
-        // Revoke refresh token
         refreshTokenRepository.findByTokenIdAndRevokedFalse(refreshTokenId)
                 .ifPresent(token -> {
                     token.setRevoked(true);
@@ -143,12 +127,8 @@ public class AuthService {
             throw BusinessException.unauthorized("refresh token 已过期或已被吊销");
         }
 
-        // Get user role
         String role = getUserRole(refreshToken.getUserId());
-
-        // Generate new access token
         String accessToken = jwtUtil.generateAccessToken(refreshToken.getUserId(), role);
-
         LoginResponse.UserInfo userInfo = buildUserInfo(refreshToken.getUserId(), role);
 
         return LoginResponse.builder()
@@ -162,11 +142,14 @@ public class AuthService {
 
     @Transactional
     public void createCredential(Long userId, String email, String password) {
+        createCredentialWithHash(userId, email, passwordEncoder.encode(password));
+    }
+
+    @Transactional
+    public void createCredentialWithHash(Long userId, String email, String passwordHash) {
         if (authCredentialRepository.existsByEmail(email)) {
             throw BusinessException.conflict("邮箱已被注册");
         }
-
-        String passwordHash = passwordEncoder.encode(password);
 
         AuthCredential credential = AuthCredential.builder()
                 .userId(userId)
@@ -178,30 +161,26 @@ public class AuthService {
         authCredentialRepository.save(credential);
     }
 
-    /**
-     * 发送验证码
-     */
+    public String encodePassword(String password) {
+        return passwordEncoder.encode(password);
+    }
+
     @Transactional
     public void sendVerificationCode(SendCodeRequest request) {
         String email = request.getEmail();
 
-        // 检查邮箱是否已注册
         if (authCredentialRepository.existsByEmail(email)) {
             throw BusinessException.conflict("该邮箱已被注册");
         }
 
-        // 检查是否有未过期的验证码（60秒内不能重复发送）
         verificationCodeRepository.findTopByEmailAndUsedFalseOrderByCreatedAtDesc(email)
                 .ifPresent(existingCode -> {
                     if (existingCode.getCreatedAt().plusSeconds(60).isAfter(LocalDateTime.now())) {
-                        throw BusinessException.conflict("验证码发送过于频繁，请60秒后重试");
+                        throw BusinessException.conflict("验证码发送过于频繁，请 60 秒后重试");
                     }
                 });
 
-        // 生成6位数字验证码
         String code = generateCode();
-
-        // 保存验证码
         VerificationCode verificationCode = VerificationCode.builder()
                 .email(email)
                 .code(code)
@@ -210,25 +189,18 @@ public class AuthService {
                 .build();
         verificationCodeRepository.save(verificationCode);
 
-        // 发送邮件
         mailService.sendVerificationCode(email, code);
-
-        log.info("验证码发送成功: email={}", email);
+        log.info("Verification code sent successfully: email={}", email);
     }
 
-    /**
-     * 用户注册
-     */
     @Transactional
     public void register(RegisterRequest request) {
         String email = request.getEmail();
 
-        // 检查邮箱是否已注册
         if (authCredentialRepository.existsByEmail(email)) {
             throw BusinessException.conflict("该邮箱已被注册");
         }
 
-        // 验证验证码
         VerificationCode verificationCode = verificationCodeRepository
                 .findTopByEmailAndUsedFalseOrderByCreatedAtDesc(email)
                 .orElseThrow(() -> BusinessException.unauthorized("验证码无效或已过期"));
@@ -241,33 +213,26 @@ public class AuthService {
             throw BusinessException.unauthorized("验证码错误");
         }
 
-        // 标记验证码为已使用
         verificationCode.setUsed(true);
         verificationCodeRepository.save(verificationCode);
 
-        // 创建用户（通过 user-service）
         RegisterUserRequest registerUserRequest = RegisterUserRequest.builder()
                 .username(request.getUsername())
                 .email(email)
                 .password(request.getPassword())
+                .role(request.getRole())
                 .build();
 
         UserRoleResponse response = userServiceClient.registerUser(registerUserRequest);
         if (response == null || response.getData() == null) {
-            throw new RuntimeException("创建用户失败");
+            throw BusinessException.internalError("创建用户失败");
         }
 
         Long userId = response.getData().getId();
-
-        // 创建凭证
         createCredential(userId, email, request.getPassword());
-
-        log.info("用户注册成功: email={}, userId={}", email, userId);
+        log.info("User registered successfully: email={}, userId={}", email, userId);
     }
 
-    /**
-     * 生成6位数字验证码
-     */
     private String generateCode() {
         StringBuilder code = new StringBuilder();
         for (int i = 0; i < CODE_LENGTH; i++) {
@@ -310,7 +275,6 @@ public class AuthService {
     }
 
     private void publishLoginEvent(Long userId, String email, boolean success) {
-        // TODO: Publish to Kafka topic "login.event"
-        log.info("Login event: userId={}, email=, success={}", userId, email, success);
+        log.info("Login event: userId={}, email={}, success={}", userId, email, success);
     }
 }

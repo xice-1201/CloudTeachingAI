@@ -18,4 +18,10 @@ public interface UserServiceClient {
 
     @PostMapping("/api/v1/internal/users/register")
     UserRoleResponse registerUser(@RequestBody RegisterUserRequest request);
+
+    @PostMapping("/api/v1/internal/teacher-registration-applications")
+    void submitTeacherRegistrationApplication(@RequestBody CreateTeacherRegistrationApplicationRequest request);
+
+    @GetMapping("/api/v1/internal/teacher-registration-applications/by-email")
+    TeacherRegistrationApplicationClientResponse getPendingTeacherRegistrationApplicationByEmail(@RequestParam String email);
 }

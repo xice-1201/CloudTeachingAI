@@ -1,4 +1,3 @@
-// 用户相关类型
 export interface User {
   id: number
   username: string
@@ -6,6 +5,7 @@ export interface User {
   role: 'STUDENT' | 'TEACHER' | 'ADMIN'
   avatar?: string
   createdAt: string
+  isActive?: boolean
 }
 
 export interface LoginRequest {
@@ -21,7 +21,6 @@ export interface LoginResponse {
   userId: number
 }
 
-// 课程相关类型
 export interface Course {
   id: number
   title: string
@@ -55,7 +54,6 @@ export interface Resource {
   createdAt: string
 }
 
-// 学习相关类型
 export interface LearningProgress {
   resourceId: number
   progress: number
@@ -86,7 +84,6 @@ export interface PathResource {
   orderIndex: number
 }
 
-// 作业相关类型
 export interface Assignment {
   id: number
   courseId: number
@@ -110,7 +107,6 @@ export interface Submission {
   gradedAt?: string
 }
 
-// 通知相关类型
 export interface Notification {
   id: number
   userId: number
@@ -121,7 +117,6 @@ export interface Notification {
   createdAt: string
 }
 
-// AI 助手相关类型
 export interface ChatMessage {
   id: number
   role: 'user' | 'assistant'
@@ -137,7 +132,6 @@ export interface ChatSession {
   updatedAt: string
 }
 
-// API 响应类型
 export interface ApiResponse<T = any> {
   code: number
   message: string
@@ -149,4 +143,16 @@ export interface PageResponse<T> {
   total: number
   page: number
   pageSize: number
+}
+
+export interface TeacherRegistrationApplication {
+  id: number
+  username: string
+  email: string
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  reviewNote?: string
+  reviewedBy?: number
+  createdUserId?: number
+  requestedAt: string
+  reviewedAt?: string
 }

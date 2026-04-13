@@ -13,4 +13,11 @@ public interface AuthServiceClient {
             @RequestParam String email,
             @RequestParam String password
     );
+
+    @PostMapping("/api/v1/auth/internal/create-credential-with-hash")
+    void createCredentialWithHash(
+            @RequestParam Long userId,
+            @RequestParam String email,
+            @RequestParam String passwordHash
+    );
 }

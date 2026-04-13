@@ -9,9 +9,8 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class RegisterUserRequest {
+public class CreateTeacherRegistrationApplicationRequest {
     private String username;
     private String email;
-    private String password;
-    private String role;
+    private String passwordHash;
 }

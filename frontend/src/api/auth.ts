@@ -10,6 +10,7 @@ export interface RegisterRequest {
   email: string
   password: string
   code: string
+  role: 'STUDENT' | 'TEACHER'
 }
 
 export const authApi = {
