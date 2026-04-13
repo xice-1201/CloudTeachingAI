@@ -93,22 +93,22 @@ jobs:
                 auth-service)
                   auth_changed=true
                   image_changed=true
-                  services="auth-service"
+                  services="auth-service frontend"
                   ;;
                 user-service)
                   user_changed=true
                   image_changed=true
-                  services="user-service"
+                  services="user-service frontend"
                   ;;
                 notify-service)
                   notify_changed=true
                   image_changed=true
-                  services="notify-service"
+                  services="notify-service frontend"
                   ;;
                 course-service)
                   course_changed=true
                   image_changed=true
-                  services="course-service"
+                  services="course-service frontend"
                   ;;
                 frontend)
                   frontend_changed=true
@@ -158,12 +158,15 @@ jobs:
               if [ "$course_changed" = "true" ]; then
                 services="$services course-service"
               fi
+              if [ "$auth_changed" = "true" ] || [ "$user_changed" = "true" ] || [ "$notify_changed" = "true" ] || [ "$course_changed" = "true" ]; then
+                services="$services frontend"
+              fi
               if [ "$frontend_changed" = "true" ]; then
                 services="$services frontend"
               fi
             fi
 
-            services="$(echo "$services" | xargs)"
+            services="$(printf '%s\n' $services | awk '!seen[$0]++' | xargs)"
           fi
 
           echo "auth_changed=$auth_changed" >> "$GITHUB_OUTPUT"
