@@ -15,6 +15,9 @@ public class ResourceResponse {
     private String title;
     private String type;
     private String url;
+    private String sourceUrl;
+    private String description;
+    private Boolean managedFile;
     private Integer duration;
     private Long size;
     private Integer orderIndex;

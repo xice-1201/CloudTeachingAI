@@ -11,9 +11,9 @@ public class ResourceUpsertRequest {
     @NotBlank
     private String type;
 
-    @NotBlank
     private String url;
 
+    private String description;
     private Integer duration;
     private Long size;
     private Integer orderIndex;

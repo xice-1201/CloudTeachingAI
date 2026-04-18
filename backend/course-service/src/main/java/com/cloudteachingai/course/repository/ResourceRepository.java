@@ -10,5 +10,7 @@ public interface ResourceRepository extends JpaRepository<ResourceEntity, Long> 
 
     List<ResourceEntity> findByChapterIdOrderByOrderIndexAscIdAsc(Long chapterId);
 
+    List<ResourceEntity> findByChapterIdInOrderByOrderIndexAscIdAsc(List<Long> chapterIds);
+
     Optional<ResourceEntity> findTopByChapterIdOrderByOrderIndexDescIdDesc(Long chapterId);
 }

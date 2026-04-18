@@ -8,14 +8,18 @@ import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
 import com.cloudteachingai.course.dto.ResourceResponse;
+import com.cloudteachingai.course.dto.ResourceUploadResponse;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
+import com.cloudteachingai.course.entity.enums.ResourceType;
 import com.cloudteachingai.course.exception.BusinessException;
 import com.cloudteachingai.course.service.CourseCoverStorageService;
 import com.cloudteachingai.course.service.CourseFacadeService;
+import com.cloudteachingai.course.service.ResourceStorageService;
 import com.cloudteachingai.course.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -34,6 +38,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 @RestController
@@ -43,6 +48,7 @@ public class CourseController {
 
     private final CourseFacadeService courseFacadeService;
     private final CourseCoverStorageService courseCoverStorageService;
+    private final ResourceStorageService resourceStorageService;
     private final JwtUtil jwtUtil;
 
     @GetMapping("/courses")
@@ -223,6 +229,25 @@ public class CourseController {
         return ApiResponse.success(courseFacadeService.getResource(resourceId, userContext));
     }
 
+    @GetMapping("/resources/{resourceId}/content")
+    public ResponseEntity<Resource> getResourceContent(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long resourceId,
+            @RequestParam(defaultValue = "false") boolean download) {
+        UserContext userContext = extractUserContext(authorization);
+        CourseFacadeService.ManagedResourceContent content = courseFacadeService.loadManagedResourceContent(resourceId, userContext);
+
+        ContentDisposition disposition = download
+                ? ContentDisposition.attachment().filename(content.title()).build()
+                : ContentDisposition.inline().filename(content.title()).build();
+
+        return ResponseEntity.ok()
+                .contentType(resourceStorageService.resolveMediaType(content.storageKey()))
+                .cacheControl(CacheControl.noStore())
+                .header("Content-Disposition", disposition.toString())
+                .body(resourceStorageService.loadAsResource(content.storageKey()));
+    }
+
     @PostMapping("/chapters/{chapterId}/resources")
     public ApiResponse<ResourceResponse> createResource(
             @RequestHeader("Authorization") String authorization,
@@ -230,6 +255,25 @@ public class CourseController {
             @Valid @RequestBody ResourceUpsertRequest request) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(courseFacadeService.createResource(chapterId, request, userContext));
+    }
+
+    @PostMapping(value = "/resource-files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<ResourceUploadResponse> uploadResourceFile(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam("type") String type,
+            @RequestPart("file") MultipartFile file) {
+        UserContext userContext = extractUserContext(authorization);
+        if (!"TEACHER".equals(userContext.role()) && !"ADMIN".equals(userContext.role())) {
+            throw BusinessException.forbidden("Current role cannot upload course resources");
+        }
+
+        ResourceType resourceType = parseResourceType(type);
+        String storageKey = resourceStorageService.store(file, resourceType);
+        return ApiResponse.success(ResourceUploadResponse.builder()
+                .storageKey(storageKey)
+                .fileName(file.getOriginalFilename())
+                .size(file.getSize())
+                .build());
     }
 
     @PutMapping("/resources/{resourceId}")
@@ -278,5 +322,13 @@ public class CourseController {
     }
 
     public record UserContext(Long userId, String role) {
+    }
+
+    private ResourceType parseResourceType(String type) {
+        try {
+            return ResourceType.valueOf(type.trim().toUpperCase(Locale.ROOT));
+        } catch (Exception ex) {
+            throw BusinessException.badRequest("Invalid resource type");
+        }
     }
 }

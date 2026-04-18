@@ -171,9 +171,12 @@
     </el-dialog>
 
     <el-dialog v-model="resourceDialog.visible" :title="resourceDialog.isEdit ? '编辑资源' : '新增资源'" width="560px">
-      <el-form ref="resourceFormRef" :model="resourceDialog.form" :rules="resourceRules" label-width="90px">
-        <el-form-item label="资源名称" prop="title">
-          <el-input v-model="resourceDialog.form.title" placeholder="请输入资源名称" />
+        <el-form ref="resourceFormRef" :model="resourceDialog.form" :rules="resourceRules" label-width="90px">
+          <el-form-item label="资源名称" prop="title">
+            <el-input v-model="resourceDialog.form.title" placeholder="请输入资源名称" />
+          </el-form-item>
+        <el-form-item label="资源描述">
+          <el-input v-model="resourceDialog.form.description" type="textarea" :rows="3" placeholder="请输入资源描述" />
         </el-form-item>
         <el-form-item label="资源类型" prop="type">
           <el-select v-model="resourceDialog.form.type" placeholder="请选择资源类型" style="width: 100%">
@@ -182,8 +185,22 @@
             <el-option label="课件" value="SLIDE" />
           </el-select>
         </el-form-item>
+        <el-form-item label="本地文件">
+          <el-upload
+            action="#"
+            :auto-upload="false"
+            :show-file-list="false"
+            @change="handleResourceFileChange"
+          >
+            <el-button type="primary">选择文件</el-button>
+          </el-upload>
+          <div class="field-tip">
+            {{ selectedResourceFile ? `已选择文件：${selectedResourceFile.name}` : resourceDialog.form.managedFile ? '当前资源使用已上传文件，可重新选择替换。' : '可直接上传本地文件。' }}
+          </div>
+        </el-form-item>
         <el-form-item label="资源地址" prop="url">
           <el-input v-model="resourceDialog.form.url" placeholder="请输入资源 URL" />
+          <div class="field-tip">可选。若未上传本地文件，可填写外部资源地址。</div>
         </el-form-item>
         <el-form-item label="时长(秒)">
           <el-input-number v-model="resourceDialog.form.duration" :min="0" :max="86400" />
@@ -225,6 +242,7 @@ const savingCourse = ref(false)
 const chapterSubmitting = ref(false)
 const resourceSubmitting = ref(false)
 const studentLoading = ref(false)
+const selectedResourceFile = ref<File | null>(null)
 
 const chapters = ref<Chapter[]>([])
 const resourceMap = ref<Record<number, Resource[]>>({})
@@ -266,6 +284,8 @@ const resourceDialog = reactive({
     title: '',
     type: 'DOCUMENT' as Resource['type'],
     url: '',
+    description: '',
+    managedFile: false,
     duration: 0,
     size: 0,
     orderIndex: 1,
@@ -295,7 +315,27 @@ const chapterRules: FormRules = {
 const resourceRules: FormRules = {
   title: [{ required: true, message: '请输入资源名称', trigger: 'blur' }],
   type: [{ required: true, message: '请选择资源类型', trigger: 'change' }],
-  url: [{ required: true, message: '请输入资源地址', trigger: 'blur' }],
+  url: [{
+    validator: (_rule, value, callback) => {
+      if (selectedResourceFile.value) {
+        callback()
+        return
+      }
+
+      if (typeof value === 'string' && value.trim()) {
+        callback()
+        return
+      }
+
+      if (resourceDialog.isEdit && resourceDialog.form.managedFile) {
+        callback()
+        return
+      }
+
+      callback(new Error('请上传资源文件或填写资源地址'))
+    },
+    trigger: 'blur',
+  }],
 }
 
 function setCoverPreview(url: string) {
@@ -376,12 +416,21 @@ function resetResourceDialog(chapterId = '') {
   resourceDialog.isEdit = false
   resourceDialog.chapterId = chapterId
   resourceDialog.resourceId = ''
+  selectedResourceFile.value = null
   resourceDialog.form.title = ''
   resourceDialog.form.type = 'DOCUMENT'
   resourceDialog.form.url = ''
+  resourceDialog.form.description = ''
+  resourceDialog.form.managedFile = false
   resourceDialog.form.duration = 0
   resourceDialog.form.size = 0
   resourceDialog.form.orderIndex = (resourceMap.value[Number(chapterId)]?.length ?? 0) + 1
+}
+
+function handleResourceFileChange(file: UploadFile) {
+  if (!file.raw) return
+  selectedResourceFile.value = file.raw
+  resourceDialog.form.size = file.raw.size
 }
 
 async function loadCourse() {
@@ -512,9 +561,12 @@ function openEditResourceDialog(chapter: Chapter, resource: Resource) {
   resourceDialog.isEdit = true
   resourceDialog.chapterId = String(chapter.id)
   resourceDialog.resourceId = String(resource.id)
+  selectedResourceFile.value = null
   resourceDialog.form.title = resource.title
   resourceDialog.form.type = resource.type
-  resourceDialog.form.url = resource.url
+  resourceDialog.form.url = resource.managedFile ? '' : (resource.sourceUrl ?? resource.url)
+  resourceDialog.form.description = resource.description ?? ''
+  resourceDialog.form.managedFile = Boolean(resource.managedFile)
   resourceDialog.form.duration = resource.duration ?? 0
   resourceDialog.form.size = resource.size ?? 0
   resourceDialog.form.orderIndex = resource.orderIndex
@@ -524,10 +576,23 @@ async function handleSubmitResource() {
   await resourceFormRef.value?.validate()
   resourceSubmitting.value = true
   try {
+    let resourceUrl = resourceDialog.form.url?.trim() ?? ''
+    let resourceSize = resourceDialog.form.size || undefined
+
+    if (selectedResourceFile.value) {
+      const uploaded = await courseApi.uploadResourceFile(selectedResourceFile.value, resourceDialog.form.type)
+      resourceUrl = uploaded.storageKey
+      resourceSize = uploaded.size || resourceSize
+    }
+
     const payload = {
-      ...resourceDialog.form,
+      title: resourceDialog.form.title,
+      type: resourceDialog.form.type,
+      url: resourceUrl || undefined,
+      description: resourceDialog.form.description || undefined,
       duration: resourceDialog.form.duration || undefined,
-      size: resourceDialog.form.size || undefined,
+      size: resourceSize,
+      orderIndex: resourceDialog.form.orderIndex,
     }
 
     if (resourceDialog.isEdit) {
@@ -538,6 +603,7 @@ async function handleSubmitResource() {
       ElMessage.success('资源已创建')
     }
     resourceDialog.visible = false
+    selectedResourceFile.value = null
     await loadCurriculum()
   } finally {
     resourceSubmitting.value = false

@@ -60,6 +60,7 @@ public class CourseFacadeService {
     private final UserServiceClient userServiceClient;
     private final NotifyServiceClient notifyServiceClient;
     private final CourseCoverStorageService courseCoverStorageService;
+    private final ResourceStorageService resourceStorageService;
 
     public PageResponse<CourseResponse> listCourses(UserContext userContext, int page, int pageSize, String keyword, String status) {
         Pageable pageable = PageRequest.of(toPageIndex(page), toPageSize(pageSize), Sort.by(Sort.Direction.DESC, "updatedAt"));
@@ -183,6 +184,7 @@ public class CourseFacadeService {
     @Transactional
     public void deleteCourse(Long id, UserContext userContext) {
         CourseEntity course = requireManageableCourse(id, userContext);
+        deleteManagedResourcesForCourse(id);
         courseVisibleStudentRepository.deleteByCourseId(id);
         courseRepository.delete(course);
         courseCoverStorageService.deleteIfManaged(course.getCoverKey());
@@ -296,6 +298,7 @@ public class CourseFacadeService {
         if (!chapter.getCourseId().equals(courseId)) {
             throw BusinessException.badRequest("Chapter does not belong to the current course");
         }
+        deleteManagedResourcesByChapterIds(List.of(chapterId));
         chapterRepository.delete(chapter);
     }
 
@@ -319,13 +322,19 @@ public class CourseFacadeService {
         ChapterEntity chapter = requireChapter(chapterId);
         requireManageableCourse(chapter.getCourseId(), userContext);
 
+        String storageKey = normalizeBlank(request.getUrl());
+        if (!StringUtils.hasText(storageKey)) {
+            throw BusinessException.badRequest("Please upload a resource file or provide an external URL");
+        }
+
         ResourceEntity resource = ResourceEntity.builder()
                 .chapterId(chapterId)
                 .title(request.getTitle().trim())
                 .type(parseResourceType(request.getType()))
-                .storageKey(request.getUrl().trim())
+                .storageKey(storageKey)
                 .fileSize(request.getSize())
                 .durationSeconds(request.getDuration())
+                .description(normalizeBlank(request.getDescription()))
                 .orderIndex(resolveResourceOrderIndex(chapterId, request.getOrderIndex()))
                 .status(ResourceStatus.PUBLISHED)
                 .build();
@@ -338,13 +347,21 @@ public class CourseFacadeService {
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireManageableCourse(chapter.getCourseId(), userContext);
 
+        String previousStorageKey = resource.getStorageKey();
+        String updatedStorageKey = StringUtils.hasText(request.getUrl()) ? request.getUrl().trim() : previousStorageKey;
+
         resource.setTitle(request.getTitle().trim());
         resource.setType(parseResourceType(request.getType()));
-        resource.setStorageKey(request.getUrl().trim());
+        resource.setStorageKey(updatedStorageKey);
         resource.setFileSize(request.getSize());
         resource.setDurationSeconds(request.getDuration());
+        resource.setDescription(normalizeBlank(request.getDescription()));
         resource.setOrderIndex(resolveOrderIndex(request.getOrderIndex(), resource.getOrderIndex()));
-        return toResourceResponse(resourceRepository.save(resource));
+        ResourceResponse response = toResourceResponse(resourceRepository.save(resource));
+        if (!Objects.equals(previousStorageKey, updatedStorageKey)) {
+            resourceStorageService.deleteIfManaged(previousStorageKey);
+        }
+        return response;
     }
 
     @Transactional
@@ -353,12 +370,29 @@ public class CourseFacadeService {
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireManageableCourse(chapter.getCourseId(), userContext);
         resourceRepository.delete(resource);
+        resourceStorageService.deleteIfManaged(resource.getStorageKey());
     }
 
     public void assertCanManageResource(Long resourceId, UserContext userContext) {
         ResourceEntity resource = requireResource(resourceId);
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireManageableCourse(chapter.getCourseId(), userContext);
+    }
+
+    public ManagedResourceContent loadManagedResourceContent(Long resourceId, UserContext userContext) {
+        ResourceEntity resource = requireResource(resourceId);
+        ChapterEntity chapter = requireChapter(resource.getChapterId());
+        requireContentAccessibleCourse(chapter.getCourseId(), userContext);
+
+        if (!resourceStorageService.isManagedStorageKey(resource.getStorageKey())) {
+            throw BusinessException.badRequest("Resource does not use managed file storage");
+        }
+
+        return new ManagedResourceContent(
+                resource.getTitle(),
+                resource.getType(),
+                resource.getStorageKey()
+        );
     }
 
     private Specification<CourseEntity> withKeyword(String keyword) {
@@ -720,16 +754,43 @@ public class CourseFacadeService {
     }
 
     private ResourceResponse toResourceResponse(ResourceEntity entity) {
+        boolean managedFile = resourceStorageService.isManagedStorageKey(entity.getStorageKey());
         return ResourceResponse.builder()
                 .id(entity.getId())
                 .chapterId(entity.getChapterId())
                 .title(entity.getTitle())
                 .type(entity.getType().name())
-                .url(entity.getStorageKey())
+                .url(managedFile ? buildManagedResourceUrl(entity.getId()) : entity.getStorageKey())
+                .sourceUrl(managedFile ? null : entity.getStorageKey())
+                .description(entity.getDescription())
+                .managedFile(managedFile)
                 .duration(entity.getDurationSeconds())
                 .size(entity.getFileSize())
                 .orderIndex(entity.getOrderIndex())
                 .createdAt(entity.getCreatedAt().toString())
                 .build();
+    }
+
+    private String buildManagedResourceUrl(Long resourceId) {
+        return "/api/v1/resources/" + resourceId + "/content";
+    }
+
+    private void deleteManagedResourcesForCourse(Long courseId) {
+        List<Long> chapterIds = chapterRepository.findByCourseIdOrderByOrderIndexAscIdAsc(courseId).stream()
+                .map(ChapterEntity::getId)
+                .toList();
+        deleteManagedResourcesByChapterIds(chapterIds);
+    }
+
+    private void deleteManagedResourcesByChapterIds(List<Long> chapterIds) {
+        if (chapterIds == null || chapterIds.isEmpty()) {
+            return;
+        }
+        resourceRepository.findByChapterIdInOrderByOrderIndexAscIdAsc(chapterIds).stream()
+                .map(ResourceEntity::getStorageKey)
+                .forEach(resourceStorageService::deleteIfManaged);
+    }
+
+    public record ManagedResourceContent(String title, ResourceType type, String storageKey) {
     }
 }

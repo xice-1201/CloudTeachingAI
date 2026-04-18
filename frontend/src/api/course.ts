@@ -21,6 +21,17 @@ export const courseApi = {
     })
   },
 
+  uploadResourceFile: (file: File, type: Resource['type']): Promise<{ storageKey: string; fileName: string; size: number }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return request.post('/resource-files', formData, {
+      params: { type },
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+  },
+
   updateCourse: (id: string, data: Partial<Course>): Promise<Course> =>
     request.put(`/courses/${id}`, data),
 

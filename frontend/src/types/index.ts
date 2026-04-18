@@ -51,6 +51,9 @@ export interface Resource {
   title: string
   type: 'VIDEO' | 'DOCUMENT' | 'SLIDE'
   url: string
+  sourceUrl?: string | null
+  description?: string
+  managedFile?: boolean
   duration?: number
   size?: number
   orderIndex: number
