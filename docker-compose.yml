@@ -232,6 +232,7 @@
       USER_SERVICE_URL: http://user-service:8002
     volumes:
       - ./keys/public_key.pem:/app/keys/public_key.pem:ro
+      - course-storage-data:/app/storage
     ports:
       - "8003:8003"
     networks:
@@ -332,6 +333,7 @@ volumes:
   user-db-data:
   notify-db-data:
   course-db-data:
+  course-storage-data:
   learn-db-data:
   assign-db-data:
   redis-data:

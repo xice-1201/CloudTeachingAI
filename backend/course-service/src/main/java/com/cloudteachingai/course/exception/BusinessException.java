@@ -31,4 +31,8 @@ public class BusinessException extends RuntimeException {
     public static BusinessException badRequest(String message) {
         return new BusinessException(40001, message);
     }
+
+    public static BusinessException internal(String message) {
+        return new BusinessException(50001, message);
+    }
 }

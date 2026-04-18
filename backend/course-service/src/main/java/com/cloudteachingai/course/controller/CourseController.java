@@ -3,16 +3,22 @@ package com.cloudteachingai.course.controller;
 import com.cloudteachingai.course.dto.ApiResponse;
 import com.cloudteachingai.course.dto.ChapterResponse;
 import com.cloudteachingai.course.dto.ChapterUpsertRequest;
+import com.cloudteachingai.course.dto.CoverUploadResponse;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
 import com.cloudteachingai.course.dto.ResourceResponse;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
 import com.cloudteachingai.course.exception.BusinessException;
+import com.cloudteachingai.course.service.CourseCoverStorageService;
 import com.cloudteachingai.course.service.CourseFacadeService;
 import com.cloudteachingai.course.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -22,10 +28,13 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -33,6 +42,7 @@ import java.util.List;
 public class CourseController {
 
     private final CourseFacadeService courseFacadeService;
+    private final CourseCoverStorageService courseCoverStorageService;
     private final JwtUtil jwtUtil;
 
     @GetMapping("/courses")
@@ -69,6 +79,27 @@ public class CourseController {
             @Valid @RequestBody CourseUpsertRequest request) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(courseFacadeService.createCourse(request, userContext));
+    }
+
+    @PostMapping(value = "/course-covers", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<CoverUploadResponse> uploadCourseCover(
+            @RequestHeader("Authorization") String authorization,
+            @RequestPart("file") MultipartFile file) {
+        UserContext userContext = extractUserContext(authorization);
+        if (!"TEACHER".equals(userContext.role()) && !"ADMIN".equals(userContext.role())) {
+            throw BusinessException.forbidden("Current role cannot upload course covers");
+        }
+        return ApiResponse.success(CoverUploadResponse.builder()
+                .url(courseCoverStorageService.store(file))
+                .build());
+    }
+
+    @GetMapping("/course-covers/{filename:.+}")
+    public ResponseEntity<Resource> getCourseCover(@PathVariable String filename) {
+        return ResponseEntity.ok()
+                .contentType(courseCoverStorageService.resolveMediaType(filename))
+                .cacheControl(CacheControl.maxAge(30, TimeUnit.DAYS).cachePublic())
+                .body(courseCoverStorageService.loadAsResource(filename));
     }
 
     @PutMapping("/courses/{id}")

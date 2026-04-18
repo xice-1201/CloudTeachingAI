@@ -38,6 +38,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -48,6 +49,7 @@ public class CourseFacadeService {
     private final ResourceRepository resourceRepository;
     private final EnrollmentRepository enrollmentRepository;
     private final UserServiceClient userServiceClient;
+    private final CourseCoverStorageService courseCoverStorageService;
 
     public PageResponse<CourseResponse> listCourses(UserContext userContext, int page, int pageSize, String keyword, String status) {
         Pageable pageable = PageRequest.of(toPageIndex(page), toPageSize(pageSize), Sort.by(Sort.Direction.DESC, "updatedAt"));
@@ -112,14 +114,20 @@ public class CourseFacadeService {
         CourseEntity course = requireManageableCourse(id, userContext);
         course.setTitle(request.getTitle().trim());
         course.setDescription(request.getDescription().trim());
-        course.setCoverKey(normalizeBlank(request.getCoverImage()));
+        String coverImage = normalizeBlank(request.getCoverImage());
+        if (!Objects.equals(course.getCoverKey(), coverImage)) {
+            courseCoverStorageService.deleteIfManaged(course.getCoverKey());
+            course.setCoverKey(coverImage);
+        }
         CourseEntity saved = courseRepository.save(course);
         return toCourseResponse(saved, Map.of(saved.getTeacherId(), resolveTeacherName(saved.getTeacherId())));
     }
 
     @Transactional
     public void deleteCourse(Long id, UserContext userContext) {
-        courseRepository.delete(requireManageableCourse(id, userContext));
+        CourseEntity course = requireManageableCourse(id, userContext);
+        courseRepository.delete(course);
+        courseCoverStorageService.deleteIfManaged(course.getCoverKey());
     }
 
     @Transactional

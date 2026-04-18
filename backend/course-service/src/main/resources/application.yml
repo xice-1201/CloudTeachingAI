@@ -39,6 +39,9 @@ management:
       exposure:
         include: health,info
 
+app:
+  storage-root: ${APP_STORAGE_ROOT:/app/storage}
+
 logging:
   level:
     com.cloudteachingai: DEBUG

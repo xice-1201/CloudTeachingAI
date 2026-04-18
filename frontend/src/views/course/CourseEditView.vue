@@ -42,13 +42,14 @@
                 @change="handleCoverChange"
               >
                 <div class="cover-uploader">
-                  <img v-if="form.coverImage" :src="form.coverImage" class="cover-preview" />
+                  <img v-if="coverPreviewUrl" :src="coverPreviewUrl" class="cover-preview" />
                   <div v-else class="cover-placeholder">
                     <el-icon :size="32" color="#c0c4cc"><Plus /></el-icon>
                     <span>上传封面</span>
                   </div>
                 </div>
               </el-upload>
+              <div class="cover-tip">支持 JPG、PNG、GIF、WEBP。图片会在保存课程时上传。</div>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" :loading="savingCourse" @click="handleSubmit">
@@ -196,7 +197,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules, UploadFile } from 'element-plus'
@@ -220,6 +221,9 @@ const chapters = ref<Chapter[]>([])
 const resourceMap = ref<Record<number, Resource[]>>({})
 const activeChapterKeys = ref<string[]>([])
 const courseStatus = ref<Course['status'] | ''>('')
+const coverPreviewUrl = ref('')
+const selectedCoverFile = ref<File | null>(null)
+let temporaryCoverUrl = ''
 
 const isEdit = computed(() => Boolean(route.params.id))
 const courseId = computed(() => String(route.params.id ?? ''))
@@ -271,10 +275,21 @@ const resourceRules: FormRules = {
   url: [{ required: true, message: '请输入资源地址', trigger: 'blur' }],
 }
 
-function handleCoverChange(file: UploadFile) {
-  if (file.raw) {
-    form.coverImage = URL.createObjectURL(file.raw)
+function setCoverPreview(url: string) {
+  if (temporaryCoverUrl && temporaryCoverUrl !== url) {
+    URL.revokeObjectURL(temporaryCoverUrl)
+    temporaryCoverUrl = ''
   }
+  coverPreviewUrl.value = url
+}
+
+function handleCoverChange(file: UploadFile) {
+  if (!file.raw) {
+    return
+  }
+  selectedCoverFile.value = file.raw
+  temporaryCoverUrl = URL.createObjectURL(file.raw)
+  coverPreviewUrl.value = temporaryCoverUrl
 }
 
 function courseStatusTag(status: Course['status']) {
@@ -335,6 +350,7 @@ async function loadCourse() {
   form.title = course.title
   form.description = course.description
   form.coverImage = course.coverImage ?? ''
+  setCoverPreview(form.coverImage)
   courseStatus.value = course.status
 }
 
@@ -353,20 +369,45 @@ async function loadCurriculum() {
   resourceMap.value = Object.fromEntries(resourceEntries)
 }
 
+async function uploadCoverIfNeeded() {
+  if (!selectedCoverFile.value) {
+    return form.coverImage
+  }
+
+  const uploaded = await courseApi.uploadCourseCover(selectedCoverFile.value)
+  selectedCoverFile.value = null
+  form.coverImage = uploaded.url
+  setCoverPreview(uploaded.url)
+  return uploaded.url
+}
+
 async function handleSubmit() {
   await formRef.value?.validate()
   savingCourse.value = true
   try {
+    const coverImage = await uploadCoverIfNeeded()
+    const payload = {
+      ...form,
+      coverImage,
+    }
+
     if (isEdit.value) {
-      const course = await courseApi.updateCourse(courseId.value, form)
+      const course = await courseApi.updateCourse(courseId.value, payload)
       courseStatus.value = course.status
+      form.coverImage = course.coverImage ?? ''
+      setCoverPreview(form.coverImage)
       ElMessage.success('课程已保存')
       return
     }
 
-    const course = await courseApi.createCourse(form)
+    const course = await courseApi.createCourse(payload)
+    form.coverImage = course.coverImage ?? coverImage
+    setCoverPreview(form.coverImage)
     ElMessage.success('课程已创建，请继续配置单元和资源')
     await router.replace(`/courses/${course.id}/edit`)
+    courseStatus.value = course.status
+    await loadCourse()
+    await loadCurriculum()
   } finally {
     savingCourse.value = false
   }
@@ -472,6 +513,13 @@ onMounted(async () => {
     pageLoading.value = false
   }
 })
+
+onBeforeUnmount(() => {
+  if (temporaryCoverUrl) {
+    URL.revokeObjectURL(temporaryCoverUrl)
+    temporaryCoverUrl = ''
+  }
+})
 </script>
 
 <style scoped>
@@ -518,6 +566,12 @@ onMounted(async () => {
   gap: 8px;
   color: #909399;
   font-size: 13px;
+}
+
+.cover-tip {
+  margin-top: 8px;
+  color: #909399;
+  font-size: 12px;
 }
 
 .empty-state {

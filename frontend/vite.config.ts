@@ -43,6 +43,10 @@ export default defineConfig({
         target: 'http://localhost:8003',
         changeOrigin: true,
       },
+      '/api/v1/course-covers': {
+        target: 'http://localhost:8003',
+        changeOrigin: true,
+      },
       '/api/v1/chapters': {
         target: 'http://localhost:8003',
         changeOrigin: true,

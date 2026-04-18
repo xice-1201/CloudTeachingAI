@@ -11,6 +11,16 @@ export const courseApi = {
   createCourse: (data: Partial<Course>): Promise<Course> =>
     request.post('/courses', data),
 
+  uploadCourseCover: (file: File): Promise<{ url: string }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return request.post('/course-covers', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+  },
+
   updateCourse: (id: string, data: Partial<Course>): Promise<Course> =>
     request.put(`/courses/${id}`, data),
 
