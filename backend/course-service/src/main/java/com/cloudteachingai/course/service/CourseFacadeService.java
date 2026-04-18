@@ -87,17 +87,21 @@ public class CourseFacadeService {
         Pageable pageable = PageRequest.of(toPageIndex(page), toPageSize(pageSize), Sort.by(Sort.Direction.DESC, "enrolledAt"));
         Page<EnrollmentEntity> enrollmentPage = enrollmentRepository.findByStudentIdAndCourseStatus(
                 userContext.userId(),
-                CourseStatus.PUBLISHED.name(),
+                CourseStatus.PUBLISHED,
                 pageable
         );
         List<Long> courseIds = enrollmentPage.getContent().stream().map(EnrollmentEntity::getCourseId).toList();
         List<CourseEntity> courses = courseIds.isEmpty()
                 ? Collections.emptyList()
                 : courseRepository.findAllByIdInOrderByUpdatedAtDesc(courseIds);
+        Map<Long, CourseEntity> courseById = courses.stream()
+                .collect(java.util.stream.Collectors.toMap(CourseEntity::getId, course -> course));
         Map<Long, String> teacherNames = resolveTeacherNames(courses);
         Map<Long, List<Long>> visibleStudentIdsByCourse = loadVisibleStudentIds(courses);
 
-        List<CourseResponse> items = courses.stream()
+        List<CourseResponse> items = courseIds.stream()
+                .map(courseById::get)
+                .filter(Objects::nonNull)
                 .map(course -> toCourseResponse(course, teacherNames, visibleStudentIdsByCourse, false))
                 .toList();
 

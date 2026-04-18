@@ -1,5 +1,6 @@
 package com.cloudteachingai.course.repository;
 
+import com.cloudteachingai.course.entity.enums.CourseStatus;
 import com.cloudteachingai.course.entity.EnrollmentEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -36,7 +37,7 @@ public interface EnrollmentRepository extends JpaRepository<EnrollmentEntity, Lo
     )
     Page<EnrollmentEntity> findByStudentIdAndCourseStatus(
             @Param("studentId") Long studentId,
-            @Param("status") String status,
+            @Param("status") CourseStatus status,
             Pageable pageable
     );
 }
