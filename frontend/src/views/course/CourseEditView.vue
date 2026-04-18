@@ -4,7 +4,7 @@
       <div>
         <span class="page-title">{{ isEdit ? '编辑课程' : '创建课程' }}</span>
         <div class="page-subtitle">
-          {{ isEdit ? '维护课程基础信息，并为课程配置单元和学习资源。' : '先创建课程基础信息，保存后再配置单元和资源。' }}
+          {{ isEdit ? '维护课程基础信息，并继续配置单元和资源。' : '先创建课程基础信息，保存后再继续配置单元和资源。' }}
         </div>
       </div>
     </div>
@@ -21,18 +21,44 @@
             </div>
           </template>
 
-          <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" size="large">
+          <el-form ref="formRef" :model="form" :rules="rules" label-width="110px" size="large">
             <el-form-item label="课程名称" prop="title">
               <el-input v-model="form.title" placeholder="请输入课程名称" />
             </el-form-item>
+
             <el-form-item label="课程描述" prop="description">
-              <el-input
-                v-model="form.description"
-                type="textarea"
-                :rows="5"
-                placeholder="请输入课程描述"
-              />
+              <el-input v-model="form.description" type="textarea" :rows="5" placeholder="请输入课程描述" />
             </el-form-item>
+
+            <el-form-item label="可见范围" prop="visibilityType">
+              <el-radio-group v-model="form.visibilityType">
+                <el-radio-button label="PUBLIC">全体学生可见</el-radio-button>
+                <el-radio-button label="SELECTED_STUDENTS">指定学生可见</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+
+            <el-form-item v-if="form.visibilityType === 'SELECTED_STUDENTS'" label="指定学生" prop="visibleStudentIds">
+              <el-select
+                v-model="form.visibleStudentIds"
+                multiple
+                filterable
+                remote
+                reserve-keyword
+                placeholder="搜索并选择学生"
+                style="width: 100%"
+                :remote-method="loadStudentOptions"
+                :loading="studentLoading"
+              >
+                <el-option
+                  v-for="student in studentOptions"
+                  :key="student.id"
+                  :label="`${student.username} (${student.email})`"
+                  :value="student.id"
+                />
+              </el-select>
+              <div class="field-tip">仅被选中的学生能看到课程简介并接收发布通知。</div>
+            </el-form-item>
+
             <el-form-item label="封面图片">
               <el-upload
                 action="#"
@@ -49,8 +75,9 @@
                   </div>
                 </div>
               </el-upload>
-              <div class="cover-tip">支持 JPG、PNG、GIF、WEBP。图片会在保存课程时上传。</div>
+              <div class="field-tip">支持 JPG、PNG、GIF、WEBP。图片会在保存课程时上传。</div>
             </el-form-item>
+
             <el-form-item>
               <el-button type="primary" :loading="savingCourse" @click="handleSubmit">
                 {{ isEdit ? '保存课程' : '创建课程' }}
@@ -78,11 +105,7 @@
           </div>
 
           <el-collapse v-else v-model="activeChapterKeys">
-            <el-collapse-item
-              v-for="chapter in chapters"
-              :key="chapter.id"
-              :name="String(chapter.id)"
-            >
+            <el-collapse-item v-for="chapter in chapters" :key="chapter.id" :name="String(chapter.id)">
               <template #title>
                 <div class="chapter-header">
                   <div class="chapter-title-wrap">
@@ -102,11 +125,7 @@
               </div>
 
               <div class="resource-list">
-                <div
-                  v-for="resource in resourceMap[chapter.id] ?? []"
-                  :key="resource.id"
-                  class="resource-card"
-                >
+                <div v-for="resource in resourceMap[chapter.id] ?? []" :key="resource.id" class="resource-card">
                   <div class="resource-main">
                     <div class="resource-top">
                       <span class="resource-order">资源 {{ resource.orderIndex }}</span>
@@ -125,10 +144,7 @@
                   </div>
                 </div>
 
-                <el-empty
-                  v-if="!(resourceMap[chapter.id] ?? []).length"
-                  description="当前单元还没有资源"
-                />
+                <el-empty v-if="!(resourceMap[chapter.id] ?? []).length" description="当前单元还没有资源" />
               </div>
             </el-collapse-item>
           </el-collapse>
@@ -142,12 +158,7 @@
           <el-input v-model="chapterDialog.form.title" placeholder="请输入单元名称" />
         </el-form-item>
         <el-form-item label="单元描述">
-          <el-input
-            v-model="chapterDialog.form.description"
-            type="textarea"
-            :rows="4"
-            placeholder="请输入单元描述"
-          />
+          <el-input v-model="chapterDialog.form.description" type="textarea" :rows="4" placeholder="请输入单元描述" />
         </el-form-item>
         <el-form-item label="排序">
           <el-input-number v-model="chapterDialog.form.orderIndex" :min="1" :max="999" />
@@ -155,9 +166,7 @@
       </el-form>
       <template #footer>
         <el-button @click="chapterDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="chapterSubmitting" @click="handleSubmitChapter">
-          保存
-        </el-button>
+        <el-button type="primary" :loading="chapterSubmitting" @click="handleSubmitChapter">保存</el-button>
       </template>
     </el-dialog>
 
@@ -188,9 +197,7 @@
       </el-form>
       <template #footer>
         <el-button @click="resourceDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="resourceSubmitting" @click="handleSubmitResource">
-          保存
-        </el-button>
+        <el-button type="primary" :loading="resourceSubmitting" @click="handleSubmitResource">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -203,7 +210,8 @@ import { Plus } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { courseApi } from '@/api/course'
-import type { Chapter, Course, Resource } from '@/types'
+import { userApi } from '@/api/user'
+import type { Chapter, Course, Resource, User } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -216,6 +224,7 @@ const pageLoading = ref(false)
 const savingCourse = ref(false)
 const chapterSubmitting = ref(false)
 const resourceSubmitting = ref(false)
+const studentLoading = ref(false)
 
 const chapters = ref<Chapter[]>([])
 const resourceMap = ref<Record<number, Resource[]>>({})
@@ -223,6 +232,7 @@ const activeChapterKeys = ref<string[]>([])
 const courseStatus = ref<Course['status'] | ''>('')
 const coverPreviewUrl = ref('')
 const selectedCoverFile = ref<File | null>(null)
+const studentOptions = ref<User[]>([])
 let temporaryCoverUrl = ''
 
 const isEdit = computed(() => Boolean(route.params.id))
@@ -232,6 +242,8 @@ const form = reactive({
   title: '',
   description: '',
   coverImage: '',
+  visibilityType: 'PUBLIC' as Course['visibilityType'],
+  visibleStudentIds: [] as number[],
 })
 
 const chapterDialog = reactive({
@@ -263,6 +275,17 @@ const resourceDialog = reactive({
 const rules: FormRules = {
   title: [{ required: true, message: '请输入课程名称', trigger: 'blur' }],
   description: [{ required: true, message: '请输入课程描述', trigger: 'blur' }],
+  visibilityType: [{ required: true, message: '请选择课程可见范围', trigger: 'change' }],
+  visibleStudentIds: [{
+    validator: (_rule, value, callback) => {
+      if (form.visibilityType === 'SELECTED_STUDENTS' && (!value || value.length === 0)) {
+        callback(new Error('请至少选择一名学生'))
+        return
+      }
+      callback()
+    },
+    trigger: 'change',
+  }],
 }
 
 const chapterRules: FormRules = {
@@ -284,9 +307,7 @@ function setCoverPreview(url: string) {
 }
 
 function handleCoverChange(file: UploadFile) {
-  if (!file.raw) {
-    return
-  }
+  if (!file.raw) return
   selectedCoverFile.value = file.raw
   temporaryCoverUrl = URL.createObjectURL(file.raw)
   coverPreviewUrl.value = temporaryCoverUrl
@@ -311,13 +332,34 @@ function formatDuration(seconds: number) {
 }
 
 function formatFileSize(size: number) {
-  if (size >= 1024 * 1024) {
-    return `${(size / (1024 * 1024)).toFixed(1)} MB`
-  }
-  if (size >= 1024) {
-    return `${(size / 1024).toFixed(1)} KB`
-  }
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${size} B`
+}
+
+function mergeStudentOptions(students: User[]) {
+  const merged = new Map<number, User>()
+  for (const student of [...studentOptions.value, ...students]) {
+    merged.set(student.id, student)
+  }
+  studentOptions.value = Array.from(merged.values())
+}
+
+async function loadStudentOptions(keyword = '') {
+  studentLoading.value = true
+  try {
+    const response = await userApi.listStudents({ page: 1, pageSize: 50, keyword })
+    mergeStudentOptions(response.items)
+  } finally {
+    studentLoading.value = false
+  }
+}
+
+async function ensureSelectedStudentsLoaded(studentIds: number[]) {
+  const missingIds = studentIds.filter((studentId) => !studentOptions.value.some((student) => student.id === studentId))
+  if (!missingIds.length) return
+  const users = await Promise.all(missingIds.map((studentId) => userApi.getUserById(String(studentId))))
+  mergeStudentOptions(users)
 }
 
 function resetChapterDialog() {
@@ -343,21 +385,24 @@ function resetResourceDialog(chapterId = '') {
 }
 
 async function loadCourse() {
-  if (!isEdit.value) {
-    return
-  }
+  if (!isEdit.value) return
+
   const course = await courseApi.getCourse(courseId.value)
   form.title = course.title
   form.description = course.description
   form.coverImage = course.coverImage ?? ''
+  form.visibilityType = course.visibilityType ?? 'PUBLIC'
+  form.visibleStudentIds = [...(course.visibleStudentIds ?? [])]
   setCoverPreview(form.coverImage)
   courseStatus.value = course.status
+
+  if (form.visibleStudentIds.length) {
+    await ensureSelectedStudentsLoaded(form.visibleStudentIds)
+  }
 }
 
 async function loadCurriculum() {
-  if (!isEdit.value) {
-    return
-  }
+  if (!isEdit.value) return
 
   const chapterList = await courseApi.listChapters(courseId.value)
   chapters.value = chapterList
@@ -370,9 +415,7 @@ async function loadCurriculum() {
 }
 
 async function uploadCoverIfNeeded() {
-  if (!selectedCoverFile.value) {
-    return form.coverImage
-  }
+  if (!selectedCoverFile.value) return form.coverImage
 
   const uploaded = await courseApi.uploadCourseCover(selectedCoverFile.value)
   selectedCoverFile.value = null
@@ -387,14 +430,19 @@ async function handleSubmit() {
   try {
     const coverImage = await uploadCoverIfNeeded()
     const payload = {
-      ...form,
+      title: form.title,
+      description: form.description,
       coverImage,
+      visibilityType: form.visibilityType,
+      visibleStudentIds: form.visibilityType === 'SELECTED_STUDENTS' ? form.visibleStudentIds : [],
     }
 
     if (isEdit.value) {
       const course = await courseApi.updateCourse(courseId.value, payload)
       courseStatus.value = course.status
       form.coverImage = course.coverImage ?? ''
+      form.visibilityType = course.visibilityType
+      form.visibleStudentIds = [...(course.visibleStudentIds ?? [])]
       setCoverPreview(form.coverImage)
       ElMessage.success('课程已保存')
       return
@@ -481,6 +529,7 @@ async function handleSubmitResource() {
       duration: resourceDialog.form.duration || undefined,
       size: resourceDialog.form.size || undefined,
     }
+
     if (resourceDialog.isEdit) {
       await courseApi.updateResource(resourceDialog.resourceId, payload)
       ElMessage.success('资源已更新')
@@ -507,6 +556,7 @@ async function handleDeleteResource(resource: Resource) {
 onMounted(async () => {
   pageLoading.value = true
   try {
+    await loadStudentOptions()
     await loadCourse()
     await loadCurriculum()
   } finally {
@@ -542,6 +592,12 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.field-tip {
+  margin-top: 8px;
+  color: #909399;
+  font-size: 12px;
+}
+
 .cover-uploader {
   width: 220px;
   height: 132px;
@@ -566,12 +622,6 @@ onBeforeUnmount(() => {
   gap: 8px;
   color: #909399;
   font-size: 13px;
-}
-
-.cover-tip {
-  margin-top: 8px;
-  color: #909399;
-  font-size: 12px;
 }
 
 .empty-state {

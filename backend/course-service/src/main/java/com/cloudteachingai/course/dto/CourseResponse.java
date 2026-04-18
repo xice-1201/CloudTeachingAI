@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -17,6 +19,9 @@ public class CourseResponse {
     private Long teacherId;
     private String teacherName;
     private String status;
+    private String visibilityType;
+    private List<Long> visibleStudentIds;
+    private Integer visibleStudentCount;
     private String createdAt;
     private String updatedAt;
 }

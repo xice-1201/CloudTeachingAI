@@ -128,6 +128,30 @@ public class CourseController {
         return ApiResponse.success(courseFacadeService.publishCourse(id, userContext));
     }
 
+    @PostMapping("/courses/{id}/unpublish")
+    public ApiResponse<CourseResponse> unpublishCourse(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long id) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.unpublishCourse(id, userContext));
+    }
+
+    @PostMapping("/courses/{id}/archive")
+    public ApiResponse<CourseResponse> archiveCourse(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long id) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.archiveCourse(id, userContext));
+    }
+
+    @PostMapping("/courses/{id}/restore")
+    public ApiResponse<CourseResponse> restoreCourse(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long id) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.restoreCourse(id, userContext));
+    }
+
     @PostMapping("/courses/{id}/enroll")
     public ApiResponse<Void> enrollCourse(
             @RequestHeader("Authorization") String authorization,

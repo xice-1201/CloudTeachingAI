@@ -33,6 +33,9 @@ jwt:
 user-service:
   url: ${USER_SERVICE_URL:http://localhost:8002}
 
+notify-service:
+  url: ${NOTIFY_SERVICE_URL:http://localhost:8005}
+
 management:
   endpoints:
     web:

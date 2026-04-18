@@ -1,6 +1,7 @@
 package com.cloudteachingai.course.entity;
 
 import com.cloudteachingai.course.entity.enums.CourseStatus;
+import com.cloudteachingai.course.entity.enums.CourseVisibilityType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -49,6 +50,10 @@ public class CourseEntity {
     @Column(nullable = false, length = 20)
     private CourseStatus status;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "visibility_type", nullable = false, length = 40)
+    private CourseVisibilityType visibilityType;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -62,6 +67,9 @@ public class CourseEntity {
         updatedAt = now;
         if (status == null) {
             status = CourseStatus.DRAFT;
+        }
+        if (visibilityType == null) {
+            visibilityType = CourseVisibilityType.PUBLIC;
         }
     }
 

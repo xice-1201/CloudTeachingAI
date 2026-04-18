@@ -27,8 +27,17 @@ export const courseApi = {
   deleteCourse: (id: string): Promise<void> =>
     request.delete(`/courses/${id}`),
 
-  publishCourse: (id: string): Promise<void> =>
+  publishCourse: (id: string): Promise<Course> =>
     request.post(`/courses/${id}/publish`),
+
+  unpublishCourse: (id: string): Promise<Course> =>
+    request.post(`/courses/${id}/unpublish`),
+
+  archiveCourse: (id: string): Promise<Course> =>
+    request.post(`/courses/${id}/archive`),
+
+  restoreCourse: (id: string): Promise<Course> =>
+    request.post(`/courses/${id}/restore`),
 
   enrollCourse: (id: string): Promise<void> =>
     request.post(`/courses/${id}/enroll`),

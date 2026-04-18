@@ -1,5 +1,7 @@
 package com.cloudteachingai.course.service;
 
+import com.cloudteachingai.course.client.CreateNotificationRequest;
+import com.cloudteachingai.course.client.NotifyServiceClient;
 import com.cloudteachingai.course.client.UserServiceClient;
 import com.cloudteachingai.course.client.UserServiceResponse;
 import com.cloudteachingai.course.controller.CourseController.UserContext;
@@ -12,14 +14,17 @@ import com.cloudteachingai.course.dto.ResourceResponse;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
 import com.cloudteachingai.course.entity.ChapterEntity;
 import com.cloudteachingai.course.entity.CourseEntity;
+import com.cloudteachingai.course.entity.CourseVisibleStudentEntity;
 import com.cloudteachingai.course.entity.EnrollmentEntity;
 import com.cloudteachingai.course.entity.ResourceEntity;
 import com.cloudteachingai.course.entity.enums.CourseStatus;
+import com.cloudteachingai.course.entity.enums.CourseVisibilityType;
 import com.cloudteachingai.course.entity.enums.ResourceStatus;
 import com.cloudteachingai.course.entity.enums.ResourceType;
 import com.cloudteachingai.course.exception.BusinessException;
 import com.cloudteachingai.course.repository.ChapterRepository;
 import com.cloudteachingai.course.repository.CourseRepository;
+import com.cloudteachingai.course.repository.CourseVisibleStudentRepository;
 import com.cloudteachingai.course.repository.EnrollmentRepository;
 import com.cloudteachingai.course.repository.ResourceRepository;
 import feign.FeignException;
@@ -33,12 +38,15 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -48,7 +56,9 @@ public class CourseFacadeService {
     private final ChapterRepository chapterRepository;
     private final ResourceRepository resourceRepository;
     private final EnrollmentRepository enrollmentRepository;
+    private final CourseVisibleStudentRepository courseVisibleStudentRepository;
     private final UserServiceClient userServiceClient;
+    private final NotifyServiceClient notifyServiceClient;
     private final CourseCoverStorageService courseCoverStorageService;
 
     public PageResponse<CourseResponse> listCourses(UserContext userContext, int page, int pageSize, String keyword, String status) {
@@ -57,9 +67,14 @@ public class CourseFacadeService {
                 .and(withStatus(status))
                 .and(withVisibility(userContext));
         Page<CourseEntity> result = courseRepository.findAll(specification, pageable);
+
         Map<Long, String> teacherNames = resolveTeacherNames(result.getContent());
+        Map<Long, List<Long>> visibleStudentIdsByCourse = loadVisibleStudentIds(result.getContent());
+
         return PageResponse.<CourseResponse>builder()
-                .items(result.getContent().stream().map(course -> toCourseResponse(course, teacherNames)).toList())
+                .items(result.getContent().stream()
+                        .map(course -> toCourseResponse(course, teacherNames, visibleStudentIdsByCourse, canManageCourse(course, userContext)))
+                        .toList())
                 .total((int) result.getTotalElements())
                 .page(page)
                 .pageSize(pageSize)
@@ -70,14 +85,20 @@ public class CourseFacadeService {
         assertRole(userContext, "STUDENT");
 
         Pageable pageable = PageRequest.of(toPageIndex(page), toPageSize(pageSize), Sort.by(Sort.Direction.DESC, "enrolledAt"));
-        Page<EnrollmentEntity> enrollmentPage = enrollmentRepository.findByStudentId(userContext.userId(), pageable);
+        Page<EnrollmentEntity> enrollmentPage = enrollmentRepository.findByStudentIdAndCourseStatus(
+                userContext.userId(),
+                CourseStatus.PUBLISHED.name(),
+                pageable
+        );
         List<Long> courseIds = enrollmentPage.getContent().stream().map(EnrollmentEntity::getCourseId).toList();
         List<CourseEntity> courses = courseIds.isEmpty()
                 ? Collections.emptyList()
                 : courseRepository.findAllByIdInOrderByUpdatedAtDesc(courseIds);
         Map<Long, String> teacherNames = resolveTeacherNames(courses);
+        Map<Long, List<Long>> visibleStudentIdsByCourse = loadVisibleStudentIds(courses);
+
         List<CourseResponse> items = courses.stream()
-                .map(course -> toCourseResponse(course, teacherNames))
+                .map(course -> toCourseResponse(course, teacherNames, visibleStudentIdsByCourse, false))
                 .toList();
 
         return PageResponse.<CourseResponse>builder()
@@ -89,13 +110,23 @@ public class CourseFacadeService {
     }
 
     public CourseResponse getCourse(Long id, UserContext userContext) {
-        CourseEntity course = requireVisibleCourse(id, userContext);
-        return toCourseResponse(course, Map.of(course.getTeacherId(), resolveTeacherName(course.getTeacherId())));
+        CourseEntity course = requireSummaryVisibleCourse(id, userContext);
+        Map<Long, List<Long>> visibleStudentIdsByCourse = loadVisibleStudentIds(List.of(course));
+        return toCourseResponse(
+                course,
+                Map.of(course.getTeacherId(), resolveTeacherName(course.getTeacherId())),
+                visibleStudentIdsByCourse,
+                canManageCourse(course, userContext)
+        );
     }
 
     @Transactional
     public CourseResponse createCourse(CourseUpsertRequest request, UserContext userContext) {
         assertRole(userContext, "TEACHER", "ADMIN");
+
+        CourseVisibilityType visibilityType = parseVisibilityType(request.getVisibilityType());
+        List<Long> visibleStudentIds = normalizeVisibleStudentIds(request.getVisibleStudentIds());
+        validateVisibleStudents(visibilityType, visibleStudentIds);
 
         CourseEntity course = CourseEntity.builder()
                 .teacherId(userContext.userId())
@@ -103,29 +134,52 @@ public class CourseFacadeService {
                 .description(request.getDescription().trim())
                 .coverKey(normalizeBlank(request.getCoverImage()))
                 .status(CourseStatus.DRAFT)
+                .visibilityType(visibilityType)
                 .build();
 
         CourseEntity saved = courseRepository.save(course);
-        return toCourseResponse(saved, Map.of(saved.getTeacherId(), resolveTeacherName(saved.getTeacherId())));
+        syncVisibleStudents(saved.getId(), visibilityType, visibleStudentIds);
+
+        return toCourseResponse(
+                saved,
+                Map.of(saved.getTeacherId(), resolveTeacherName(saved.getTeacherId())),
+                Map.of(saved.getId(), visibleStudentIds),
+                true
+        );
     }
 
     @Transactional
     public CourseResponse updateCourse(Long id, CourseUpsertRequest request, UserContext userContext) {
         CourseEntity course = requireManageableCourse(id, userContext);
+        CourseVisibilityType visibilityType = parseVisibilityType(request.getVisibilityType());
+        List<Long> visibleStudentIds = normalizeVisibleStudentIds(request.getVisibleStudentIds());
+        validateVisibleStudents(visibilityType, visibleStudentIds);
+
         course.setTitle(request.getTitle().trim());
         course.setDescription(request.getDescription().trim());
+        course.setVisibilityType(visibilityType);
+
         String coverImage = normalizeBlank(request.getCoverImage());
         if (!Objects.equals(course.getCoverKey(), coverImage)) {
             courseCoverStorageService.deleteIfManaged(course.getCoverKey());
             course.setCoverKey(coverImage);
         }
+
         CourseEntity saved = courseRepository.save(course);
-        return toCourseResponse(saved, Map.of(saved.getTeacherId(), resolveTeacherName(saved.getTeacherId())));
+        syncVisibleStudents(saved.getId(), visibilityType, visibleStudentIds);
+
+        return toCourseResponse(
+                saved,
+                Map.of(saved.getTeacherId(), resolveTeacherName(saved.getTeacherId())),
+                Map.of(saved.getId(), visibleStudentIds),
+                true
+        );
     }
 
     @Transactional
     public void deleteCourse(Long id, UserContext userContext) {
         CourseEntity course = requireManageableCourse(id, userContext);
+        courseVisibleStudentRepository.deleteByCourseId(id);
         courseRepository.delete(course);
         courseCoverStorageService.deleteIfManaged(course.getCoverKey());
     }
@@ -133,9 +187,41 @@ public class CourseFacadeService {
     @Transactional
     public CourseResponse publishCourse(Long id, UserContext userContext) {
         CourseEntity course = requireManageableCourse(id, userContext);
+        ensurePublishable(course);
         course.setStatus(CourseStatus.PUBLISHED);
         CourseEntity saved = courseRepository.save(course);
-        return toCourseResponse(saved, Map.of(saved.getTeacherId(), resolveTeacherName(saved.getTeacherId())));
+        notifyCoursePublished(saved);
+        return toCourseResponseAfterMutation(saved);
+    }
+
+    @Transactional
+    public CourseResponse unpublishCourse(Long id, UserContext userContext) {
+        CourseEntity course = requireManageableCourse(id, userContext);
+        if (course.getStatus() != CourseStatus.PUBLISHED) {
+            throw BusinessException.badRequest("Only published courses can be unpublished");
+        }
+        course.setStatus(CourseStatus.DRAFT);
+        return toCourseResponseAfterMutation(courseRepository.save(course));
+    }
+
+    @Transactional
+    public CourseResponse archiveCourse(Long id, UserContext userContext) {
+        CourseEntity course = requireManageableCourse(id, userContext);
+        if (course.getStatus() == CourseStatus.ARCHIVED) {
+            throw BusinessException.badRequest("Course is already archived");
+        }
+        course.setStatus(CourseStatus.ARCHIVED);
+        return toCourseResponseAfterMutation(courseRepository.save(course));
+    }
+
+    @Transactional
+    public CourseResponse restoreCourse(Long id, UserContext userContext) {
+        CourseEntity course = requireManageableCourse(id, userContext);
+        if (course.getStatus() != CourseStatus.ARCHIVED) {
+            throw BusinessException.badRequest("Only archived courses can be restored");
+        }
+        course.setStatus(CourseStatus.DRAFT);
+        return toCourseResponseAfterMutation(courseRepository.save(course));
     }
 
     @Transactional
@@ -144,10 +230,13 @@ public class CourseFacadeService {
 
         CourseEntity course = requireCourse(courseId);
         if (course.getStatus() != CourseStatus.PUBLISHED) {
-            throw BusinessException.badRequest("课程尚未发布，无法选课");
+            throw BusinessException.badRequest("Course is not published yet");
+        }
+        if (!canStudentViewCourseSummary(course, userContext.userId())) {
+            throw BusinessException.forbidden("No access to enroll in this course");
         }
         if (enrollmentRepository.existsByStudentIdAndCourseId(userContext.userId(), courseId)) {
-            throw BusinessException.conflict("课程已选");
+            throw BusinessException.conflict("Course is already enrolled");
         }
 
         enrollmentRepository.save(EnrollmentEntity.builder()
@@ -160,12 +249,12 @@ public class CourseFacadeService {
     public void unenrollCourse(Long courseId, UserContext userContext) {
         assertRole(userContext, "STUDENT");
         EnrollmentEntity enrollment = enrollmentRepository.findByStudentIdAndCourseId(userContext.userId(), courseId)
-                .orElseThrow(() -> BusinessException.notFound("未找到选课记录"));
+                .orElseThrow(() -> BusinessException.notFound("Enrollment record not found"));
         enrollmentRepository.delete(enrollment);
     }
 
     public List<ChapterResponse> listChapters(Long courseId, UserContext userContext) {
-        CourseEntity course = requireVisibleCourse(courseId, userContext);
+        CourseEntity course = requireContentAccessibleCourse(courseId, userContext);
         return chapterRepository.findByCourseIdOrderByOrderIndexAscIdAsc(course.getId()).stream()
                 .map(this::toChapterResponse)
                 .toList();
@@ -188,7 +277,7 @@ public class CourseFacadeService {
         requireManageableCourse(courseId, userContext);
         ChapterEntity chapter = requireChapter(chapterId);
         if (!chapter.getCourseId().equals(courseId)) {
-            throw BusinessException.badRequest("章节不属于当前课程");
+            throw BusinessException.badRequest("Chapter does not belong to the current course");
         }
         chapter.setTitle(request.getTitle().trim());
         chapter.setDescription(normalizeBlank(request.getDescription()));
@@ -201,14 +290,14 @@ public class CourseFacadeService {
         requireManageableCourse(courseId, userContext);
         ChapterEntity chapter = requireChapter(chapterId);
         if (!chapter.getCourseId().equals(courseId)) {
-            throw BusinessException.badRequest("章节不属于当前课程");
+            throw BusinessException.badRequest("Chapter does not belong to the current course");
         }
         chapterRepository.delete(chapter);
     }
 
     public List<ResourceResponse> listResources(Long chapterId, UserContext userContext) {
         ChapterEntity chapter = requireChapter(chapterId);
-        requireVisibleCourse(chapter.getCourseId(), userContext);
+        requireContentAccessibleCourse(chapter.getCourseId(), userContext);
         return resourceRepository.findByChapterIdOrderByOrderIndexAscIdAsc(chapterId).stream()
                 .map(this::toResourceResponse)
                 .toList();
@@ -217,7 +306,7 @@ public class CourseFacadeService {
     public ResourceResponse getResource(Long resourceId, UserContext userContext) {
         ResourceEntity resource = requireResource(resourceId);
         ChapterEntity chapter = requireChapter(resource.getChapterId());
-        requireVisibleCourse(chapter.getCourseId(), userContext);
+        requireContentAccessibleCourse(chapter.getCourseId(), userContext);
         return toResourceResponse(resource);
     }
 
@@ -291,24 +380,49 @@ public class CourseFacadeService {
         return switch (userContext.role()) {
             case "ADMIN" -> null;
             case "TEACHER" -> (root, query, cb) -> cb.equal(root.get("teacherId"), userContext.userId());
-            case "STUDENT" -> (root, query, cb) -> cb.equal(root.get("status"), CourseStatus.PUBLISHED);
-            default -> throw BusinessException.forbidden("无权访问课程数据");
+            case "STUDENT" -> (root, query, cb) -> {
+                var targetedVisibility = query.subquery(Long.class);
+                var visibleStudentRoot = targetedVisibility.from(CourseVisibleStudentEntity.class);
+                targetedVisibility.select(visibleStudentRoot.get("id"))
+                        .where(
+                                cb.equal(visibleStudentRoot.get("courseId"), root.get("id")),
+                                cb.equal(visibleStudentRoot.get("studentId"), userContext.userId())
+                        );
+
+                var enrolledVisibility = query.subquery(Long.class);
+                var enrollmentRoot = enrolledVisibility.from(EnrollmentEntity.class);
+                enrolledVisibility.select(enrollmentRoot.get("id"))
+                        .where(
+                                cb.equal(enrollmentRoot.get("courseId"), root.get("id")),
+                                cb.equal(enrollmentRoot.get("studentId"), userContext.userId())
+                        );
+
+                return cb.and(
+                        cb.equal(root.get("status"), CourseStatus.PUBLISHED),
+                        cb.or(
+                                cb.equal(root.get("visibilityType"), CourseVisibilityType.PUBLIC),
+                                cb.exists(targetedVisibility),
+                                cb.exists(enrolledVisibility)
+                        )
+                );
+            };
+            default -> throw BusinessException.forbidden("No access to course data");
         };
     }
 
     private CourseEntity requireCourse(Long courseId) {
         return courseRepository.findById(courseId)
-                .orElseThrow(() -> BusinessException.notFound("课程不存在"));
+                .orElseThrow(() -> BusinessException.notFound("Course not found"));
     }
 
     private ChapterEntity requireChapter(Long chapterId) {
         return chapterRepository.findById(chapterId)
-                .orElseThrow(() -> BusinessException.notFound("章节不存在"));
+                .orElseThrow(() -> BusinessException.notFound("Chapter not found"));
     }
 
     private ResourceEntity requireResource(Long resourceId) {
         return resourceRepository.findById(resourceId)
-                .orElseThrow(() -> BusinessException.notFound("资源不存在"));
+                .orElseThrow(() -> BusinessException.notFound("Resource not found"));
     }
 
     private CourseEntity requireManageableCourse(Long courseId, UserContext userContext) {
@@ -317,15 +431,15 @@ public class CourseFacadeService {
             return course;
         }
         if (!"TEACHER".equals(userContext.role())) {
-            throw BusinessException.forbidden("当前角色不能维护课程");
+            throw BusinessException.forbidden("Current role cannot manage courses");
         }
         if (!course.getTeacherId().equals(userContext.userId())) {
-            throw BusinessException.forbidden("无权维护该课程");
+            throw BusinessException.forbidden("No permission to manage this course");
         }
         return course;
     }
 
-    private CourseEntity requireVisibleCourse(Long courseId, UserContext userContext) {
+    private CourseEntity requireSummaryVisibleCourse(Long courseId, UserContext userContext) {
         CourseEntity course = requireCourse(courseId);
         if ("ADMIN".equals(userContext.role())) {
             return course;
@@ -333,13 +447,28 @@ public class CourseFacadeService {
         if ("TEACHER".equals(userContext.role()) && course.getTeacherId().equals(userContext.userId())) {
             return course;
         }
-        if ("STUDENT".equals(userContext.role())) {
-            boolean enrolled = enrollmentRepository.existsByStudentIdAndCourseId(userContext.userId(), courseId);
-            if (course.getStatus() == CourseStatus.PUBLISHED || enrolled) {
-                return course;
-            }
+        if ("STUDENT".equals(userContext.role())
+                && (canStudentViewCourseSummary(course, userContext.userId())
+                || enrollmentRepository.existsByStudentIdAndCourseId(userContext.userId(), courseId))) {
+            return course;
         }
-        throw BusinessException.forbidden("无权访问该课程");
+        throw BusinessException.forbidden("No permission to view this course");
+    }
+
+    private CourseEntity requireContentAccessibleCourse(Long courseId, UserContext userContext) {
+        CourseEntity course = requireCourse(courseId);
+        if ("ADMIN".equals(userContext.role())) {
+            return course;
+        }
+        if ("TEACHER".equals(userContext.role()) && course.getTeacherId().equals(userContext.userId())) {
+            return course;
+        }
+        if ("STUDENT".equals(userContext.role())
+                && course.getStatus() == CourseStatus.PUBLISHED
+                && enrollmentRepository.existsByStudentIdAndCourseId(userContext.userId(), courseId)) {
+            return course;
+        }
+        throw BusinessException.forbidden("No permission to access this course content");
     }
 
     private void assertRole(UserContext userContext, String... roles) {
@@ -348,7 +477,12 @@ public class CourseFacadeService {
                 return;
             }
         }
-        throw BusinessException.forbidden("当前角色无权执行该操作");
+        throw BusinessException.forbidden("Current role is not allowed to perform this action");
+    }
+
+    private boolean canManageCourse(CourseEntity course, UserContext userContext) {
+        return "ADMIN".equals(userContext.role())
+                || ("TEACHER".equals(userContext.role()) && course.getTeacherId().equals(userContext.userId()));
     }
 
     private int toPageIndex(int page) {
@@ -385,7 +519,18 @@ public class CourseFacadeService {
         try {
             return CourseStatus.valueOf(status.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw BusinessException.badRequest("课程状态非法");
+            throw BusinessException.badRequest("Invalid course status");
+        }
+    }
+
+    private CourseVisibilityType parseVisibilityType(String visibilityType) {
+        if (!StringUtils.hasText(visibilityType)) {
+            return CourseVisibilityType.PUBLIC;
+        }
+        try {
+            return CourseVisibilityType.valueOf(visibilityType.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw BusinessException.badRequest("Invalid course visibility type");
         }
     }
 
@@ -393,12 +538,102 @@ public class CourseFacadeService {
         try {
             return ResourceType.valueOf(type.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw BusinessException.badRequest("资源类型非法");
+            throw BusinessException.badRequest("Invalid resource type");
         }
     }
 
     private String normalizeBlank(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private List<Long> normalizeVisibleStudentIds(List<Long> visibleStudentIds) {
+        if (visibleStudentIds == null || visibleStudentIds.isEmpty()) {
+            return List.of();
+        }
+        return new ArrayList<>(new LinkedHashSet<>(visibleStudentIds.stream()
+                .filter(Objects::nonNull)
+                .toList()));
+    }
+
+    private void validateVisibleStudents(CourseVisibilityType visibilityType, List<Long> visibleStudentIds) {
+        if (visibilityType == CourseVisibilityType.SELECTED_STUDENTS && visibleStudentIds.isEmpty()) {
+            throw BusinessException.badRequest("Please select at least one student for targeted visibility");
+        }
+
+        for (Long studentId : visibleStudentIds) {
+            UserServiceResponse response = userServiceClient.getUserById(studentId);
+            if (response == null || response.getData() == null) {
+                throw BusinessException.badRequest("Visible student does not exist: " + studentId);
+            }
+            if (!"STUDENT".equalsIgnoreCase(response.getData().getRole())) {
+                throw BusinessException.badRequest("Visible targets must all be students");
+            }
+            if (Boolean.FALSE.equals(response.getData().getIsActive())) {
+                throw BusinessException.badRequest("Visible student is inactive: " + studentId);
+            }
+        }
+    }
+
+    private void syncVisibleStudents(Long courseId, CourseVisibilityType visibilityType, List<Long> visibleStudentIds) {
+        courseVisibleStudentRepository.deleteByCourseId(courseId);
+        if (visibilityType != CourseVisibilityType.SELECTED_STUDENTS) {
+            return;
+        }
+        List<CourseVisibleStudentEntity> entities = visibleStudentIds.stream()
+                .map(studentId -> CourseVisibleStudentEntity.builder()
+                        .courseId(courseId)
+                        .studentId(studentId)
+                        .build())
+                .toList();
+        courseVisibleStudentRepository.saveAll(entities);
+    }
+
+    private boolean canStudentViewCourseSummary(CourseEntity course, Long studentId) {
+        if (course.getStatus() != CourseStatus.PUBLISHED) {
+            return false;
+        }
+        if (course.getVisibilityType() == CourseVisibilityType.PUBLIC) {
+            return true;
+        }
+        return courseVisibleStudentRepository.existsByCourseIdAndStudentId(course.getId(), studentId);
+    }
+
+    private void ensurePublishable(CourseEntity course) {
+        if (course.getStatus() == CourseStatus.PUBLISHED) {
+            throw BusinessException.badRequest("Course is already published");
+        }
+        if (course.getVisibilityType() == CourseVisibilityType.SELECTED_STUDENTS
+                && courseVisibleStudentRepository.countByCourseId(course.getId()) == 0) {
+            throw BusinessException.badRequest("Targeted courses must select at least one visible student before publishing");
+        }
+    }
+
+    private void notifyCoursePublished(CourseEntity course) {
+        Set<Long> recipientIds = new LinkedHashSet<>();
+        if (course.getVisibilityType() == CourseVisibilityType.SELECTED_STUDENTS) {
+            recipientIds.addAll(courseVisibleStudentRepository.findByCourseId(course.getId()).stream()
+                    .map(CourseVisibleStudentEntity::getStudentId)
+                    .toList());
+        }
+        recipientIds.addAll(enrollmentRepository.findAll().stream()
+                .filter(enrollment -> enrollment.getCourseId().equals(course.getId()))
+                .map(EnrollmentEntity::getStudentId)
+                .toList());
+
+        for (Long recipientId : recipientIds) {
+            try {
+                notifyServiceClient.createNotification(CreateNotificationRequest.builder()
+                        .userId(recipientId)
+                        .type("COURSE")
+                        .title("New course published")
+                        .content("Course \"" + course.getTitle() + "\" has been published. You can now view the course and enroll.")
+                        .build());
+            } catch (FeignException ex) {
+                // Keep publishing available even if notification delivery is temporarily unavailable.
+            } catch (Exception ex) {
+                // Ignore transient notification issues to avoid blocking course publication.
+            }
+        }
     }
 
     private Map<Long, String> resolveTeacherNames(List<CourseEntity> courses) {
@@ -423,7 +658,36 @@ public class CourseFacadeService {
         return "User-" + teacherId;
     }
 
-    private CourseResponse toCourseResponse(CourseEntity entity, Map<Long, String> teacherNames) {
+    private Map<Long, List<Long>> loadVisibleStudentIds(List<CourseEntity> courses) {
+        if (courses.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Long> courseIds = courses.stream().map(CourseEntity::getId).toList();
+        Map<Long, List<Long>> visibleStudentIdsByCourse = new HashMap<>();
+        for (CourseVisibleStudentEntity item : courseVisibleStudentRepository.findByCourseIdIn(courseIds)) {
+            visibleStudentIdsByCourse.computeIfAbsent(item.getCourseId(), ignored -> new ArrayList<>())
+                    .add(item.getStudentId());
+        }
+        return visibleStudentIdsByCourse;
+    }
+
+    private CourseResponse toCourseResponseAfterMutation(CourseEntity course) {
+        return toCourseResponse(
+                course,
+                Map.of(course.getTeacherId(), resolveTeacherName(course.getTeacherId())),
+                loadVisibleStudentIds(List.of(course)),
+                true
+        );
+    }
+
+    private CourseResponse toCourseResponse(
+            CourseEntity entity,
+            Map<Long, String> teacherNames,
+            Map<Long, List<Long>> visibleStudentIdsByCourse,
+            boolean includeManageFields
+    ) {
+        List<Long> visibleStudentIds = visibleStudentIdsByCourse.getOrDefault(entity.getId(), List.of());
         return CourseResponse.builder()
                 .id(entity.getId())
                 .title(entity.getTitle())
@@ -432,6 +696,9 @@ public class CourseFacadeService {
                 .teacherId(entity.getTeacherId())
                 .teacherName(teacherNames.getOrDefault(entity.getTeacherId(), "User-" + entity.getTeacherId()))
                 .status(entity.getStatus().name())
+                .visibilityType(entity.getVisibilityType().name())
+                .visibleStudentIds(includeManageFields ? visibleStudentIds : null)
+                .visibleStudentCount(visibleStudentIds.size())
                 .createdAt(entity.getCreatedAt().toString())
                 .updatedAt(entity.getUpdatedAt().toString())
                 .build();

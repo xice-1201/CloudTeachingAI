@@ -9,20 +9,32 @@
           </el-tag>
         </div>
         <div class="header-actions">
-          <el-button v-if="canEdit" @click="$router.push(`/courses/${course.id}/edit`)">
-            编辑与编排
-          </el-button>
-          <el-button v-if="canEdit && course.status === 'DRAFT'" type="primary" @click="handlePublish">
-            发布课程
-          </el-button>
+          <el-button v-if="canEdit" @click="$router.push(`/courses/${course.id}/edit`)">编辑课程</el-button>
+          <el-button v-if="canPublish" type="primary" @click="handleLifecycle('publish')">发布课程</el-button>
+          <el-button v-if="canUnpublish" @click="handleLifecycle('unpublish')">撤回发布</el-button>
+          <el-button v-if="canRestore" @click="handleLifecycle('restore')">恢复为草稿</el-button>
+          <el-button v-if="canArchive" @click="handleLifecycle('archive')">归档课程</el-button>
           <el-button v-if="canEnroll" type="primary" @click="handleEnroll">选课</el-button>
         </div>
       </div>
 
       <el-row :gutter="20">
         <el-col :span="16">
+          <el-alert
+            v-if="showEnrollHint"
+            type="info"
+            :closable="false"
+            title="当前可查看课程简介，选课后可访问章节与资源内容。"
+            style="margin-bottom: 16px"
+          />
+
           <el-card shadow="never" header="课程单元">
-            <div v-if="chapters.length === 0" class="empty-tip">当前课程还没有单元。</div>
+            <div v-if="!contentAccessGranted" class="empty-tip">
+              当前尚未开放课程内容。
+            </div>
+            <div v-else-if="chapters.length === 0" class="empty-tip">
+              当前课程还没有单元。
+            </div>
             <el-collapse v-else>
               <el-collapse-item
                 v-for="chapter in chapters"
@@ -48,7 +60,9 @@
                   </span>
                 </div>
 
-                <div v-if="!resourceMap[chapter.id]?.length" class="empty-tip">当前单元还没有资源。</div>
+                <div v-if="contentAccessGranted && !resourceMap[chapter.id]?.length" class="empty-tip">
+                  当前单元还没有资源。
+                </div>
               </el-collapse-item>
             </el-collapse>
           </el-card>
@@ -58,6 +72,7 @@
           <el-card shadow="never" header="课程信息">
             <el-descriptions :column="1" border>
               <el-descriptions-item label="教师">{{ course.teacherName }}</el-descriptions-item>
+              <el-descriptions-item label="可见范围">{{ visibilityLabel(course) }}</el-descriptions-item>
               <el-descriptions-item label="创建时间">{{ formatDate(course.createdAt) }}</el-descriptions-item>
               <el-descriptions-item label="更新时间">{{ formatDate(course.updatedAt) }}</el-descriptions-item>
             </el-descriptions>
@@ -75,7 +90,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document, Paperclip, VideoPlay } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
 import { useUserStore } from '@/store/user'
@@ -88,15 +103,19 @@ const loading = ref(false)
 const course = ref<Course | null>(null)
 const chapters = ref<Chapter[]>([])
 const resourceMap = ref<Record<number, Resource[]>>({})
+const contentAccessGranted = ref(false)
 
 const canEdit = computed(() => {
-  if (!course.value) {
-    return false
-  }
+  if (!course.value) return false
   return userStore.isAdmin || (!userStore.isStudent && course.value.teacherId === userStore.user?.id)
 })
 
-const canEnroll = computed(() => userStore.isStudent && course.value?.status === 'PUBLISHED')
+const canPublish = computed(() => canEdit.value && course.value?.status === 'DRAFT')
+const canUnpublish = computed(() => canEdit.value && course.value?.status === 'PUBLISHED')
+const canArchive = computed(() => canEdit.value && course.value?.status !== 'ARCHIVED')
+const canRestore = computed(() => canEdit.value && course.value?.status === 'ARCHIVED')
+const canEnroll = computed(() => userStore.isStudent && course.value?.status === 'PUBLISHED' && !contentAccessGranted.value)
+const showEnrollHint = computed(() => userStore.isStudent && !contentAccessGranted.value && course.value?.status === 'PUBLISHED')
 
 function statusTagType(status: string) {
   return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info'
@@ -104,6 +123,13 @@ function statusTagType(status: string) {
 
 function statusLabel(status: string) {
   return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status] ?? status
+}
+
+function visibilityLabel(currentCourse: Course) {
+  if (currentCourse.visibilityType === 'SELECTED_STUDENTS') {
+    return `定向开放${currentCourse.visibleStudentCount ? `（${currentCourse.visibleStudentCount}名学生）` : ''}`
+  }
+  return '全体学生可见'
 }
 
 function resourceTypeLabel(type: string) {
@@ -122,33 +148,61 @@ function resourceIcon(type: string) {
   return { VIDEO: VideoPlay, DOCUMENT: Document, SLIDE: Paperclip }[type] ?? Document
 }
 
-async function handlePublish() {
-  await courseApi.publishCourse(String(course.value!.id))
-  course.value!.status = 'PUBLISHED'
-  ElMessage.success('课程已发布')
+async function loadCourseSummary() {
+  const id = String(route.params.id)
+  course.value = await courseApi.getCourse(id)
+}
+
+async function loadCurriculum() {
+  const id = String(route.params.id)
+  try {
+    const chapterList = await courseApi.listChapters(id)
+    chapters.value = chapterList
+    const resourceEntries = await Promise.all(
+      chapterList.map(async (chapter) => [chapter.id, await courseApi.listResources(String(chapter.id))] as const),
+    )
+    resourceMap.value = Object.fromEntries(resourceEntries)
+    contentAccessGranted.value = true
+  } catch (_error) {
+    chapters.value = []
+    resourceMap.value = {}
+    contentAccessGranted.value = false
+  }
+}
+
+async function handleLifecycle(action: 'publish' | 'unpublish' | 'archive' | 'restore') {
+  if (!course.value) return
+
+  const actionMap = {
+    publish: { text: '发布课程', api: courseApi.publishCourse },
+    unpublish: { text: '撤回发布', api: courseApi.unpublishCourse },
+    archive: { text: '归档课程', api: courseApi.archiveCourse },
+    restore: { text: '恢复为草稿', api: courseApi.restoreCourse },
+  } as const
+
+  await ElMessageBox.confirm(`确定要${actionMap[action].text}吗？`, actionMap[action].text, { type: 'warning' })
+  const updated = await actionMap[action].api(String(course.value.id))
+  if (updated && typeof updated === 'object') {
+    course.value = updated
+  } else {
+    await loadCourseSummary()
+  }
+  ElMessage.success(`${actionMap[action].text}成功`)
+  await loadCurriculum()
 }
 
 async function handleEnroll() {
-  await courseApi.enrollCourse(String(course.value!.id))
+  if (!course.value) return
+  await courseApi.enrollCourse(String(course.value.id))
   ElMessage.success('选课成功')
+  await loadCurriculum()
 }
 
 onMounted(async () => {
   loading.value = true
   try {
-    const id = String(route.params.id)
-    const [courseDetail, chapterList] = await Promise.all([
-      courseApi.getCourse(id),
-      courseApi.listChapters(id),
-    ])
-
-    course.value = courseDetail
-    chapters.value = chapterList
-
-    const resourceEntries = await Promise.all(
-      chapterList.map(async (chapter) => [chapter.id, await courseApi.listResources(String(chapter.id))] as const),
-    )
-    resourceMap.value = Object.fromEntries(resourceEntries)
+    await loadCourseSummary()
+    await loadCurriculum()
   } finally {
     loading.value = false
   }
@@ -159,6 +213,7 @@ onMounted(async () => {
 .header-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .chapter-description {

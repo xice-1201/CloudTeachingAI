@@ -29,6 +29,9 @@ export interface Course {
   teacherId: number
   teacherName: string
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  visibilityType: 'PUBLIC' | 'SELECTED_STUDENTS'
+  visibleStudentIds?: number[] | null
+  visibleStudentCount?: number
   createdAt: string
   updatedAt: string
 }
