@@ -22,9 +22,9 @@
       </div>
 
       <div class="learn-sidebar">
-        <el-card shadow="never" header="学习进度">
+        <el-card shadow="never" :header="sidebarTitle">
           <el-progress type="circle" :percentage="progressPct" />
-          <div class="progress-text">{{ progressPct }}% 已完成</div>
+          <div class="progress-text">{{ sidebarText }}</div>
         </el-card>
       </div>
     </div>
@@ -37,19 +37,28 @@ import { useRoute } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
+import { useUserStore } from '@/store/user'
 import type { LearningProgress, Resource } from '@/types'
 
 const route = useRoute()
+const userStore = useUserStore()
 const videoEl = ref<HTMLVideoElement>()
 const loading = ref(false)
 const resource = ref<Resource | null>(null)
 const resourceUrl = ref('')
 const progress = ref<LearningProgress | null>(null)
 
+const canTrackProgress = computed(() => userStore.isStudent)
 const progressPct = computed(() => {
   const value = progress.value?.progress ?? 0
   return Math.min(100, Math.max(0, Math.round(value * 100)))
 })
+const sidebarTitle = computed(() => (canTrackProgress.value ? '学习进度' : '资源预览'))
+const sidebarText = computed(() => (
+  canTrackProgress.value
+    ? `${progressPct.value}% 已完成`
+    : '当前为教师预览模式，不记录学习进度'
+))
 
 let saveTimer: ReturnType<typeof setInterval> | null = null
 
@@ -70,7 +79,7 @@ function getCourseId() {
 }
 
 async function handleTimeUpdate() {
-  if (!videoEl.value || !resource.value) {
+  if (!canTrackProgress.value || !videoEl.value || !resource.value) {
     return
   }
 
@@ -83,7 +92,7 @@ async function handleTimeUpdate() {
 }
 
 async function handleEnded() {
-  if (!resource.value) {
+  if (!canTrackProgress.value || !resource.value) {
     return
   }
 
@@ -97,7 +106,7 @@ async function handleEnded() {
 }
 
 async function saveProgress() {
-  if (!resource.value) {
+  if (!canTrackProgress.value || !resource.value) {
     return
   }
 
@@ -142,10 +151,10 @@ onMounted(async () => {
 
   try {
     const resourceId = String(route.params.resourceId)
-    const [resourceData, progressData] = await Promise.all([
-      courseApi.getResource(resourceId),
-      learnApi.getProgress(resourceId).catch(() => null),
-    ])
+    const resourceData = await courseApi.getResource(resourceId)
+    const progressData = canTrackProgress.value
+      ? await learnApi.getProgress(resourceId).catch(() => null)
+      : null
 
     resource.value = resourceData ?? null
     progress.value = progressData
@@ -163,16 +172,18 @@ onMounted(async () => {
       videoEl.value.src = url
       videoEl.value.load()
       restoreVideoPosition(videoEl.value, progressData?.lastPosition)
-    } else if (!progressData?.completed) {
+    } else if (canTrackProgress.value && !progressData?.completed) {
       progress.value = await learnApi.updateProgress(String(resourceData.id), {
         courseId: getCourseId(),
         progress: 1,
       })
     }
 
-    saveTimer = setInterval(() => {
-      saveProgress().catch(() => undefined)
-    }, 10000)
+    if (canTrackProgress.value) {
+      saveTimer = setInterval(() => {
+        saveProgress().catch(() => undefined)
+      }, 10000)
+    }
   } finally {
     loading.value = false
   }
@@ -183,7 +194,9 @@ onBeforeUnmount(() => {
     clearInterval(saveTimer)
   }
 
-  saveProgress().catch(() => undefined)
+  if (canTrackProgress.value) {
+    saveProgress().catch(() => undefined)
+  }
 })
 </script>
 
@@ -253,5 +266,6 @@ onBeforeUnmount(() => {
   margin-top: 12px;
   color: #909399;
   font-size: 13px;
+  line-height: 1.6;
 }
 </style>
