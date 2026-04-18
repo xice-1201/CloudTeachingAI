@@ -9,6 +9,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -18,10 +20,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException e) {
-        log.error("Business exception: code={}, message={}", e.getCode(), e.getMessage());
+        log.error("Business exception: code={}, message={}", e.getCode(), e.getMessage(), e);
         return ResponseEntity
                 .status(getHttpStatus(e.getCode()))
-                .body(ApiResponse.error(e.getCode(), e.getMessage()));
+                .body(ApiResponse.error(e.getCode(), e.getMessage(), stackTraceOf(e)));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -38,6 +40,7 @@ public class GlobalExceptionHandler {
                         .code(40001)
                         .message("Validation failed")
                         .data(errors)
+                        .stackTrace(stackTraceOf(e))
                         .build());
     }
 
@@ -46,7 +49,7 @@ public class GlobalExceptionHandler {
         log.error("Unexpected exception", e);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error(50001, "Internal server error"));
+                .body(ApiResponse.error(50001, "Internal server error", stackTraceOf(e)));
     }
 
     private HttpStatus getHttpStatus(Integer code) {
@@ -56,5 +59,11 @@ public class GlobalExceptionHandler {
         if (code >= 40900 && code < 41000) return HttpStatus.CONFLICT;
         if (code >= 50000 && code < 51000) return HttpStatus.INTERNAL_SERVER_ERROR;
         return HttpStatus.BAD_REQUEST;
+    }
+
+    private String stackTraceOf(Throwable throwable) {
+        StringWriter stringWriter = new StringWriter();
+        throwable.printStackTrace(new PrintWriter(stringWriter));
+        return stringWriter.toString();
     }
 }

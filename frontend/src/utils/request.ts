@@ -3,6 +3,13 @@ import type { AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'a
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 
+type ErrorPayload = {
+  code?: number
+  message?: string
+  stackTrace?: string
+  data?: unknown
+}
+
 const request: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
   timeout: 30000,
@@ -12,7 +19,7 @@ const request: AxiosInstance = axios.create({
 })
 
 let isRefreshing = false
-let refreshSubscribers: ((token: string) => void)[] = []
+let refreshSubscribers: Array<(token: string) => void> = []
 
 function subscribeTokenRefresh(cb: (token: string) => void) {
   refreshSubscribers.push(cb)
@@ -44,6 +51,28 @@ function clearStoredSession() {
   localStorage.removeItem('userInfo')
 }
 
+function logBrowserError(error: any, payload?: ErrorPayload) {
+  const method = error?.config?.method?.toUpperCase?.() ?? 'UNKNOWN'
+  const url = error?.config?.url ?? 'UNKNOWN_URL'
+  const status = error?.response?.status ?? 'NO_STATUS'
+
+  console.groupCollapsed(`[CloudTeachingAI Error] ${method} ${url} -> ${status}`)
+  console.error('Request config:', error?.config)
+  if (payload) {
+    console.error('Response payload:', payload)
+    if (payload.stackTrace) {
+      console.error('Server stack trace:\n' + payload.stackTrace)
+    }
+  } else if (error?.response?.data) {
+    console.error('Response payload:', error.response.data)
+  }
+  console.error('Axios error object:', error)
+  if (error?.stack) {
+    console.error('Browser stack trace:\n' + error.stack)
+  }
+  console.groupEnd()
+}
+
 request.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('token')
@@ -52,27 +81,33 @@ request.interceptors.request.use(
     }
     return config
   },
-  (error) => Promise.reject(error)
+  (error) => Promise.reject(error),
 )
 
 request.interceptors.response.use(
   (response: AxiosResponse) => {
-    const { code, message, data } = response.data
+    const { code, message, data, stackTrace } = response.data
     const silentError = isSilentError(response.config as InternalAxiosRequestConfig)
 
     if (code === 0 || code === 200) {
       return data
     }
 
+    const businessError = new Error(message || '请求失败')
+    logBrowserError(businessError, { code, message, data, stackTrace })
+
     if (!silentError) {
       ElMessage.error(message || '请求失败')
     }
-    return Promise.reject(new Error(message || '请求失败'))
+    return Promise.reject(businessError)
   },
   async (error) => {
     const originalRequest = error.config
     const silentError = isSilentError(originalRequest)
     const skipAuthRedirect = shouldSkipAuthRedirect(originalRequest)
+    const payload = error?.response?.data as ErrorPayload | undefined
+
+    logBrowserError(error, payload)
 
     if (error.response) {
       const { status, data } = error.response
@@ -97,7 +132,7 @@ request.interceptors.response.use(
           }
 
           const response = await axios.post(
-            `${request.defaults.baseURL}/auth/refresh?refreshToken=${encodeURIComponent(refreshToken)}`
+            `${request.defaults.baseURL}/auth/refresh?refreshToken=${encodeURIComponent(refreshToken)}`,
           )
 
           const { data: loginData } = response.data
@@ -112,6 +147,7 @@ request.interceptors.response.use(
           return request(originalRequest)
         } catch (refreshError) {
           clearStoredSession()
+          logBrowserError(refreshError)
           if (!silentError) {
             ElMessage.error('登录已过期，请重新登录')
           }
@@ -153,7 +189,7 @@ request.interceptors.response.use(
           break
         case 500:
           if (!silentError) {
-            ElMessage.error(data?.message || '服务器错误，请稍后重试')
+            ElMessage.error(data?.message || '服务端错误，请稍后重试')
           }
           break
         case 503:
@@ -175,7 +211,7 @@ request.interceptors.response.use(
     }
 
     return Promise.reject(error)
-  }
+  },
 )
 
 export default request

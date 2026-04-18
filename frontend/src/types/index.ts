@@ -148,6 +148,7 @@ export interface ApiResponse<T = any> {
   code: number
   message: string
   data: T
+  stackTrace?: string
 }
 
 export interface PageResponse<T> {

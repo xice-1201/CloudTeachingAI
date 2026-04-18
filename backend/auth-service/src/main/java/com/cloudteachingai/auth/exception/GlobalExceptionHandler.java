@@ -9,6 +9,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -18,10 +20,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException e) {
-        log.error("Business exception: code={}, message={}", e.getCode(), e.getMessage());
+        log.error("Business exception: code={}, message={}", e.getCode(), e.getMessage(), e);
         return ResponseEntity
                 .status(getHttpStatus(e.getCode()))
-                .body(ApiResponse.error(e.getCode(), e.getMessage()));
+                .body(ApiResponse.error(e.getCode(), e.getMessage(), stackTraceOf(e)));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -38,6 +40,7 @@ public class GlobalExceptionHandler {
                         .code(40001)
                         .message("参数验证失败")
                         .data(errors)
+                        .stackTrace(stackTraceOf(e))
                         .build());
     }
 
@@ -46,19 +49,23 @@ public class GlobalExceptionHandler {
         log.error("Unexpected exception", e);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error(50001, "服务器内部错误"));
+                .body(ApiResponse.error(50001, "服务端内部错误", stackTraceOf(e)));
     }
 
     private HttpStatus getHttpStatus(Integer code) {
-        // 更具体的条件先匹配
         if (code >= 40100 && code < 40200) return HttpStatus.UNAUTHORIZED;
         if (code >= 40300 && code < 40400) return HttpStatus.FORBIDDEN;
         if (code >= 40400 && code < 40500) return HttpStatus.NOT_FOUND;
         if (code >= 40900 && code < 41000) return HttpStatus.CONFLICT;
         if (code >= 42900 && code < 43000) return HttpStatus.TOO_MANY_REQUESTS;
-        if (code >= 40000 && code < 41000) return HttpStatus.BAD_REQUEST;
         if (code >= 50000 && code < 51000) return HttpStatus.INTERNAL_SERVER_ERROR;
         if (code >= 50300 && code < 50400) return HttpStatus.SERVICE_UNAVAILABLE;
-        return HttpStatus.INTERNAL_SERVER_ERROR;
+        return HttpStatus.BAD_REQUEST;
+    }
+
+    private String stackTraceOf(Throwable throwable) {
+        StringWriter stringWriter = new StringWriter();
+        throwable.printStackTrace(new PrintWriter(stringWriter));
+        return stringWriter.toString();
     }
 }

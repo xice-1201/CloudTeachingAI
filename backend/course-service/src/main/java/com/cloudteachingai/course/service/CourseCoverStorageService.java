@@ -46,7 +46,7 @@ public class CourseCoverStorageService {
         try {
             Files.createDirectories(coverStorageDir);
             file.transferTo(target);
-        } catch (IOException ex) {
+        } catch (Exception ex) {
             throw BusinessException.internal("Failed to store cover image");
         }
 

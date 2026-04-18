@@ -40,7 +40,7 @@ management:
         include: health,info
 
 app:
-  storage-root: ${APP_STORAGE_ROOT:/app/storage}
+  storage-root: ${APP_STORAGE_ROOT:storage}
 
 logging:
   level:

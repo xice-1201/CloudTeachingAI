@@ -230,6 +230,7 @@
       SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
       USER_SERVICE_URL: http://user-service:8002
+      APP_STORAGE_ROOT: /app/storage
     volumes:
       - ./keys/public_key.pem:/app/keys/public_key.pem:ro
       - course-storage-data:/app/storage
