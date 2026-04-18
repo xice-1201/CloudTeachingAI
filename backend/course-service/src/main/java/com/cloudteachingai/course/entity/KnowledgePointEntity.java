@@ -1,8 +1,6 @@
 package com.cloudteachingai.course.entity;
 
-import com.cloudteachingai.course.entity.enums.ResourceStatus;
-import com.cloudteachingai.course.entity.enums.ResourceTaggingStatus;
-import com.cloudteachingai.course.entity.enums.ResourceType;
+import com.cloudteachingai.course.entity.enums.KnowledgePointType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -28,45 +26,31 @@ import java.time.ZoneOffset;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
-@Table(name = "resource")
-public class ResourceEntity {
+@Table(name = "knowledge_point")
+public class KnowledgePointEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "chapter_id", nullable = false)
-    private Long chapterId;
+    @Column(name = "parent_id")
+    private Long parentId;
 
     @Column(nullable = false, length = 255)
-    private String title;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
-    private ResourceType type;
-
-    @Column(name = "storage_key", nullable = false)
-    private String storageKey;
-
-    @Column(name = "file_size")
-    private Long fileSize;
-
-    @Column(name = "duration_seconds")
-    private Integer durationSeconds;
+    private String name;
 
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "tagging_status", nullable = false, length = 20)
-    private ResourceTaggingStatus taggingStatus;
-
-    @Column(name = "tagging_updated_at")
-    private OffsetDateTime taggingUpdatedAt;
+    @Column(length = 1000)
+    private String keywords;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
-    private ResourceStatus status;
+    @Column(name = "node_type", nullable = false, length = 20)
+    private KnowledgePointType nodeType;
+
+    @Column(nullable = false)
+    private Boolean active;
 
     @Column(name = "order_index", nullable = false)
     private Integer orderIndex;
@@ -82,11 +66,11 @@ public class ResourceEntity {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         createdAt = now;
         updatedAt = now;
-        if (status == null) {
-            status = ResourceStatus.PUBLISHED;
+        if (active == null) {
+            active = Boolean.TRUE;
         }
-        if (taggingStatus == null) {
-            taggingStatus = ResourceTaggingStatus.UNTAGGED;
+        if (orderIndex == null || orderIndex <= 0) {
+            orderIndex = 1;
         }
     }
 

@@ -6,8 +6,13 @@ import com.cloudteachingai.course.dto.ChapterUpsertRequest;
 import com.cloudteachingai.course.dto.CoverUploadResponse;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
+import com.cloudteachingai.course.dto.KnowledgePointNodeResponse;
+import com.cloudteachingai.course.dto.KnowledgePointUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
 import com.cloudteachingai.course.dto.ResourceResponse;
+import com.cloudteachingai.course.dto.ResourceTagConfirmRequest;
+import com.cloudteachingai.course.dto.ResourceTagPreviewRequest;
+import com.cloudteachingai.course.dto.ResourceTagSuggestionResponse;
 import com.cloudteachingai.course.dto.ResourceUploadResponse;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
 import com.cloudteachingai.course.entity.enums.ResourceType;
@@ -229,6 +234,47 @@ public class CourseController {
         return ApiResponse.success(courseFacadeService.getResource(resourceId, userContext));
     }
 
+    @GetMapping("/knowledge-points/tree")
+    public ApiResponse<List<KnowledgePointNodeResponse>> listKnowledgePointTree(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam(defaultValue = "true") boolean activeOnly) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.listKnowledgePointTree(activeOnly, userContext));
+    }
+
+    @PostMapping("/knowledge-points")
+    public ApiResponse<KnowledgePointNodeResponse> createKnowledgePoint(
+            @RequestHeader("Authorization") String authorization,
+            @Valid @RequestBody KnowledgePointUpsertRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.createKnowledgePoint(request, userContext));
+    }
+
+    @PutMapping("/knowledge-points/{knowledgePointId}")
+    public ApiResponse<KnowledgePointNodeResponse> updateKnowledgePoint(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long knowledgePointId,
+            @Valid @RequestBody KnowledgePointUpsertRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.updateKnowledgePoint(knowledgePointId, request, userContext));
+    }
+
+    @PostMapping("/resource-tags/suggestions/preview")
+    public ApiResponse<List<ResourceTagSuggestionResponse>> previewResourceTagSuggestions(
+            @RequestHeader("Authorization") String authorization,
+            @RequestBody ResourceTagPreviewRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.previewResourceTagSuggestions(request, userContext));
+    }
+
+    @GetMapping("/resources/{resourceId}/tag-suggestions")
+    public ApiResponse<List<ResourceTagSuggestionResponse>> getResourceTagSuggestions(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long resourceId) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.getResourceTagSuggestions(resourceId, userContext));
+    }
+
     @GetMapping("/resources/{resourceId}/content")
     public ResponseEntity<Resource> getResourceContent(
             @RequestHeader("Authorization") String authorization,
@@ -295,12 +341,12 @@ public class CourseController {
     }
 
     @PatchMapping("/resources/{resourceId}/tags")
-    public ApiResponse<Void> confirmResourceTags(
+    public ApiResponse<ResourceResponse> confirmResourceTags(
             @RequestHeader("Authorization") String authorization,
-            @PathVariable Long resourceId) {
+            @PathVariable Long resourceId,
+            @RequestBody ResourceTagConfirmRequest request) {
         UserContext userContext = extractUserContext(authorization);
-        courseFacadeService.assertCanManageResource(resourceId, userContext);
-        return ApiResponse.success(null);
+        return ApiResponse.success(courseFacadeService.confirmResourceTags(resourceId, request, userContext));
     }
 
     private UserContext extractUserContext(String authorization) {

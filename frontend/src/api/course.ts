@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { Course, Chapter, Resource, PageResponse } from '@/types'
+import type { Course, Chapter, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse } from '@/types'
 
 export const courseApi = {
   listCourses: (params?: { page?: number; pageSize?: number; keyword?: string; status?: string }): Promise<PageResponse<Course>> =>
@@ -75,6 +75,44 @@ export const courseApi = {
 
   getResource: (resourceId: string): Promise<Resource> =>
     request.get(`/resources/${resourceId}`),
+
+  listKnowledgePointTree: (params?: { activeOnly?: boolean }): Promise<KnowledgePointNode[]> =>
+    request.get('/knowledge-points/tree', { params }),
+
+  createKnowledgePoint: (data: {
+    parentId?: number | null
+    name: string
+    description?: string
+    keywords?: string
+    nodeType: KnowledgePointNode['nodeType']
+    active?: boolean
+    orderIndex: number
+  }): Promise<KnowledgePointNode> =>
+    request.post('/knowledge-points', data),
+
+  updateKnowledgePoint: (knowledgePointId: string, data: {
+    parentId?: number | null
+    name: string
+    description?: string
+    keywords?: string
+    nodeType: KnowledgePointNode['nodeType']
+    active?: boolean
+    orderIndex: number
+  }): Promise<KnowledgePointNode> =>
+    request.put(`/knowledge-points/${knowledgePointId}`, data),
+
+  previewResourceTagSuggestions: (data: {
+    title?: string
+    description?: string
+    type?: Resource['type']
+  }): Promise<ResourceTagSuggestion[]> =>
+    request.post('/resource-tags/suggestions/preview', data),
+
+  getResourceTagSuggestions: (resourceId: string): Promise<ResourceTagSuggestion[]> =>
+    request.get(`/resources/${resourceId}/tag-suggestions`),
+
+  confirmResourceTags: (resourceId: string, data: { knowledgePointIds: number[] }): Promise<Resource> =>
+    request.patch(`/resources/${resourceId}/tags`, data),
 
   createResource: (chapterId: string, data: Partial<Resource>): Promise<Resource> =>
     request.post(`/chapters/${chapterId}/resources`, data),

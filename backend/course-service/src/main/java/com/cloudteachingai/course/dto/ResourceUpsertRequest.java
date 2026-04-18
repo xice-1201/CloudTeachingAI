@@ -3,6 +3,8 @@ package com.cloudteachingai.course.dto;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class ResourceUpsertRequest {
     @NotBlank
@@ -14,6 +16,7 @@ public class ResourceUpsertRequest {
     private String url;
 
     private String description;
+    private List<Long> knowledgePointIds;
     private Integer duration;
     private Long size;
     private Integer orderIndex;

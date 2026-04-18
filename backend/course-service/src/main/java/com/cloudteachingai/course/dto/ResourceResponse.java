@@ -18,6 +18,9 @@ public class ResourceResponse {
     private String sourceUrl;
     private String description;
     private Boolean managedFile;
+    private String taggingStatus;
+    private String taggingUpdatedAt;
+    private java.util.List<ResourceKnowledgePointResponse> knowledgePoints;
     private Integer duration;
     private Long size;
     private Integer orderIndex;

@@ -9,23 +9,36 @@ import com.cloudteachingai.course.dto.ChapterResponse;
 import com.cloudteachingai.course.dto.ChapterUpsertRequest;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
+import com.cloudteachingai.course.dto.KnowledgePointNodeResponse;
+import com.cloudteachingai.course.dto.KnowledgePointUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
+import com.cloudteachingai.course.dto.ResourceKnowledgePointResponse;
 import com.cloudteachingai.course.dto.ResourceResponse;
+import com.cloudteachingai.course.dto.ResourceTagConfirmRequest;
+import com.cloudteachingai.course.dto.ResourceTagPreviewRequest;
+import com.cloudteachingai.course.dto.ResourceTagSuggestionResponse;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
 import com.cloudteachingai.course.entity.ChapterEntity;
 import com.cloudteachingai.course.entity.CourseEntity;
 import com.cloudteachingai.course.entity.CourseVisibleStudentEntity;
 import com.cloudteachingai.course.entity.EnrollmentEntity;
+import com.cloudteachingai.course.entity.KnowledgePointEntity;
 import com.cloudteachingai.course.entity.ResourceEntity;
+import com.cloudteachingai.course.entity.ResourceKnowledgePointEntity;
 import com.cloudteachingai.course.entity.enums.CourseStatus;
 import com.cloudteachingai.course.entity.enums.CourseVisibilityType;
+import com.cloudteachingai.course.entity.enums.KnowledgePointType;
 import com.cloudteachingai.course.entity.enums.ResourceStatus;
+import com.cloudteachingai.course.entity.enums.ResourceTagSource;
+import com.cloudteachingai.course.entity.enums.ResourceTaggingStatus;
 import com.cloudteachingai.course.entity.enums.ResourceType;
 import com.cloudteachingai.course.exception.BusinessException;
 import com.cloudteachingai.course.repository.ChapterRepository;
 import com.cloudteachingai.course.repository.CourseRepository;
 import com.cloudteachingai.course.repository.CourseVisibleStudentRepository;
 import com.cloudteachingai.course.repository.EnrollmentRepository;
+import com.cloudteachingai.course.repository.KnowledgePointRepository;
+import com.cloudteachingai.course.repository.ResourceKnowledgePointRepository;
 import com.cloudteachingai.course.repository.ResourceRepository;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
@@ -38,9 +51,14 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -52,11 +70,15 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class CourseFacadeService {
 
+    private static final int MAX_TAG_SUGGESTIONS = 8;
+
     private final CourseRepository courseRepository;
     private final ChapterRepository chapterRepository;
     private final ResourceRepository resourceRepository;
     private final EnrollmentRepository enrollmentRepository;
     private final CourseVisibleStudentRepository courseVisibleStudentRepository;
+    private final KnowledgePointRepository knowledgePointRepository;
+    private final ResourceKnowledgePointRepository resourceKnowledgePointRepository;
     private final UserServiceClient userServiceClient;
     private final NotifyServiceClient notifyServiceClient;
     private final CourseCoverStorageService courseCoverStorageService;
@@ -305,8 +327,12 @@ public class CourseFacadeService {
     public List<ResourceResponse> listResources(Long chapterId, UserContext userContext) {
         ChapterEntity chapter = requireChapter(chapterId);
         requireContentAccessibleCourse(chapter.getCourseId(), userContext);
-        return resourceRepository.findByChapterIdOrderByOrderIndexAscIdAsc(chapterId).stream()
-                .map(this::toResourceResponse)
+        List<ResourceEntity> resources = resourceRepository.findByChapterIdOrderByOrderIndexAscIdAsc(chapterId);
+        Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(resources.stream()
+                .map(ResourceEntity::getId)
+                .toList());
+        return resources.stream()
+                .map(resource -> toResourceResponse(resource, resourceTags.getOrDefault(resource.getId(), List.of())))
                 .toList();
     }
 
@@ -314,7 +340,8 @@ public class CourseFacadeService {
         ResourceEntity resource = requireResource(resourceId);
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireContentAccessibleCourse(chapter.getCourseId(), userContext);
-        return toResourceResponse(resource);
+        Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(resourceId));
+        return toResourceResponse(resource, resourceTags.getOrDefault(resourceId, List.of()));
     }
 
     @Transactional
@@ -338,7 +365,11 @@ public class CourseFacadeService {
                 .orderIndex(resolveResourceOrderIndex(chapterId, request.getOrderIndex()))
                 .status(ResourceStatus.PUBLISHED)
                 .build();
-        return toResourceResponse(resourceRepository.save(resource));
+
+        ResourceEntity saved = resourceRepository.save(resource);
+        replaceResourceKnowledgePoints(saved, request.getKnowledgePointIds());
+        Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(saved.getId()));
+        return toResourceResponse(saved, resourceTags.getOrDefault(saved.getId(), List.of()));
     }
 
     @Transactional
@@ -357,11 +388,13 @@ public class CourseFacadeService {
         resource.setDurationSeconds(request.getDuration());
         resource.setDescription(normalizeBlank(request.getDescription()));
         resource.setOrderIndex(resolveOrderIndex(request.getOrderIndex(), resource.getOrderIndex()));
-        ResourceResponse response = toResourceResponse(resourceRepository.save(resource));
+        ResourceEntity saved = resourceRepository.save(resource);
+        replaceResourceKnowledgePoints(saved, request.getKnowledgePointIds());
         if (!Objects.equals(previousStorageKey, updatedStorageKey)) {
             resourceStorageService.deleteIfManaged(previousStorageKey);
         }
-        return response;
+        Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(saved.getId()));
+        return toResourceResponse(saved, resourceTags.getOrDefault(saved.getId(), List.of()));
     }
 
     @Transactional
@@ -377,6 +410,81 @@ public class CourseFacadeService {
         ResourceEntity resource = requireResource(resourceId);
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireManageableCourse(chapter.getCourseId(), userContext);
+    }
+
+    public List<KnowledgePointNodeResponse> listKnowledgePointTree(boolean activeOnly, UserContext userContext) {
+        assertRole(userContext, "STUDENT", "TEACHER", "ADMIN");
+        List<KnowledgePointEntity> knowledgePoints = activeOnly
+                ? knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc()
+                : knowledgePointRepository.findAllByOrderByOrderIndexAscIdAsc();
+        return buildKnowledgePointTree(knowledgePoints, new HashMap<>());
+    }
+
+    @Transactional
+    public KnowledgePointNodeResponse createKnowledgePoint(KnowledgePointUpsertRequest request, UserContext userContext) {
+        assertRole(userContext, "ADMIN");
+        KnowledgePointType nodeType = parseKnowledgePointType(request.getNodeType());
+        KnowledgePointEntity parent = requireValidKnowledgePointParent(request.getParentId(), nodeType);
+
+        KnowledgePointEntity entity = KnowledgePointEntity.builder()
+                .parentId(parent == null ? null : parent.getId())
+                .name(request.getName().trim())
+                .description(normalizeBlank(request.getDescription()))
+                .keywords(normalizeKeywords(request.getKeywords()))
+                .nodeType(nodeType)
+                .active(request.getActive() == null ? Boolean.TRUE : request.getActive())
+                .orderIndex(resolveKnowledgePointOrderIndex(parent == null ? null : parent.getId(), request.getOrderIndex()))
+                .build();
+
+        KnowledgePointEntity saved = knowledgePointRepository.save(entity);
+        return toKnowledgePointNodeResponse(saved, loadKnowledgePointMap(), List.of());
+    }
+
+    @Transactional
+    public KnowledgePointNodeResponse updateKnowledgePoint(Long knowledgePointId, KnowledgePointUpsertRequest request, UserContext userContext) {
+        assertRole(userContext, "ADMIN");
+        KnowledgePointEntity entity = requireKnowledgePoint(knowledgePointId);
+        KnowledgePointType requestedType = parseKnowledgePointType(request.getNodeType());
+        if (requestedType != entity.getNodeType()) {
+            throw BusinessException.badRequest("Changing knowledge point type is not supported");
+        }
+
+        KnowledgePointEntity parent = requireValidKnowledgePointParent(request.getParentId(), requestedType);
+        Long parentId = parent == null ? null : parent.getId();
+        if (!Objects.equals(entity.getParentId(), parentId)) {
+            throw BusinessException.badRequest("Changing the parent node is not supported");
+        }
+
+        entity.setName(request.getName().trim());
+        entity.setDescription(normalizeBlank(request.getDescription()));
+        entity.setKeywords(normalizeKeywords(request.getKeywords()));
+        entity.setActive(request.getActive() == null ? entity.getActive() : request.getActive());
+        entity.setOrderIndex(resolveKnowledgePointOrderIndex(entity.getParentId(), request.getOrderIndex()));
+
+        KnowledgePointEntity saved = knowledgePointRepository.save(entity);
+        return toKnowledgePointNodeResponse(saved, loadKnowledgePointMap(), List.of());
+    }
+
+    public List<ResourceTagSuggestionResponse> previewResourceTagSuggestions(ResourceTagPreviewRequest request, UserContext userContext) {
+        assertRole(userContext, "TEACHER", "ADMIN");
+        return buildTagSuggestions(request.getTitle(), request.getDescription());
+    }
+
+    public List<ResourceTagSuggestionResponse> getResourceTagSuggestions(Long resourceId, UserContext userContext) {
+        ResourceEntity resource = requireResource(resourceId);
+        ChapterEntity chapter = requireChapter(resource.getChapterId());
+        requireManageableCourse(chapter.getCourseId(), userContext);
+        return buildTagSuggestions(resource.getTitle(), resource.getDescription());
+    }
+
+    @Transactional
+    public ResourceResponse confirmResourceTags(Long resourceId, ResourceTagConfirmRequest request, UserContext userContext) {
+        ResourceEntity resource = requireResource(resourceId);
+        ChapterEntity chapter = requireChapter(resource.getChapterId());
+        requireManageableCourse(chapter.getCourseId(), userContext);
+        replaceResourceKnowledgePoints(resource, request.getKnowledgePointIds());
+        Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(resource.getId()));
+        return toResourceResponse(resource, resourceTags.getOrDefault(resource.getId(), List.of()));
     }
 
     public ManagedResourceContent loadManagedResourceContent(Long resourceId, UserContext userContext) {
@@ -461,6 +569,11 @@ public class CourseFacadeService {
     private ResourceEntity requireResource(Long resourceId) {
         return resourceRepository.findById(resourceId)
                 .orElseThrow(() -> BusinessException.notFound("Resource not found"));
+    }
+
+    private KnowledgePointEntity requireKnowledgePoint(Long knowledgePointId) {
+        return knowledgePointRepository.findById(knowledgePointId)
+                .orElseThrow(() -> BusinessException.notFound("Knowledge point not found"));
     }
 
     private CourseEntity requireManageableCourse(Long courseId, UserContext userContext) {
@@ -549,6 +662,18 @@ public class CourseFacadeService {
                 .orElse(1);
     }
 
+    private int resolveKnowledgePointOrderIndex(Long parentId, Integer requestedOrderIndex) {
+        if (requestedOrderIndex != null && requestedOrderIndex > 0) {
+            return requestedOrderIndex;
+        }
+        return knowledgePointRepository.findAllByOrderByOrderIndexAscIdAsc().stream()
+                .filter(item -> Objects.equals(item.getParentId(), parentId))
+                .map(KnowledgePointEntity::getOrderIndex)
+                .max(Integer::compareTo)
+                .map(orderIndex -> orderIndex + 1)
+                .orElse(1);
+    }
+
     private int resolveOrderIndex(Integer requestedOrderIndex, Integer currentOrderIndex) {
         return requestedOrderIndex != null && requestedOrderIndex > 0 ? requestedOrderIndex : currentOrderIndex;
     }
@@ -580,8 +705,23 @@ public class CourseFacadeService {
         }
     }
 
+    private KnowledgePointType parseKnowledgePointType(String type) {
+        try {
+            return KnowledgePointType.valueOf(type.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw BusinessException.badRequest("Invalid knowledge point type");
+        }
+    }
+
     private String normalizeBlank(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeKeywords(String keywords) {
+        if (!StringUtils.hasText(keywords)) {
+            return null;
+        }
+        return String.join(",", splitKeywords(keywords).stream().distinct().toList());
     }
 
     private List<Long> normalizeVisibleStudentIds(List<Long> visibleStudentIds) {
@@ -589,6 +729,15 @@ public class CourseFacadeService {
             return List.of();
         }
         return new ArrayList<>(new LinkedHashSet<>(visibleStudentIds.stream()
+                .filter(Objects::nonNull)
+                .toList()));
+    }
+
+    private List<Long> normalizeKnowledgePointIds(List<Long> knowledgePointIds) {
+        if (knowledgePointIds == null || knowledgePointIds.isEmpty()) {
+            return List.of();
+        }
+        return new ArrayList<>(new LinkedHashSet<>(knowledgePointIds.stream()
                 .filter(Objects::nonNull)
                 .toList()));
     }
@@ -753,7 +902,7 @@ public class CourseFacadeService {
                 .build();
     }
 
-    private ResourceResponse toResourceResponse(ResourceEntity entity) {
+    private ResourceResponse toResourceResponse(ResourceEntity entity, List<ResourceKnowledgePointResponse> knowledgePoints) {
         boolean managedFile = resourceStorageService.isManagedStorageKey(entity.getStorageKey());
         return ResourceResponse.builder()
                 .id(entity.getId())
@@ -764,6 +913,9 @@ public class CourseFacadeService {
                 .sourceUrl(managedFile ? null : entity.getStorageKey())
                 .description(entity.getDescription())
                 .managedFile(managedFile)
+                .taggingStatus(entity.getTaggingStatus() == null ? ResourceTaggingStatus.UNTAGGED.name() : entity.getTaggingStatus().name())
+                .taggingUpdatedAt(entity.getTaggingUpdatedAt() == null ? null : entity.getTaggingUpdatedAt().toString())
+                .knowledgePoints(knowledgePoints)
                 .duration(entity.getDurationSeconds())
                 .size(entity.getFileSize())
                 .orderIndex(entity.getOrderIndex())
@@ -789,6 +941,270 @@ public class CourseFacadeService {
         resourceRepository.findByChapterIdInOrderByOrderIndexAscIdAsc(chapterIds).stream()
                 .map(ResourceEntity::getStorageKey)
                 .forEach(resourceStorageService::deleteIfManaged);
+    }
+
+    private Map<Long, KnowledgePointEntity> loadKnowledgePointMap() {
+        return knowledgePointRepository.findAllByOrderByOrderIndexAscIdAsc().stream()
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+    }
+
+    private List<KnowledgePointNodeResponse> buildKnowledgePointTree(List<KnowledgePointEntity> knowledgePoints, Map<Long, KnowledgePointEntity> providedMap) {
+        Map<Long, KnowledgePointEntity> knowledgePointMap = providedMap.isEmpty()
+                ? knowledgePoints.stream().collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll)
+                : providedMap;
+
+        Map<Long, List<KnowledgePointEntity>> childrenByParent = new LinkedHashMap<>();
+        List<KnowledgePointEntity> roots = new ArrayList<>();
+        for (KnowledgePointEntity knowledgePoint : knowledgePoints) {
+            if (knowledgePoint.getParentId() == null) {
+                roots.add(knowledgePoint);
+            } else {
+                childrenByParent.computeIfAbsent(knowledgePoint.getParentId(), ignored -> new ArrayList<>()).add(knowledgePoint);
+            }
+        }
+
+        return roots.stream()
+                .sorted(Comparator.comparing(KnowledgePointEntity::getOrderIndex).thenComparing(KnowledgePointEntity::getId))
+                .map(root -> toKnowledgePointTreeNode(root, knowledgePointMap, childrenByParent))
+                .toList();
+    }
+
+    private KnowledgePointNodeResponse toKnowledgePointTreeNode(
+            KnowledgePointEntity entity,
+            Map<Long, KnowledgePointEntity> knowledgePointMap,
+            Map<Long, List<KnowledgePointEntity>> childrenByParent
+    ) {
+        List<KnowledgePointNodeResponse> children = childrenByParent.getOrDefault(entity.getId(), List.of()).stream()
+                .sorted(Comparator.comparing(KnowledgePointEntity::getOrderIndex).thenComparing(KnowledgePointEntity::getId))
+                .map(child -> toKnowledgePointTreeNode(child, knowledgePointMap, childrenByParent))
+                .toList();
+        return toKnowledgePointNodeResponse(entity, knowledgePointMap, children);
+    }
+
+    private KnowledgePointNodeResponse toKnowledgePointNodeResponse(
+            KnowledgePointEntity entity,
+            Map<Long, KnowledgePointEntity> knowledgePointMap,
+            List<KnowledgePointNodeResponse> children
+    ) {
+        return KnowledgePointNodeResponse.builder()
+                .id(entity.getId())
+                .parentId(entity.getParentId())
+                .name(entity.getName())
+                .description(entity.getDescription())
+                .keywords(entity.getKeywords())
+                .nodeType(entity.getNodeType().name())
+                .active(entity.getActive())
+                .orderIndex(entity.getOrderIndex())
+                .path(buildKnowledgePointPath(entity.getId(), knowledgePointMap))
+                .children(children)
+                .build();
+    }
+
+    private String buildKnowledgePointPath(Long knowledgePointId, Map<Long, KnowledgePointEntity> knowledgePointMap) {
+        List<String> names = new ArrayList<>();
+        Set<Long> visited = new LinkedHashSet<>();
+        KnowledgePointEntity cursor = knowledgePointMap.get(knowledgePointId);
+        while (cursor != null && visited.add(cursor.getId())) {
+            names.add(cursor.getName());
+            cursor = cursor.getParentId() == null ? null : knowledgePointMap.get(cursor.getParentId());
+        }
+        Collections.reverse(names);
+        return String.join(" / ", names);
+    }
+
+    private Map<Long, List<ResourceKnowledgePointResponse>> loadResourceKnowledgePointMap(Collection<Long> resourceIds) {
+        if (resourceIds == null || resourceIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, KnowledgePointEntity> knowledgePointMap = loadKnowledgePointMap();
+        Map<Long, List<ResourceKnowledgePointResponse>> result = new LinkedHashMap<>();
+        for (ResourceKnowledgePointEntity relation : resourceKnowledgePointRepository.findByResourceIdIn(resourceIds)) {
+            KnowledgePointEntity knowledgePoint = knowledgePointMap.get(relation.getKnowledgePointId());
+            if (knowledgePoint == null) {
+                continue;
+            }
+            result.computeIfAbsent(relation.getResourceId(), ignored -> new ArrayList<>())
+                    .add(ResourceKnowledgePointResponse.builder()
+                            .id(knowledgePoint.getId())
+                            .name(knowledgePoint.getName())
+                            .nodeType(knowledgePoint.getNodeType().name())
+                            .path(buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap))
+                            .confidence(relation.getConfidence())
+                            .source(relation.getSource().name())
+                            .build());
+        }
+        result.values().forEach(items -> items.sort(Comparator
+                .comparing(ResourceKnowledgePointResponse::getPath)
+                .thenComparing(ResourceKnowledgePointResponse::getName)));
+        return result;
+    }
+
+    private KnowledgePointEntity requireValidKnowledgePointParent(Long parentId, KnowledgePointType nodeType) {
+        if (nodeType == KnowledgePointType.SUBJECT) {
+            if (parentId != null) {
+                throw BusinessException.badRequest("Subject nodes cannot have a parent");
+            }
+            return null;
+        }
+
+        if (parentId == null) {
+            throw BusinessException.badRequest("Non-root knowledge points must specify a parent");
+        }
+
+        KnowledgePointEntity parent = requireKnowledgePoint(parentId);
+        if (nodeType == KnowledgePointType.DOMAIN && parent.getNodeType() != KnowledgePointType.SUBJECT) {
+            throw BusinessException.badRequest("Domain nodes must belong to a subject");
+        }
+        if (nodeType == KnowledgePointType.POINT && parent.getNodeType() != KnowledgePointType.DOMAIN) {
+            throw BusinessException.badRequest("Leaf knowledge points must belong to a domain");
+        }
+        return parent;
+    }
+
+    private void replaceResourceKnowledgePoints(ResourceEntity resource, List<Long> requestedKnowledgePointIds) {
+        List<Long> knowledgePointIds = normalizeKnowledgePointIds(requestedKnowledgePointIds);
+        List<KnowledgePointEntity> knowledgePoints = knowledgePointIds.isEmpty()
+                ? List.of()
+                : knowledgePointRepository.findByIdIn(knowledgePointIds);
+
+        if (knowledgePoints.size() != knowledgePointIds.size()) {
+            throw BusinessException.badRequest("Some selected knowledge points do not exist");
+        }
+
+        for (KnowledgePointEntity knowledgePoint : knowledgePoints) {
+            if (!Boolean.TRUE.equals(knowledgePoint.getActive())) {
+                throw BusinessException.badRequest("Inactive knowledge points cannot be selected");
+            }
+            if (knowledgePoint.getNodeType() != KnowledgePointType.POINT) {
+                throw BusinessException.badRequest("Only leaf knowledge points can be attached to resources");
+            }
+        }
+
+        resourceKnowledgePointRepository.deleteByResourceId(resource.getId());
+        if (knowledgePoints.isEmpty()) {
+            resource.setTaggingStatus(ResourceTaggingStatus.UNTAGGED);
+            resource.setTaggingUpdatedAt(null);
+            resourceRepository.save(resource);
+            return;
+        }
+
+        Map<Long, ResourceTagSuggestionResponse> suggestionMap = buildTagSuggestions(resource.getTitle(), resource.getDescription()).stream()
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getKnowledgePointId(), item), Map::putAll);
+
+        List<ResourceKnowledgePointEntity> relations = knowledgePoints.stream()
+                .map(knowledgePoint -> {
+                    ResourceTagSuggestionResponse suggestion = suggestionMap.get(knowledgePoint.getId());
+                    return ResourceKnowledgePointEntity.builder()
+                            .resourceId(resource.getId())
+                            .knowledgePointId(knowledgePoint.getId())
+                            .confidence(suggestion == null ? 1D : suggestion.getConfidence())
+                            .source(suggestion == null ? ResourceTagSource.MANUAL : ResourceTagSource.AI)
+                            .build();
+                })
+                .toList();
+        resourceKnowledgePointRepository.saveAll(relations);
+
+        resource.setTaggingStatus(ResourceTaggingStatus.CONFIRMED);
+        resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        resourceRepository.save(resource);
+    }
+
+    private List<ResourceTagSuggestionResponse> buildTagSuggestions(String title, String description) {
+        String normalizedTitle = normalizeSuggestionText(title);
+        String normalizedFullText = normalizeSuggestionText(
+                (StringUtils.hasText(title) ? title : "") + " " + (StringUtils.hasText(description) ? description : "")
+        );
+        if (!StringUtils.hasText(normalizedFullText)) {
+            return List.of();
+        }
+
+        List<KnowledgePointEntity> activeLeafKnowledgePoints = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
+                .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
+                .toList();
+        Map<Long, KnowledgePointEntity> knowledgePointMap = loadKnowledgePointMap();
+        List<ResourceTagSuggestionResponse> suggestions = new ArrayList<>();
+
+        for (KnowledgePointEntity knowledgePoint : activeLeafKnowledgePoints) {
+            double score = 0D;
+            List<String> reasons = new ArrayList<>();
+            String pointName = normalizeSuggestionText(knowledgePoint.getName());
+            if (StringUtils.hasText(pointName) && normalizedTitle.contains(pointName)) {
+                score += 0.75D;
+                reasons.add("matched title");
+            } else if (StringUtils.hasText(pointName) && normalizedFullText.contains(pointName)) {
+                score += 0.65D;
+                reasons.add("matched knowledge point name");
+            }
+
+            for (String keyword : splitKeywords(knowledgePoint.getKeywords())) {
+                String normalizedKeyword = normalizeSuggestionText(keyword);
+                if (StringUtils.hasText(normalizedKeyword) && normalizedFullText.contains(normalizedKeyword)) {
+                    score += 0.18D;
+                    reasons.add("matched keyword \"" + keyword + "\"");
+                }
+            }
+
+            KnowledgePointEntity domain = knowledgePointMap.get(knowledgePoint.getParentId());
+            if (domain != null) {
+                String normalizedDomain = normalizeSuggestionText(domain.getName());
+                if (StringUtils.hasText(normalizedDomain) && normalizedFullText.contains(normalizedDomain)) {
+                    score += 0.08D;
+                    reasons.add("matched domain");
+                }
+
+                KnowledgePointEntity subject = domain.getParentId() == null ? null : knowledgePointMap.get(domain.getParentId());
+                if (subject != null) {
+                    String normalizedSubject = normalizeSuggestionText(subject.getName());
+                    if (StringUtils.hasText(normalizedSubject) && normalizedFullText.contains(normalizedSubject)) {
+                        score += 0.04D;
+                        reasons.add("matched subject");
+                    }
+                }
+            }
+
+            if (score < 0.18D) {
+                continue;
+            }
+
+            suggestions.add(ResourceTagSuggestionResponse.builder()
+                    .knowledgePointId(knowledgePoint.getId())
+                    .knowledgePointName(knowledgePoint.getName())
+                    .path(buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap))
+                    .confidence(Math.round(Math.min(0.99D, score) * 100.0D) / 100.0D)
+                    .reason(String.join("; ", reasons.stream().distinct().toList()))
+                    .build());
+        }
+
+        return suggestions.stream()
+                .sorted(Comparator
+                        .comparing(ResourceTagSuggestionResponse::getConfidence, Comparator.reverseOrder())
+                        .thenComparing(ResourceTagSuggestionResponse::getPath))
+                .limit(MAX_TAG_SUGGESTIONS)
+                .toList();
+    }
+
+    private String normalizeSuggestionText(String text) {
+        if (!StringUtils.hasText(text)) {
+            return "";
+        }
+        return text.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[\\p{Punct}\\s]+", " ");
+    }
+
+    private List<String> splitKeywords(String keywords) {
+        if (!StringUtils.hasText(keywords)) {
+            return List.of();
+        }
+        String[] rawParts = keywords.split("[,;\\n\\r]+");
+        List<String> result = new ArrayList<>();
+        for (String rawPart : rawParts) {
+            if (StringUtils.hasText(rawPart)) {
+                result.add(rawPart.trim());
+            }
+        }
+        return result;
     }
 
     public record ManagedResourceContent(String title, ResourceType type, String storageKey) {

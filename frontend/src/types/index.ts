@@ -54,10 +54,43 @@ export interface Resource {
   sourceUrl?: string | null
   description?: string
   managedFile?: boolean
+  taggingStatus?: 'UNTAGGED' | 'CONFIRMED'
+  taggingUpdatedAt?: string | null
+  knowledgePoints?: ResourceKnowledgePoint[]
   duration?: number
   size?: number
   orderIndex: number
   createdAt: string
+}
+
+export interface KnowledgePointNode {
+  id: number
+  parentId?: number | null
+  name: string
+  description?: string | null
+  keywords?: string | null
+  nodeType: 'SUBJECT' | 'DOMAIN' | 'POINT'
+  active: boolean
+  orderIndex: number
+  path: string
+  children: KnowledgePointNode[]
+}
+
+export interface ResourceKnowledgePoint {
+  id: number
+  name: string
+  nodeType: 'SUBJECT' | 'DOMAIN' | 'POINT'
+  path: string
+  confidence?: number
+  source?: 'AI' | 'MANUAL'
+}
+
+export interface ResourceTagSuggestion {
+  knowledgePointId: number
+  knowledgePointName: string
+  path: string
+  confidence: number
+  reason: string
 }
 
 export interface LearningProgress {
