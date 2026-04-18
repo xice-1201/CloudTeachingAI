@@ -26,9 +26,10 @@ RUN mvn clean package -DskipTests -B -X
 FROM eclipse-temurin:21-jre-alpine
 
 WORKDIR /app
-RUN apk add --no-cache curl && addgroup -S spring && adduser -S spring -G spring
+RUN apk add --no-cache curl su-exec && addgroup -S spring && adduser -S spring -G spring
 COPY --from=builder /app/target/*.jar app.jar
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 RUN chown -R spring:spring /app
-USER spring:spring
 EXPOSE 8003
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["docker-entrypoint.sh"]

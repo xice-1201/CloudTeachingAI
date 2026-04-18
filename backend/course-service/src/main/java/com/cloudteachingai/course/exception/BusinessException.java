@@ -12,6 +12,11 @@ public class BusinessException extends RuntimeException {
         this.code = code;
     }
 
+    public BusinessException(Integer code, String message, Throwable cause) {
+        super(message, cause);
+        this.code = code;
+    }
+
     public static BusinessException unauthorized(String message) {
         return new BusinessException(40101, message);
     }
@@ -34,5 +39,9 @@ public class BusinessException extends RuntimeException {
 
     public static BusinessException internal(String message) {
         return new BusinessException(50001, message);
+    }
+
+    public static BusinessException internal(String message, Throwable cause) {
+        return new BusinessException(50001, message, cause);
     }
 }
