@@ -1,7 +1,5 @@
 package com.cloudteachingai.course.service;
 
-import com.cloudteachingai.course.client.CreateNotificationRequest;
-import com.cloudteachingai.course.client.NotifyServiceClient;
 import com.cloudteachingai.course.client.UserServiceClient;
 import com.cloudteachingai.course.client.UserServiceResponse;
 import com.cloudteachingai.course.controller.CourseController.UserContext;
@@ -18,6 +16,11 @@ import com.cloudteachingai.course.dto.ResourceTagConfirmRequest;
 import com.cloudteachingai.course.dto.ResourceTagPreviewRequest;
 import com.cloudteachingai.course.dto.ResourceTagSuggestionResponse;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
+import com.cloudteachingai.course.event.CourseUpdatedEvent;
+import com.cloudteachingai.course.event.EventTopics;
+import com.cloudteachingai.course.event.KnowledgePointUpdatedEvent;
+import com.cloudteachingai.course.event.NotificationSendEvent;
+import com.cloudteachingai.course.event.ResourceTaggedEvent;
 import com.cloudteachingai.course.entity.ChapterEntity;
 import com.cloudteachingai.course.entity.CourseEntity;
 import com.cloudteachingai.course.entity.CourseVisibleStudentEntity;
@@ -80,9 +83,9 @@ public class CourseFacadeService {
     private final KnowledgePointRepository knowledgePointRepository;
     private final ResourceKnowledgePointRepository resourceKnowledgePointRepository;
     private final UserServiceClient userServiceClient;
-    private final NotifyServiceClient notifyServiceClient;
     private final CourseCoverStorageService courseCoverStorageService;
     private final ResourceStorageService resourceStorageService;
+    private final OutboxService outboxService;
 
     public PageResponse<CourseResponse> listCourses(UserContext userContext, int page, int pageSize, String keyword, String status) {
         Pageable pageable = PageRequest.of(toPageIndex(page), toPageSize(pageSize), Sort.by(Sort.Direction.DESC, "updatedAt"));
@@ -166,6 +169,7 @@ public class CourseFacadeService {
 
         CourseEntity saved = courseRepository.save(course);
         syncVisibleStudents(saved.getId(), visibilityType, visibleStudentIds);
+        publishCourseUpdatedEvent(saved, "CREATED");
 
         return toCourseResponse(
                 saved,
@@ -194,6 +198,7 @@ public class CourseFacadeService {
 
         CourseEntity saved = courseRepository.save(course);
         syncVisibleStudents(saved.getId(), visibilityType, visibleStudentIds);
+        publishCourseUpdatedEvent(saved, "UPDATED");
 
         return toCourseResponse(
                 saved,
@@ -218,7 +223,8 @@ public class CourseFacadeService {
         ensurePublishable(course);
         course.setStatus(CourseStatus.PUBLISHED);
         CourseEntity saved = courseRepository.save(course);
-        notifyCoursePublished(saved);
+        publishCourseUpdatedEvent(saved, "PUBLISHED");
+        publishCoursePublishedNotifications(saved);
         return toCourseResponseAfterMutation(saved);
     }
 
@@ -229,7 +235,9 @@ public class CourseFacadeService {
             throw BusinessException.badRequest("Only published courses can be unpublished");
         }
         course.setStatus(CourseStatus.DRAFT);
-        return toCourseResponseAfterMutation(courseRepository.save(course));
+        CourseEntity saved = courseRepository.save(course);
+        publishCourseUpdatedEvent(saved, "UNPUBLISHED");
+        return toCourseResponseAfterMutation(saved);
     }
 
     @Transactional
@@ -239,7 +247,9 @@ public class CourseFacadeService {
             throw BusinessException.badRequest("Course is already archived");
         }
         course.setStatus(CourseStatus.ARCHIVED);
-        return toCourseResponseAfterMutation(courseRepository.save(course));
+        CourseEntity saved = courseRepository.save(course);
+        publishCourseUpdatedEvent(saved, "ARCHIVED");
+        return toCourseResponseAfterMutation(saved);
     }
 
     @Transactional
@@ -249,7 +259,9 @@ public class CourseFacadeService {
             throw BusinessException.badRequest("Only archived courses can be restored");
         }
         course.setStatus(CourseStatus.DRAFT);
-        return toCourseResponseAfterMutation(courseRepository.save(course));
+        CourseEntity saved = courseRepository.save(course);
+        publishCourseUpdatedEvent(saved, "RESTORED");
+        return toCourseResponseAfterMutation(saved);
     }
 
     @Transactional
@@ -437,6 +449,7 @@ public class CourseFacadeService {
                 .build();
 
         KnowledgePointEntity saved = knowledgePointRepository.save(entity);
+        publishKnowledgePointUpdatedEvent(saved);
         return toKnowledgePointNodeResponse(saved, loadKnowledgePointMap(), List.of());
     }
 
@@ -462,6 +475,7 @@ public class CourseFacadeService {
         entity.setOrderIndex(resolveKnowledgePointOrderIndex(entity.getParentId(), request.getOrderIndex()));
 
         KnowledgePointEntity saved = knowledgePointRepository.save(entity);
+        publishKnowledgePointUpdatedEvent(saved);
         return toKnowledgePointNodeResponse(saved, loadKnowledgePointMap(), List.of());
     }
 
@@ -795,7 +809,7 @@ public class CourseFacadeService {
         }
     }
 
-    private void notifyCoursePublished(CourseEntity course) {
+    private void publishCoursePublishedNotifications(CourseEntity course) {
         Set<Long> recipientIds = new LinkedHashSet<>();
         if (course.getVisibilityType() == CourseVisibilityType.SELECTED_STUDENTS) {
             recipientIds.addAll(courseVisibleStudentRepository.findByCourseId(course.getId()).stream()
@@ -808,19 +822,52 @@ public class CourseFacadeService {
                 .toList());
 
         for (Long recipientId : recipientIds) {
-            try {
-                notifyServiceClient.createNotification(CreateNotificationRequest.builder()
-                        .userId(recipientId)
-                        .type("COURSE")
-                        .title("New course published")
-                        .content("Course \"" + course.getTitle() + "\" has been published. You can now view the course and enroll.")
-                        .build());
-            } catch (FeignException ex) {
-                // Keep publishing available even if notification delivery is temporarily unavailable.
-            } catch (Exception ex) {
-                // Ignore transient notification issues to avoid blocking course publication.
-            }
+            outboxService.enqueue(EventTopics.NOTIFICATION_SEND, NotificationSendEvent.builder()
+                    .userId(recipientId)
+                    .type("COURSE")
+                    .title("新课程已发布")
+                    .content("课程《" + course.getTitle() + "》已发布，现在可以查看并选课。")
+                    .build());
         }
+    }
+
+    private void publishCourseUpdatedEvent(CourseEntity course, String changeType) {
+        outboxService.enqueue(EventTopics.COURSE_UPDATED, CourseUpdatedEvent.builder()
+                .courseId(course.getId())
+                .teacherId(course.getTeacherId())
+                .title(course.getTitle())
+                .status(course.getStatus().name())
+                .visibilityType(course.getVisibilityType().name())
+                .changeType(changeType)
+                .updatedAt(course.getUpdatedAt() == null ? null : course.getUpdatedAt().toString())
+                .build());
+    }
+
+    private void publishKnowledgePointUpdatedEvent(KnowledgePointEntity entity) {
+        outboxService.enqueue(EventTopics.KNOWLEDGE_POINT_UPDATED, KnowledgePointUpdatedEvent.builder()
+                .knowledgePointId(entity.getId())
+                .parentId(entity.getParentId())
+                .name(entity.getName())
+                .nodeType(entity.getNodeType().name())
+                .active(Boolean.TRUE.equals(entity.getActive()))
+                .updatedAt(entity.getUpdatedAt() == null ? null : entity.getUpdatedAt().toString())
+                .build());
+    }
+
+    private void publishResourceTaggedEvent(ResourceEntity resource, List<Long> knowledgePointIds) {
+        if (knowledgePointIds == null || knowledgePointIds.isEmpty()) {
+            return;
+        }
+
+        outboxService.enqueue(EventTopics.RESOURCE_TAGGED, ResourceTaggedEvent.builder()
+                .resourceId(resource.getId())
+                .chapterId(resource.getChapterId())
+                .courseId(requireChapter(resource.getChapterId()).getCourseId())
+                .title(resource.getTitle())
+                .taggingStatus(resource.getTaggingStatus() == null ? null : resource.getTaggingStatus().name())
+                .taggingUpdatedAt(resource.getTaggingUpdatedAt() == null ? null : resource.getTaggingUpdatedAt().toString())
+                .knowledgePointIds(knowledgePointIds)
+                .build());
     }
 
     private Map<Long, String> resolveTeacherNames(List<CourseEntity> courses) {
@@ -1108,6 +1155,7 @@ public class CourseFacadeService {
         resource.setTaggingStatus(ResourceTaggingStatus.CONFIRMED);
         resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         resourceRepository.save(resource);
+        publishResourceTaggedEvent(resource, knowledgePointIds);
     }
 
     private List<ResourceTagSuggestionResponse> buildTagSuggestions(String title, String description) {

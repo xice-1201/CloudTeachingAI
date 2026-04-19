@@ -21,7 +21,14 @@ import com.cloudteachingai.learn.dto.LearningPathFocusResponse;
 import com.cloudteachingai.learn.dto.LearningPathResourceResponse;
 import com.cloudteachingai.learn.dto.LearningPathResponse;
 import com.cloudteachingai.learn.dto.LearningProgressResponse;
+import com.cloudteachingai.learn.dto.TeacherCourseAnalyticsResponse;
+import com.cloudteachingai.learn.dto.TeacherDashboardResponse;
+import com.cloudteachingai.learn.dto.TeacherKnowledgePointAnalyticsResponse;
 import com.cloudteachingai.learn.dto.UpdateLearningProgressRequest;
+import com.cloudteachingai.learn.event.AbilityUpdatedEvent;
+import com.cloudteachingai.learn.event.EventTopics;
+import com.cloudteachingai.learn.event.LearningPathGeneratedEvent;
+import com.cloudteachingai.learn.event.NotificationSendEvent;
 import com.cloudteachingai.learn.entity.AbilityMapEntity;
 import com.cloudteachingai.learn.entity.AbilityTestQuestionEntity;
 import com.cloudteachingai.learn.entity.AbilityTestSessionEntity;
@@ -47,6 +54,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -74,6 +82,7 @@ public class LearnFacadeService {
     private final AbilityTestQuestionRepository abilityTestQuestionRepository;
     private final AbilityMapRepository abilityMapRepository;
     private final CourseServiceClient courseServiceClient;
+    private final OutboxService outboxService;
 
     public LearningProgressResponse getResourceProgress(Long resourceId, UserContext userContext) {
         assertStudent(userContext);
@@ -269,6 +278,7 @@ public class LearnFacadeService {
         abilityTestSessionRepository.save(session);
 
         List<AbilityMapResponse> responses = rebuildAbilityMap(session, allQuestions, authorization);
+        publishAbilityUpdatedEvent(session, responses);
         return AbilityTestAnswerResponse.builder()
                 .sessionId(sessionId)
                 .answeredCount(session.getAnsweredCount())
@@ -290,7 +300,66 @@ public class LearnFacadeService {
 
     public LearningPathResponse generateLearningPath(String authorization, UserContext userContext) {
         assertStudent(userContext);
-        return buildLearningPath(userContext.userId(), authorization);
+        LearningPathResponse response = buildLearningPath(userContext.userId(), authorization);
+        publishLearningPathGeneratedEvent(userContext.userId(), response);
+        publishLearningPathNotification(userContext.userId(), response);
+        return response;
+    }
+
+    public TeacherDashboardResponse getTeacherDashboard(String authorization, UserContext userContext) {
+        assertTeacher(userContext);
+
+        List<CourseSummaryResponse> teacherCourses = loadTeacherCourses(authorization);
+        if (teacherCourses.isEmpty()) {
+            return TeacherDashboardResponse.builder()
+                    .totalCourses(0)
+                    .publishedCourses(0)
+                    .totalResources(0)
+                    .activeStudents(0)
+                    .averageProgress(0D)
+                    .courses(List.of())
+                    .weakKnowledgePoints(List.of())
+                    .build();
+        }
+
+        List<Long> courseIds = teacherCourses.stream().map(CourseSummaryResponse::getId).toList();
+        Map<Long, CourseContext> courseContexts = loadCourseContexts(new LinkedHashSet<>(courseIds), authorization);
+        List<LearningProgressEntity> progresses = learningProgressRepository.findByCourseIdIn(courseIds);
+
+        Map<Long, List<LearningProgressEntity>> progressesByCourse = progresses.stream()
+                .collect(Collectors.groupingBy(LearningProgressEntity::getCourseId, LinkedHashMap::new, Collectors.toList()));
+
+        Map<Long, CourseResourceResponse> resourceById = new LinkedHashMap<>();
+        courseContexts.values().forEach(context ->
+                context.resources().forEach(resource -> resourceById.put(resource.getId(), resource)));
+
+        List<TeacherCourseAnalyticsResponse> courses = teacherCourses.stream()
+                .map(course -> toTeacherCourseAnalytics(course, courseContexts.get(course.getId()), progressesByCourse.getOrDefault(course.getId(), List.of())))
+                .sorted(Comparator.comparing(TeacherCourseAnalyticsResponse::getAverageProgress).reversed()
+                        .thenComparing(TeacherCourseAnalyticsResponse::getCourseTitle, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+
+        List<TeacherKnowledgePointAnalyticsResponse> weakKnowledgePoints =
+                buildTeacherKnowledgePointAnalytics(progresses, resourceById).stream()
+                        .limit(6)
+                        .toList();
+
+        double averageProgress = progresses.isEmpty()
+                ? 0D
+                : roundScore(progresses.stream()
+                .mapToDouble(item -> item.getProgress() == null ? 0D : item.getProgress())
+                .average()
+                .orElse(0D));
+
+        return TeacherDashboardResponse.builder()
+                .totalCourses(teacherCourses.size())
+                .publishedCourses((int) teacherCourses.stream().filter(course -> "PUBLISHED".equals(course.getStatus())).count())
+                .totalResources(courseContexts.values().stream().mapToInt(context -> context.resources().size()).sum())
+                .activeStudents((int) progresses.stream().map(LearningProgressEntity::getStudentId).distinct().count())
+                .averageProgress(averageProgress)
+                .courses(courses)
+                .weakKnowledgePoints(weakKnowledgePoints)
+                .build();
     }
 
     private List<AbilityMapResponse> rebuildAbilityMap(
@@ -451,6 +520,150 @@ public class LearnFacadeService {
                         .toList())
                 .resources(resources)
                 .build();
+    }
+
+    private void publishAbilityUpdatedEvent(
+            AbilityTestSessionEntity session,
+            List<AbilityMapResponse> responses) {
+        outboxService.enqueue(EventTopics.ABILITY_UPDATED, AbilityUpdatedEvent.builder()
+                .studentId(session.getStudentId())
+                .sessionId(session.getId())
+                .knowledgePointIds(responses.stream()
+                        .map(AbilityMapResponse::getKnowledgePointId)
+                        .filter(Objects::nonNull)
+                        .toList())
+                .updatedAt(session.getCompletedAt() == null ? null : session.getCompletedAt().toString())
+                .build());
+    }
+
+    private void publishLearningPathGeneratedEvent(Long studentId, LearningPathResponse response) {
+        if (response == null) {
+            return;
+        }
+
+        outboxService.enqueue(EventTopics.LEARNING_PATH_GENERATED, LearningPathGeneratedEvent.builder()
+                .studentId(studentId)
+                .generatedAt(response.getGeneratedAt())
+                .focusKnowledgePointIds(response.getFocusKnowledgePoints().stream()
+                        .map(LearningPathFocusResponse::getKnowledgePointId)
+                        .filter(Objects::nonNull)
+                        .toList())
+                .resourceIds(response.getResources().stream()
+                        .map(LearningPathResourceResponse::getResourceId)
+                        .filter(Objects::nonNull)
+                        .toList())
+                .build());
+    }
+
+    private void publishLearningPathNotification(Long studentId, LearningPathResponse response) {
+        if (response == null || response.getResources() == null || response.getResources().isEmpty()) {
+            return;
+        }
+
+        String firstResourceTitle = response.getResources().getFirst().getResourceTitle();
+        outboxService.enqueue(EventTopics.NOTIFICATION_SEND, NotificationSendEvent.builder()
+                .userId(studentId)
+                .type("COURSE")
+                .title("学习路线已更新")
+                .content("系统已为你生成新的学习路线，建议先学习《" + firstResourceTitle + "》。")
+                .build());
+    }
+
+    private List<CourseSummaryResponse> loadTeacherCourses(String authorization) {
+        try {
+            CourseApiResponse<PageResponse<CourseSummaryResponse>> response =
+                    courseServiceClient.listCourses(authorization, 1, 100);
+            PageResponse<CourseSummaryResponse> page = response == null ? null : response.getData();
+            return page == null || page.getItems() == null ? List.of() : page.getItems();
+        } catch (FeignException.Forbidden ex) {
+            throw BusinessException.forbidden("No access to teacher course list");
+        } catch (FeignException.Unauthorized ex) {
+            throw BusinessException.unauthorized("Invalid token");
+        } catch (FeignException ex) {
+            throw BusinessException.badRequest("Failed to load teacher courses");
+        }
+    }
+
+    private TeacherCourseAnalyticsResponse toTeacherCourseAnalytics(
+            CourseSummaryResponse course,
+            CourseContext context,
+            List<LearningProgressEntity> progresses) {
+        int totalResources = context == null ? 0 : context.resources().size();
+        double averageProgress = progresses.isEmpty()
+                ? 0D
+                : roundScore(progresses.stream()
+                .mapToDouble(item -> item.getProgress() == null ? 0D : item.getProgress())
+                .average()
+                .orElse(0D));
+        double completionRate = progresses.isEmpty()
+                ? 0D
+                : roundScore(progresses.stream().filter(item -> Boolean.TRUE.equals(item.getCompleted())).count() / (double) progresses.size());
+        String lastLearnedAt = progresses.stream()
+                .map(LearningProgressEntity::getLastAccessedAt)
+                .filter(Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .map(OffsetDateTime::toString)
+                .orElse(null);
+
+        Map<Long, Long> learningCountByResource = progresses.stream()
+                .collect(Collectors.groupingBy(LearningProgressEntity::getResourceId, LinkedHashMap::new, Collectors.counting()));
+        Long hottestResourceId = learningCountByResource.entrySet().stream()
+                .max(Map.Entry.<Long, Long>comparingByValue()
+                        .thenComparing(Map.Entry::getKey))
+                .map(Map.Entry::getKey)
+                .orElse(null);
+        String hottestResourceTitle = null;
+        int hottestResourceLearningCount = 0;
+        if (hottestResourceId != null && context != null) {
+            hottestResourceLearningCount = learningCountByResource.getOrDefault(hottestResourceId, 0L).intValue();
+            hottestResourceTitle = context.resources().stream()
+                    .filter(resource -> Objects.equals(resource.getId(), hottestResourceId))
+                    .map(CourseResourceResponse::getTitle)
+                    .findFirst()
+                    .orElse(null);
+        }
+
+        return TeacherCourseAnalyticsResponse.builder()
+                .courseId(course.getId())
+                .courseTitle(course.getTitle())
+                .courseStatus(course.getStatus())
+                .totalResources(totalResources)
+                .activeStudents((int) progresses.stream().map(LearningProgressEntity::getStudentId).distinct().count())
+                .averageProgress(averageProgress)
+                .completionRate(completionRate)
+                .learningRecordCount(progresses.size())
+                .hottestResourceTitle(hottestResourceTitle)
+                .hottestResourceLearningCount(hottestResourceLearningCount)
+                .lastLearnedAt(lastLearnedAt)
+                .build();
+    }
+
+    private List<TeacherKnowledgePointAnalyticsResponse> buildTeacherKnowledgePointAnalytics(
+            List<LearningProgressEntity> progresses,
+            Map<Long, CourseResourceResponse> resourceById) {
+        Map<Long, KnowledgePointAnalyticsAccumulator> accumulators = new LinkedHashMap<>();
+        for (LearningProgressEntity progress : progresses) {
+            CourseResourceResponse resource = resourceById.get(progress.getResourceId());
+            if (resource == null || resource.getKnowledgePoints() == null) {
+                continue;
+            }
+            double progressValue = clampProgress(progress.getProgress());
+            for (CourseResourceKnowledgePointResponse knowledgePoint : resource.getKnowledgePoints()) {
+                accumulators.computeIfAbsent(
+                                knowledgePoint.getId(),
+                                key -> new KnowledgePointAnalyticsAccumulator(
+                                        knowledgePoint.getId(),
+                                        knowledgePoint.getName(),
+                                        knowledgePoint.getPath()))
+                        .add(progressValue, progress.getStudentId(), resource.getId());
+            }
+        }
+
+        return accumulators.values().stream()
+                .map(KnowledgePointAnalyticsAccumulator::toResponse)
+                .sorted(Comparator.comparing(TeacherKnowledgePointAnalyticsResponse::getAverageProgress)
+                        .thenComparing(TeacherKnowledgePointAnalyticsResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
     }
 
     private AbilityMapResponse toAbilityMapResponse(AbilityMapEntity entity) {
@@ -795,6 +1008,12 @@ public class LearnFacadeService {
                 .sum();
     }
 
+    private void assertTeacher(UserContext userContext) {
+        if (!"TEACHER".equals(userContext.role()) && !"ADMIN".equals(userContext.role())) {
+            throw BusinessException.forbidden("Only teachers can access dashboard analytics");
+        }
+    }
+
     private void assertStudent(UserContext userContext) {
         if (!"STUDENT".equals(userContext.role())) {
             throw BusinessException.forbidden("Only students can access learning progress");
@@ -907,6 +1126,45 @@ public class LearnFacadeService {
         private ProgressStats toStats() {
             double average = resourceCount == 0 ? 0D : totalProgress / resourceCount;
             return new ProgressStats(knowledgePointId, knowledgePointName, knowledgePointPath, average, resourceCount);
+        }
+    }
+
+    private static final class KnowledgePointAnalyticsAccumulator {
+        private final Long knowledgePointId;
+        private final String knowledgePointName;
+        private final String knowledgePointPath;
+        private double totalProgress;
+        private int recordCount;
+        private final Set<Long> studentIds = new LinkedHashSet<>();
+        private final Set<Long> resourceIds = new LinkedHashSet<>();
+
+        private KnowledgePointAnalyticsAccumulator(Long knowledgePointId, String knowledgePointName, String knowledgePointPath) {
+            this.knowledgePointId = knowledgePointId;
+            this.knowledgePointName = knowledgePointName;
+            this.knowledgePointPath = knowledgePointPath;
+        }
+
+        private void add(double progress, Long studentId, Long resourceId) {
+            totalProgress += progress;
+            recordCount += 1;
+            if (studentId != null) {
+                studentIds.add(studentId);
+            }
+            if (resourceId != null) {
+                resourceIds.add(resourceId);
+            }
+        }
+
+        private TeacherKnowledgePointAnalyticsResponse toResponse() {
+            double average = recordCount == 0 ? 0D : totalProgress / recordCount;
+            return TeacherKnowledgePointAnalyticsResponse.builder()
+                    .knowledgePointId(knowledgePointId)
+                    .knowledgePointName(knowledgePointName)
+                    .knowledgePointPath(knowledgePointPath)
+                    .averageProgress(Math.round(Math.min(1D, Math.max(0D, average)) * 100D) / 100D)
+                    .activeStudents(studentIds.size())
+                    .relatedResources(resourceIds.size())
+                    .build();
         }
     }
 }

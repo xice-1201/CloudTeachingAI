@@ -4,6 +4,7 @@ import type {
   AbilityMap,
   LearningPath,
   CourseProgress,
+  TeacherDashboard,
   AbilityTestStartResponse,
   AbilityTestAnswerResponse,
 } from '@/types'
@@ -32,4 +33,7 @@ export const learnApi = {
 
   generateLearningPath: (): Promise<LearningPath | null> =>
     request.post('/learn/path/generate'),
+
+  getTeacherDashboard: (): Promise<TeacherDashboard> =>
+    request.get('/learn/teacher/dashboard'),
 }

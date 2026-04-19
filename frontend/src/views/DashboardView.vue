@@ -6,7 +6,7 @@
 
     <template v-if="isTeacherView">
       <el-row :gutter="20" class="stat-cards">
-        <el-col :span="6" v-for="stat in teacherStats" :key="stat.label">
+        <el-col :xs="24" :sm="12" :lg="6" v-for="stat in teacherStats" :key="stat.label">
           <el-card shadow="never">
             <div class="stat-card">
               <el-icon :size="36" :color="stat.color"><component :is="stat.icon" /></el-icon>
@@ -19,30 +19,63 @@
         </el-col>
       </el-row>
 
-      <el-row :gutter="20" style="margin-top: 20px">
-        <el-col :span="16">
-          <el-card shadow="never" header="我的课程">
-            <el-table :data="teacherCourses" style="width: 100%">
-              <el-table-column prop="title" label="课程名称" />
-              <el-table-column prop="status" label="状态" width="120">
+      <el-row :gutter="20" class="dashboard-row">
+        <el-col :xs="24" :lg="16">
+          <el-card shadow="never" header="课程分析">
+            <el-table :data="teacherDashboard?.courses ?? []" style="width: 100%" v-loading="teacherLoading">
+              <el-table-column prop="courseTitle" label="课程名称" min-width="180" />
+              <el-table-column label="状态" width="110">
                 <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+                  <el-tag :type="statusTagType(row.courseStatus)">{{ statusLabel(row.courseStatus) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="updatedAt" label="最近更新" width="180">
-                <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="120">
+              <el-table-column prop="totalResources" label="资源数" width="90" />
+              <el-table-column prop="activeStudents" label="活跃学生" width="100" />
+              <el-table-column label="平均进度" width="140">
                 <template #default="{ row }">
-                  <el-button type="primary" link @click="$router.push(`/courses/${row.id}`)">进入课程</el-button>
+                  <el-progress :percentage="Math.round(row.averageProgress * 100)" :stroke-width="8" />
+                </template>
+              </el-table-column>
+              <el-table-column label="完成率" width="110">
+                <template #default="{ row }">{{ Math.round(row.completionRate * 100) }}%</template>
+              </el-table-column>
+              <el-table-column label="最热资源" min-width="180">
+                <template #default="{ row }">
+                  <span>{{ row.hottestResourceTitle || '-' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="最近学习" width="170">
+                <template #default="{ row }">{{ row.lastLearnedAt ? formatDateTime(row.lastLearnedAt) : '-' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="110">
+                <template #default="{ row }">
+                  <el-button type="primary" link @click="$router.push(`/courses/${row.courseId}`)">进入课程</el-button>
                 </template>
               </el-table-column>
             </el-table>
-            <div v-if="!teacherLoading && teacherCourses.length === 0" class="empty-tip">暂无课程，可先创建第一门课程。</div>
+            <div v-if="!teacherLoading && (teacherDashboard?.courses.length ?? 0) === 0" class="empty-tip">暂无课程，可先创建第一门课程。</div>
           </el-card>
         </el-col>
-        <el-col :span="8">
-          <el-card shadow="never" header="快捷操作">
+
+        <el-col :xs="24" :lg="8">
+          <el-card shadow="never" header="薄弱知识点">
+            <div v-if="!teacherDashboard || teacherDashboard.weakKnowledgePoints.length === 0" class="empty-tip">
+              目前还没有足够的学习数据形成知识点分析。
+            </div>
+            <div v-else class="knowledge-list">
+              <div v-for="item in teacherDashboard.weakKnowledgePoints" :key="item.knowledgePointId" class="knowledge-item">
+                <div class="knowledge-name">{{ item.knowledgePointName }}</div>
+                <div class="knowledge-path">{{ item.knowledgePointPath || item.knowledgePointName }}</div>
+                <el-progress :percentage="Math.round(item.averageProgress * 100)" :stroke-width="8" status="warning" />
+                <div class="knowledge-meta">
+                  <span>活跃学生 {{ item.activeStudents }}</span>
+                  <span>相关资源 {{ item.relatedResources }}</span>
+                </div>
+              </div>
+            </div>
+          </el-card>
+
+          <el-card shadow="never" header="快捷操作" class="quick-card">
             <div class="quick-actions">
               <div class="quick-action" @click="router.push('/courses/create')">
                 <div class="quick-action-title">创建课程</div>
@@ -118,12 +151,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Reading, EditPen, TrendCharts, ChatDotRound, Collection, Promotion, Document } from '@element-plus/icons-vue'
+import { Reading, EditPen, TrendCharts, ChatDotRound, Collection, Promotion, Document, DataAnalysis } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
 import { assignApi } from '@/api/assign'
 import { useUserStore } from '@/store/user'
-import type { Assignment, Course } from '@/types'
+import type { Assignment, Course, TeacherDashboard } from '@/types'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -133,9 +166,9 @@ const pageTitle = computed(() => (isTeacherView.value ? '教师首页' : '学习
 
 const recentCourses = ref<Array<Course & { progress: number }>>([])
 const pendingAssignments = ref<Assignment[]>([])
-const teacherCourses = ref<Course[]>([])
 const studentLoading = ref(false)
 const teacherLoading = ref(false)
+const teacherDashboard = ref<TeacherDashboard | null>(null)
 
 const studentStats = ref([
   { label: '已选课程', value: 0, icon: Reading, color: '#409eff' },
@@ -144,12 +177,15 @@ const studentStats = ref([
   { label: 'AI 对话次数', value: 0, icon: ChatDotRound, color: '#909399' },
 ])
 
-const teacherStats = ref([
-  { label: '我的课程', value: 0, icon: Collection, color: '#409eff' },
-  { label: '已发布课程', value: 0, icon: Promotion, color: '#67c23a' },
-  { label: '草稿课程', value: 0, icon: EditPen, color: '#e6a23c' },
-  { label: '归档课程', value: 0, icon: Document, color: '#909399' },
-])
+const teacherStats = computed(() => {
+  const dashboard = teacherDashboard.value
+  return [
+    { label: '我的课程', value: dashboard?.totalCourses ?? 0, icon: Collection, color: '#409eff' },
+    { label: '已发布课程', value: dashboard?.publishedCourses ?? 0, icon: Promotion, color: '#67c23a' },
+    { label: '资源总数', value: dashboard?.totalResources ?? 0, icon: Document, color: '#e6a23c' },
+    { label: '平均进度', value: `${Math.round((dashboard?.averageProgress ?? 0) * 100)}%`, icon: DataAnalysis, color: '#909399' },
+  ]
+})
 
 function formatDate(date: string) {
   return new Date(date).toLocaleDateString('zh-CN')
@@ -218,13 +254,7 @@ async function loadStudentDashboard() {
 async function loadTeacherDashboard() {
   teacherLoading.value = true
   try {
-    const response = await courseApi.listCourses({ page: 1, pageSize: 5 })
-    teacherCourses.value = response.items
-
-    teacherStats.value[0].value = response.total
-    teacherStats.value[1].value = response.items.filter((course) => course.status === 'PUBLISHED').length
-    teacherStats.value[2].value = response.items.filter((course) => course.status === 'DRAFT').length
-    teacherStats.value[3].value = response.items.filter((course) => course.status === 'ARCHIVED').length
+    teacherDashboard.value = await learnApi.getTeacherDashboard()
   } finally {
     teacherLoading.value = false
   }
@@ -235,7 +265,6 @@ onMounted(async () => {
     await loadTeacherDashboard()
     return
   }
-
   await loadStudentDashboard()
 })
 </script>
@@ -243,6 +272,10 @@ onMounted(async () => {
 <style scoped>
 .stat-cards {
   margin-bottom: 4px;
+}
+
+.dashboard-row {
+  margin-top: 20px;
 }
 
 .stat-card {
@@ -295,8 +328,41 @@ onMounted(async () => {
   padding: 20px 0;
 }
 
-.quick-actions {
+.quick-actions,
+.knowledge-list {
   display: flex;
   flex-direction: column;
+}
+
+.quick-card {
+  margin-top: 20px;
+}
+
+.knowledge-item + .knowledge-item {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f2f5;
+}
+
+.knowledge-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.knowledge-path {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
+
+.knowledge-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

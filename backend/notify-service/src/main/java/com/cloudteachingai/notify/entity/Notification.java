@@ -45,6 +45,9 @@ public class Notification {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
+    @Column(name = "external_event_id", length = 100)
+    private String externalEventId;
+
     @Column(name = "is_read", nullable = false)
     @Builder.Default
     private boolean read = false;

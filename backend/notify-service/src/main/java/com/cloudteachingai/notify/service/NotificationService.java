@@ -59,11 +59,22 @@ public class NotificationService {
 
     @Transactional
     public NotificationResponse createNotification(CreateNotificationRequest request) {
+        return createNotification(request, null);
+    }
+
+    @Transactional
+    public NotificationResponse createNotification(CreateNotificationRequest request, String externalEventId) {
+        if (externalEventId != null && notificationRepository.existsByExternalEventId(externalEventId)) {
+            log.info("Skip duplicated notification event: eventId={}", externalEventId);
+            return null;
+        }
+
         Notification notification = Notification.builder()
                 .userId(request.getUserId())
                 .type(request.getType())
                 .title(request.getTitle())
                 .content(request.getContent())
+                .externalEventId(externalEventId)
                 .read(false)
                 .build();
 
@@ -71,7 +82,11 @@ public class NotificationService {
         NotificationResponse response = NotificationResponse.from(saved);
         notificationPushService.push(response);
 
-        log.info("Notification created: id={}, userId={}, type={}", saved.getId(), saved.getUserId(), saved.getType());
+        log.info("Notification created: id={}, userId={}, type={}, eventId={}",
+                saved.getId(),
+                saved.getUserId(),
+                saved.getType(),
+                externalEventId);
         return response;
     }
 }

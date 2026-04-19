@@ -9,6 +9,9 @@ import com.cloudteachingai.course.dto.AnnouncementResponse;
 import com.cloudteachingai.course.dto.AnnouncementUpsertRequest;
 import com.cloudteachingai.course.dto.DiscussionPostResponse;
 import com.cloudteachingai.course.dto.DiscussionPostUpsertRequest;
+import com.cloudteachingai.course.event.AnnouncementPublishedEvent;
+import com.cloudteachingai.course.event.EventTopics;
+import com.cloudteachingai.course.event.NotificationSendEvent;
 import com.cloudteachingai.course.entity.ChapterEntity;
 import com.cloudteachingai.course.entity.CourseAnnouncementEntity;
 import com.cloudteachingai.course.entity.CourseDiscussionPostEntity;
@@ -52,6 +55,7 @@ public class CourseInteractionService {
     private final CourseDiscussionPostRepository courseDiscussionPostRepository;
     private final UserServiceClient userServiceClient;
     private final NotifyServiceClient notifyServiceClient;
+    private final OutboxService outboxService;
 
     public List<AnnouncementResponse> listAnnouncements(Long courseId, UserContext userContext) {
         requireSummaryVisibleCourse(courseId, userContext);
@@ -74,7 +78,8 @@ public class CourseInteractionService {
                 .pinned(Boolean.TRUE.equals(request.getPinned()))
                 .publishedAt(OffsetDateTime.now(ZoneOffset.UTC))
                 .build());
-        notifyAnnouncementPublished(course, announcement);
+        publishAnnouncementPublishedEvent(course, announcement);
+        publishAnnouncementNotifications(course, announcement);
         return toAnnouncementResponses(List.of(announcement)).getFirst();
     }
 
@@ -331,6 +336,34 @@ public class CourseInteractionService {
             // degrade gracefully
         }
         return "User-" + userId;
+    }
+
+    private void publishAnnouncementPublishedEvent(CourseEntity course, CourseAnnouncementEntity announcement) {
+        outboxService.enqueue(EventTopics.ANNOUNCEMENT_PUBLISHED, AnnouncementPublishedEvent.builder()
+                .announcementId(announcement.getId())
+                .courseId(course.getId())
+                .authorId(announcement.getAuthorId())
+                .courseTitle(course.getTitle())
+                .title(announcement.getTitle())
+                .pinned(Boolean.TRUE.equals(announcement.getPinned()))
+                .publishedAt(announcement.getPublishedAt() == null ? null : announcement.getPublishedAt().toString())
+                .build());
+    }
+
+    private void publishAnnouncementNotifications(CourseEntity course, CourseAnnouncementEntity announcement) {
+        List<Long> recipientIds = enrollmentRepository.findAll().stream()
+                .filter(item -> Objects.equals(item.getCourseId(), course.getId()))
+                .map(item -> item.getStudentId())
+                .distinct()
+                .toList();
+        for (Long recipientId : recipientIds) {
+            outboxService.enqueue(EventTopics.NOTIFICATION_SEND, NotificationSendEvent.builder()
+                    .userId(recipientId)
+                    .type("COURSE")
+                    .title("课程新公告")
+                    .content("课程《" + course.getTitle() + "》发布了新公告：" + announcement.getTitle())
+                    .build());
+        }
     }
 
     private void notifyAnnouncementPublished(CourseEntity course, CourseAnnouncementEntity announcement) {

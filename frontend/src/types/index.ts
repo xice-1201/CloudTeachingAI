@@ -180,6 +180,39 @@ export interface AbilityTestAnswerResponse {
   abilityMap?: AbilityMap[]
 }
 
+export interface TeacherCourseAnalytics {
+  courseId: number
+  courseTitle: string
+  courseStatus: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  totalResources: number
+  activeStudents: number
+  averageProgress: number
+  completionRate: number
+  learningRecordCount: number
+  hottestResourceTitle?: string | null
+  hottestResourceLearningCount: number
+  lastLearnedAt?: string | null
+}
+
+export interface TeacherKnowledgePointAnalytics {
+  knowledgePointId: number
+  knowledgePointName: string
+  knowledgePointPath?: string | null
+  averageProgress: number
+  activeStudents: number
+  relatedResources: number
+}
+
+export interface TeacherDashboard {
+  totalCourses: number
+  publishedCourses: number
+  totalResources: number
+  activeStudents: number
+  averageProgress: number
+  courses: TeacherCourseAnalytics[]
+  weakKnowledgePoints: TeacherKnowledgePointAnalytics[]
+}
+
 export interface LearningPath {
   studentId: number
   generatedAt: string

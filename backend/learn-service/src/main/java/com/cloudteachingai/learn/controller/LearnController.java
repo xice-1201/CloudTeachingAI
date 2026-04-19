@@ -9,6 +9,7 @@ import com.cloudteachingai.learn.dto.AbilityTestStartResponse;
 import com.cloudteachingai.learn.dto.CourseProgressResponse;
 import com.cloudteachingai.learn.dto.LearningProgressResponse;
 import com.cloudteachingai.learn.dto.LearningPathResponse;
+import com.cloudteachingai.learn.dto.TeacherDashboardResponse;
 import com.cloudteachingai.learn.dto.UpdateLearningProgressRequest;
 import com.cloudteachingai.learn.exception.BusinessException;
 import com.cloudteachingai.learn.service.LearnFacadeService;
@@ -92,6 +93,12 @@ public class LearnController {
     public ApiResponse<LearningPathResponse> generateLearningPath(@RequestHeader("Authorization") String authorization) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(learnFacadeService.generateLearningPath(authorization, userContext));
+    }
+
+    @GetMapping("/teacher/dashboard")
+    public ApiResponse<TeacherDashboardResponse> getTeacherDashboard(@RequestHeader("Authorization") String authorization) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(learnFacadeService.getTeacherDashboard(authorization, userContext));
     }
 
     private UserContext extractUserContext(String authorization) {
