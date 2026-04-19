@@ -93,6 +93,33 @@ export interface ResourceTagSuggestion {
   reason: string
 }
 
+export interface Announcement {
+  id: number
+  courseId: number
+  authorId: number
+  authorName: string
+  title: string
+  content: string
+  pinned: boolean
+  publishedAt: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DiscussionPost {
+  id: number
+  courseId: number
+  resourceId?: number | null
+  parentId?: number | null
+  authorId: number
+  authorName: string
+  title?: string | null
+  content: string
+  createdAt: string
+  updatedAt: string
+  replies: DiscussionPost[]
+}
+
 export interface LearningProgress {
   resourceId: number
   progress: number

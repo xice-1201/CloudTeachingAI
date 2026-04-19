@@ -1,11 +1,15 @@
 package com.cloudteachingai.course.controller;
 
 import com.cloudteachingai.course.dto.ApiResponse;
+import com.cloudteachingai.course.dto.AnnouncementResponse;
+import com.cloudteachingai.course.dto.AnnouncementUpsertRequest;
 import com.cloudteachingai.course.dto.ChapterResponse;
 import com.cloudteachingai.course.dto.ChapterUpsertRequest;
 import com.cloudteachingai.course.dto.CoverUploadResponse;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
+import com.cloudteachingai.course.dto.DiscussionPostResponse;
+import com.cloudteachingai.course.dto.DiscussionPostUpsertRequest;
 import com.cloudteachingai.course.dto.KnowledgePointNodeResponse;
 import com.cloudteachingai.course.dto.KnowledgePointUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
@@ -19,6 +23,7 @@ import com.cloudteachingai.course.entity.enums.ResourceType;
 import com.cloudteachingai.course.exception.BusinessException;
 import com.cloudteachingai.course.service.CourseCoverStorageService;
 import com.cloudteachingai.course.service.CourseFacadeService;
+import com.cloudteachingai.course.service.CourseInteractionService;
 import com.cloudteachingai.course.service.ResourceStorageService;
 import com.cloudteachingai.course.util.JwtUtil;
 import jakarta.validation.Valid;
@@ -52,6 +57,7 @@ import java.util.concurrent.TimeUnit;
 public class CourseController {
 
     private final CourseFacadeService courseFacadeService;
+    private final CourseInteractionService courseInteractionService;
     private final CourseCoverStorageService courseCoverStorageService;
     private final ResourceStorageService resourceStorageService;
     private final JwtUtil jwtUtil;
@@ -82,6 +88,68 @@ public class CourseController {
             @PathVariable Long id) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(courseFacadeService.getCourse(id, userContext));
+    }
+
+    @GetMapping("/courses/{courseId}/announcements")
+    public ApiResponse<List<AnnouncementResponse>> listAnnouncements(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long courseId) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseInteractionService.listAnnouncements(courseId, userContext));
+    }
+
+    @PostMapping("/courses/{courseId}/announcements")
+    public ApiResponse<AnnouncementResponse> createAnnouncement(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long courseId,
+            @Valid @RequestBody AnnouncementUpsertRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseInteractionService.createAnnouncement(courseId, request, userContext));
+    }
+
+    @PutMapping("/announcements/{announcementId}")
+    public ApiResponse<AnnouncementResponse> updateAnnouncement(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long announcementId,
+            @Valid @RequestBody AnnouncementUpsertRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseInteractionService.updateAnnouncement(announcementId, request, userContext));
+    }
+
+    @DeleteMapping("/announcements/{announcementId}")
+    public ApiResponse<Void> deleteAnnouncement(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long announcementId) {
+        UserContext userContext = extractUserContext(authorization);
+        courseInteractionService.deleteAnnouncement(announcementId, userContext);
+        return ApiResponse.success(null);
+    }
+
+    @GetMapping("/courses/{courseId}/discussions")
+    public ApiResponse<List<DiscussionPostResponse>> listDiscussions(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long courseId,
+            @RequestParam(required = false) Long resourceId) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseInteractionService.listDiscussions(courseId, resourceId, userContext));
+    }
+
+    @PostMapping("/courses/{courseId}/discussions")
+    public ApiResponse<DiscussionPostResponse> createDiscussion(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long courseId,
+            @Valid @RequestBody DiscussionPostUpsertRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseInteractionService.createDiscussion(courseId, request, userContext));
+    }
+
+    @DeleteMapping("/discussions/{discussionId}")
+    public ApiResponse<Void> deleteDiscussion(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long discussionId) {
+        UserContext userContext = extractUserContext(authorization);
+        courseInteractionService.deleteDiscussion(discussionId, userContext);
+        return ApiResponse.success(null);
     }
 
     @PostMapping("/courses")

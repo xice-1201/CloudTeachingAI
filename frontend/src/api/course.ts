@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { Course, Chapter, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse } from '@/types'
+import type { Course, Chapter, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse, Announcement, DiscussionPost } from '@/types'
 
 export const courseApi = {
   listCourses: (params?: { page?: number; pageSize?: number; keyword?: string; status?: string }): Promise<PageResponse<Course>> =>
@@ -7,6 +7,27 @@ export const courseApi = {
 
   getCourse: (id: string): Promise<Course> =>
     request.get(`/courses/${id}`),
+
+  listAnnouncements: (courseId: string): Promise<Announcement[]> =>
+    request.get(`/courses/${courseId}/announcements`),
+
+  createAnnouncement: (courseId: string, data: { title: string; content: string; pinned?: boolean }): Promise<Announcement> =>
+    request.post(`/courses/${courseId}/announcements`, data),
+
+  updateAnnouncement: (announcementId: string, data: { title: string; content: string; pinned?: boolean }): Promise<Announcement> =>
+    request.put(`/announcements/${announcementId}`, data),
+
+  deleteAnnouncement: (announcementId: string): Promise<void> =>
+    request.delete(`/announcements/${announcementId}`),
+
+  listDiscussions: (courseId: string, params?: { resourceId?: number }): Promise<DiscussionPost[]> =>
+    request.get(`/courses/${courseId}/discussions`, { params }),
+
+  createDiscussion: (courseId: string, data: { resourceId?: number; parentId?: number; title?: string; content: string }): Promise<DiscussionPost> =>
+    request.post(`/courses/${courseId}/discussions`, data),
+
+  deleteDiscussion: (discussionId: string): Promise<void> =>
+    request.delete(`/discussions/${discussionId}`),
 
   createCourse: (data: Partial<Course>): Promise<Course> =>
     request.post('/courses', data),
