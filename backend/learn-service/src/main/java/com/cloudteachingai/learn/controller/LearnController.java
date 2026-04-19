@@ -1,6 +1,11 @@
 package com.cloudteachingai.learn.controller;
 
 import com.cloudteachingai.learn.dto.ApiResponse;
+import com.cloudteachingai.learn.dto.AbilityMapResponse;
+import com.cloudteachingai.learn.dto.AbilityTestAnswerRequest;
+import com.cloudteachingai.learn.dto.AbilityTestAnswerResponse;
+import com.cloudteachingai.learn.dto.AbilityTestStartRequest;
+import com.cloudteachingai.learn.dto.AbilityTestStartResponse;
 import com.cloudteachingai.learn.dto.CourseProgressResponse;
 import com.cloudteachingai.learn.dto.LearningProgressResponse;
 import com.cloudteachingai.learn.dto.UpdateLearningProgressRequest;
@@ -54,9 +59,26 @@ public class LearnController {
     }
 
     @GetMapping("/ability-map")
-    public ApiResponse<List<Object>> getAbilityMap(@RequestHeader("Authorization") String authorization) {
+    public ApiResponse<List<AbilityMapResponse>> getAbilityMap(@RequestHeader("Authorization") String authorization) {
         UserContext userContext = extractUserContext(authorization);
-        return ApiResponse.success(learnFacadeService.getAbilityMap(userContext));
+        return ApiResponse.success(learnFacadeService.getAbilityMap(authorization, userContext));
+    }
+
+    @PostMapping("/ability-test/start")
+    public ApiResponse<AbilityTestStartResponse> startAbilityTest(
+            @RequestHeader("Authorization") String authorization,
+            @Valid @RequestBody AbilityTestStartRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(learnFacadeService.startAbilityTest(request, authorization, userContext));
+    }
+
+    @PostMapping("/ability-test/{sessionId}/answer")
+    public ApiResponse<AbilityTestAnswerResponse> submitAbilityTestAnswer(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long sessionId,
+            @Valid @RequestBody AbilityTestAnswerRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(learnFacadeService.submitAbilityTestAnswer(sessionId, request, authorization, userContext));
     }
 
     @GetMapping("/path")

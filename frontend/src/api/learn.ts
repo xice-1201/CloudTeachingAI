@@ -1,5 +1,12 @@
 import request from '@/utils/request'
-import type { LearningProgress, AbilityMap, LearningPath, CourseProgress } from '@/types'
+import type {
+  LearningProgress,
+  AbilityMap,
+  LearningPath,
+  CourseProgress,
+  AbilityTestStartResponse,
+  AbilityTestAnswerResponse,
+} from '@/types'
 
 export const learnApi = {
   getProgress: (resourceId: string): Promise<LearningProgress> =>
@@ -11,13 +18,13 @@ export const learnApi = {
   getCourseProgress: (courseId: string): Promise<CourseProgress> =>
     request.get(`/learn/courses/${courseId}/progress`),
 
-  getAbilityMap: (studentId?: string): Promise<AbilityMap[]> =>
-    request.get('/learn/ability-map', { params: { studentId } }),
+  getAbilityMap: (): Promise<AbilityMap[]> =>
+    request.get('/learn/ability-map'),
 
-  startAbilityTest: (knowledgePointId: string): Promise<{ sessionId: string; question: any }> =>
-    request.post('/learn/ability-test/start', { knowledgePointId }),
+  startAbilityTest: (knowledgePointId: number, questionLimit = 6): Promise<AbilityTestStartResponse> =>
+    request.post('/learn/ability-test/start', { knowledgePointId, questionLimit }),
 
-  submitAnswer: (sessionId: string, questionId: string, answer: string): Promise<{ correct: boolean; nextQuestion?: any; completed?: boolean }> =>
+  submitAnswer: (sessionId: number, questionId: number, answer: string): Promise<AbilityTestAnswerResponse> =>
     request.post(`/learn/ability-test/${sessionId}/answer`, { questionId, answer }),
 
   getLearningPath: (): Promise<LearningPath | null> =>

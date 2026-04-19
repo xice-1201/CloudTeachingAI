@@ -112,8 +112,45 @@ export interface CourseProgress {
 export interface AbilityMap {
   knowledgePointId: number
   knowledgePointName: string
+  knowledgePointPath?: string | null
   masteryLevel: number
-  lastTestedAt?: string
+  confidence: number
+  testScore: number
+  progressScore: number
+  resourceCount: number
+  source: 'TEST' | 'TEST_AND_PROGRESS' | 'LEARNING_PROGRESS'
+  lastTestedAt?: string | null
+}
+
+export interface AbilityTestQuestionOption {
+  key: 'A' | 'B' | 'C' | 'D'
+  text: string
+}
+
+export interface AbilityTestQuestion {
+  id: number
+  knowledgePointId: number
+  knowledgePointName: string
+  orderIndex: number
+  totalQuestions: number
+  content: string
+  options: AbilityTestQuestionOption[]
+}
+
+export interface AbilityTestStartResponse {
+  sessionId: number
+  rootKnowledgePointName: string
+  totalQuestions: number
+  question: AbilityTestQuestion
+}
+
+export interface AbilityTestAnswerResponse {
+  sessionId: number
+  answeredCount: number
+  totalQuestions: number
+  completed: boolean
+  nextQuestion?: AbilityTestQuestion | null
+  abilityMap?: AbilityMap[]
 }
 
 export interface LearningPath {

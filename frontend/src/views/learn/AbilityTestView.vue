@@ -4,146 +4,393 @@
       <span class="page-title">能力测试</span>
     </div>
 
-    <!-- 未开始 -->
-    <el-card v-if="!sessionId" shadow="never" style="max-width: 600px">
-      <el-form label-width="100px">
-        <el-form-item label="知识点">
-          <el-select v-model="selectedKp" placeholder="选择要测试的知识点" style="width: 100%">
-            <el-option v-for="kp in knowledgePoints" :key="kp.id" :label="kp.name" :value="kp.id" />
+    <el-card v-if="!sessionId" shadow="never" class="setup-card">
+      <template #header>
+        <div class="card-header">
+          <div>
+            <div class="card-title">开始一次知识点自评</div>
+            <div class="card-subtitle">先选择一个知识点范围，系统会按该范围生成 1-6 道掌握度题目。</div>
+          </div>
+          <el-tag type="info">规则版诊断</el-tag>
+        </div>
+      </template>
+
+      <el-form label-width="110px">
+        <el-form-item label="测试范围">
+          <el-select
+            v-model="selectedKnowledgePointId"
+            filterable
+            placeholder="请选择知识点或知识领域"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="item in knowledgePointOptions"
+              :key="item.id"
+              :label="item.path"
+              :value="item.id"
+            >
+              <div class="option-content">
+                <span>{{ item.path }}</span>
+                <el-tag size="small" effect="plain">{{ knowledgeTypeLabel(item.nodeType) }}</el-tag>
+              </div>
+            </el-option>
           </el-select>
         </el-form-item>
+        <el-form-item label="说明">
+          <div class="setup-tips">
+            <p>适合在学习新课程前或阶段性复盘时使用。</p>
+            <p>测试结果会同步到学习中心，用于识别薄弱知识点。</p>
+            <p>当前版本以自评题为主，后续可继续接入更细的 AI 诊断题。</p>
+          </div>
+        </el-form-item>
         <el-form-item>
-          <el-button type="primary" :disabled="!selectedKp" :loading="loading" @click="startTest">
+          <el-button type="primary" :disabled="!selectedKnowledgePointId" :loading="loading" @click="startTest">
             开始测试
           </el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
-    <!-- 测试中 -->
-    <el-card v-else-if="!completed" shadow="never" style="max-width: 700px">
-      <div class="question-header">
-        <span class="question-label">题目</span>
-        <el-tag type="info">自适应测试</el-tag>
-      </div>
-      <div class="question-content">{{ currentQuestion?.content }}</div>
-      <div class="options">
-        <div
-          v-for="opt in currentQuestion?.options"
-          :key="opt.key"
-          class="option-item"
-          :class="{ selected: selectedAnswer === opt.key }"
-          @click="selectedAnswer = opt.key"
-        >
-          <span class="option-key">{{ opt.key }}</span>
-          <span>{{ opt.text }}</span>
+    <el-card v-else-if="currentQuestion && !completed" shadow="never" class="question-card">
+      <template #header>
+        <div class="card-header">
+          <div>
+            <div class="card-title">{{ currentQuestion.knowledgePointName }}</div>
+            <div class="card-subtitle">
+              第 {{ currentQuestion.orderIndex }} / {{ currentQuestion.totalQuestions }} 题
+            </div>
+          </div>
+          <el-progress
+            :percentage="Math.round((currentQuestion.orderIndex / currentQuestion.totalQuestions) * 100)"
+            :stroke-width="8"
+            class="header-progress"
+          />
         </div>
+      </template>
+
+      <div class="question-content">{{ currentQuestion.content }}</div>
+      <div class="options">
+        <button
+          v-for="option in currentQuestion.options"
+          :key="option.key"
+          type="button"
+          class="option-item"
+          :class="{ selected: selectedAnswer === option.key }"
+          @click="selectedAnswer = option.key"
+        >
+          <span class="option-key">{{ option.key }}</span>
+          <span class="option-text">{{ option.text }}</span>
+        </button>
       </div>
-      <el-button type="primary" :disabled="!selectedAnswer" :loading="loading" @click="submitAnswer" style="margin-top: 20px">
-        提交答案
-      </el-button>
+
+      <div class="question-actions">
+        <el-button @click="reset">重新选择范围</el-button>
+        <el-button type="primary" :disabled="!selectedAnswer" :loading="loading" @click="submitAnswer">
+          提交并继续
+        </el-button>
+      </div>
     </el-card>
 
-    <!-- 完成 -->
-    <el-result v-else icon="success" title="测试完成" :sub-title="`本次测试已完成，能力图谱已更新`">
+    <el-result
+      v-else
+      icon="success"
+      title="能力测试已完成"
+      :sub-title="completedSummary"
+    >
       <template #extra>
-        <el-button type="primary" @click="$router.push('/learning')">查看能力图谱</el-button>
-        <el-button @click="reset">再次测试</el-button>
+        <div class="result-actions">
+          <el-button type="primary" @click="$router.push('/learning')">查看学习中心</el-button>
+          <el-button @click="reset">再次测试</el-button>
+        </div>
       </template>
     </el-result>
+
+    <el-card v-if="completed && completedAbilityMap.length > 0" shadow="never" class="result-card">
+      <template #header>
+        <div class="card-header">
+          <div>
+            <div class="card-title">本次能力画像</div>
+            <div class="card-subtitle">以下结果已同步到学习中心。</div>
+          </div>
+        </div>
+      </template>
+
+      <div class="result-list">
+        <div v-for="item in completedAbilityMap" :key="item.knowledgePointId" class="result-item">
+          <div class="result-meta">
+            <div class="result-name">{{ item.knowledgePointName }}</div>
+            <div class="result-path">{{ item.knowledgePointPath || item.knowledgePointName }}</div>
+          </div>
+          <el-progress
+            :percentage="Math.round(item.masteryLevel * 100)"
+            :color="masteryColor(item.masteryLevel)"
+            :stroke-width="8"
+          />
+        </div>
+      </div>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
+import type { AbilityMap, AbilityTestQuestion, KnowledgePointNode } from '@/types'
 
-const sessionId = ref('')
-const selectedKp = ref('')
-const selectedAnswer = ref('')
-const currentQuestion = ref<any>(null)
+type KnowledgePointOption = Pick<KnowledgePointNode, 'id' | 'nodeType' | 'path'>
+
+const sessionId = ref<number | null>(null)
+const selectedKnowledgePointId = ref<number | null>(null)
+const selectedAnswer = ref<'A' | 'B' | 'C' | 'D' | ''>('')
+const currentQuestion = ref<AbilityTestQuestion | null>(null)
 const completed = ref(false)
 const loading = ref(false)
-// Placeholder — real data comes from course-service knowledge points API
-const knowledgePoints = ref<{ id: string; name: string }[]>([])
+const knowledgePointTree = ref<KnowledgePointNode[]>([])
+const completedAbilityMap = ref<AbilityMap[]>([])
+
+const knowledgePointOptions = computed<KnowledgePointOption[]>(() => {
+  const items: KnowledgePointOption[] = []
+  const walk = (nodes: KnowledgePointNode[]) => {
+    nodes.forEach((node) => {
+      if (node.active) {
+        items.push({ id: node.id, nodeType: node.nodeType, path: node.path })
+      }
+      if (node.children?.length) walk(node.children)
+    })
+  }
+  walk(knowledgePointTree.value)
+  return items
+})
+
+const completedSummary = computed(() => {
+  if (completedAbilityMap.value.length === 0) {
+    return '本次测试结果已保存，你可以前往学习中心查看后续推荐。'
+  }
+  const weakest = [...completedAbilityMap.value]
+    .sort((left, right) => left.masteryLevel - right.masteryLevel)
+    .slice(0, 2)
+    .map((item) => item.knowledgePointName)
+  return weakest.length > 0
+    ? `当前更需要优先补强：${weakest.join('、')}`
+    : '本次测试结果已保存，你可以前往学习中心查看后续推荐。'
+})
+
+function knowledgeTypeLabel(type: KnowledgePointNode['nodeType']) {
+  return { SUBJECT: '学科', DOMAIN: '知识领域', POINT: '知识点' }[type] ?? type
+}
+
+function masteryColor(level: number) {
+  if (level >= 0.8) return '#67c23a'
+  if (level >= 0.5) return '#e6a23c'
+  return '#f56c6c'
+}
+
+async function loadKnowledgePoints() {
+  knowledgePointTree.value = await courseApi.listKnowledgePointTree({ activeOnly: true })
+}
 
 async function startTest() {
+  if (!selectedKnowledgePointId.value) return
   loading.value = true
   try {
-    const res = await learnApi.startAbilityTest(selectedKp.value)
-    sessionId.value = res.sessionId
-    currentQuestion.value = res.question
+    const response = await learnApi.startAbilityTest(selectedKnowledgePointId.value)
+    sessionId.value = response.sessionId
+    currentQuestion.value = response.question
+    completed.value = false
+    completedAbilityMap.value = []
   } finally {
     loading.value = false
   }
 }
 
 async function submitAnswer() {
+  if (!sessionId.value || !currentQuestion.value || !selectedAnswer.value) return
   loading.value = true
   try {
-    const res = await learnApi.submitAnswer(sessionId.value, currentQuestion.value.id, selectedAnswer.value)
+    const response = await learnApi.submitAnswer(sessionId.value, currentQuestion.value.id, selectedAnswer.value)
     selectedAnswer.value = ''
-    if (res.completed) {
+    if (response.completed) {
       completed.value = true
-    } else {
-      currentQuestion.value = res.nextQuestion
+      currentQuestion.value = null
+      completedAbilityMap.value = response.abilityMap ?? []
+      ElMessage.success('能力图谱已更新')
+      return
     }
+    currentQuestion.value = response.nextQuestion ?? null
   } finally {
     loading.value = false
   }
 }
 
 function reset() {
-  sessionId.value = ''
-  selectedKp.value = ''
+  sessionId.value = null
+  selectedKnowledgePointId.value = null
   selectedAnswer.value = ''
   currentQuestion.value = null
   completed.value = false
+  completedAbilityMap.value = []
 }
+
+onMounted(async () => {
+  await loadKnowledgePoints()
+})
 </script>
 
 <style scoped>
-.question-header {
+.setup-card,
+.question-card,
+.result-card {
+  max-width: 880px;
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.card-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.card-subtitle {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 13px;
+}
+
+.header-progress {
+  width: 180px;
+  flex-shrink: 0;
+}
+
+.option-content {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  gap: 12px;
 }
-.question-label { font-size: 16px; font-weight: 600; color: #303133; }
+
+.setup-tips {
+  color: #606266;
+  line-height: 1.8;
+}
+
+.setup-tips p {
+  margin: 0;
+}
+
 .question-content {
-  font-size: 15px;
-  color: #303133;
-  line-height: 1.7;
-  margin-bottom: 24px;
-  padding: 16px;
+  padding: 18px 20px;
+  border-radius: 12px;
   background: #f5f7fa;
-  border-radius: 6px;
+  color: #303133;
+  line-height: 1.8;
+  font-size: 15px;
 }
-.options { display: flex; flex-direction: column; gap: 10px; }
+
+.options {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
 .option-item {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  padding: 16px 18px;
+  border: 1px solid #dcdfe6;
+  border-radius: 12px;
+  background: #fff;
+  text-align: left;
   cursor: pointer;
-  font-size: 14px;
-  transition: all 0.2s;
+  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
 }
-.option-item:hover { border-color: #409eff; background: #ecf5ff; }
-.option-item.selected { border-color: #409eff; background: #ecf5ff; color: #409eff; }
+
+.option-item:hover,
+.option-item.selected {
+  border-color: #409eff;
+  background: #ecf5ff;
+  box-shadow: 0 8px 20px rgba(64, 158, 255, 0.12);
+}
+
 .option-key {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #e4e7ed;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #e4e7ed;
+  color: #606266;
+  font-size: 13px;
+  font-weight: 700;
   flex-shrink: 0;
 }
-.option-item.selected .option-key { background: #409eff; color: #fff; }
+
+.option-item.selected .option-key {
+  background: #409eff;
+  color: #fff;
+}
+
+.option-text {
+  color: #303133;
+  line-height: 1.7;
+}
+
+.question-actions,
+.result-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.result-list {
+  display: grid;
+  gap: 14px;
+}
+
+.result-item {
+  display: grid;
+  gap: 10px;
+}
+
+.result-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.result-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.result-path {
+  font-size: 12px;
+  color: #909399;
+}
+
+@media (max-width: 768px) {
+  .card-header {
+    flex-direction: column;
+  }
+
+  .header-progress {
+    width: 100%;
+  }
+
+  .question-actions,
+  .result-actions {
+    flex-direction: column;
+  }
+}
 </style>

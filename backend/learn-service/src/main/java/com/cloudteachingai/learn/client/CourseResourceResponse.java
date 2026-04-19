@@ -9,6 +9,9 @@ public class CourseResourceResponse {
     private String title;
     private String type;
     private String url;
+    private String description;
+    private String taggingStatus;
+    private java.util.List<CourseResourceKnowledgePointResponse> knowledgePoints;
     private Integer duration;
     private Long size;
     private Integer orderIndex;

@@ -4,6 +4,7 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 
@@ -19,4 +20,9 @@ public interface CourseServiceClient {
     CourseApiResponse<List<CourseResourceResponse>> listResources(
             @RequestHeader("Authorization") String authorization,
             @PathVariable("chapterId") Long chapterId);
+
+    @GetMapping("/api/v1/knowledge-points/tree")
+    CourseApiResponse<List<CourseKnowledgePointNodeResponse>> listKnowledgePointTree(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam("activeOnly") boolean activeOnly);
 }
