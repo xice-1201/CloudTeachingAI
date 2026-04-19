@@ -154,18 +154,31 @@ export interface AbilityTestAnswerResponse {
 }
 
 export interface LearningPath {
-  id: number
   studentId: number
+  generatedAt: string
+  focusKnowledgePoints: LearningPathFocus[]
   resources: PathResource[]
-  createdAt: string
+}
+
+export interface LearningPathFocus {
+  knowledgePointId: number
+  knowledgePointName: string
+  knowledgePointPath?: string | null
+  masteryLevel: number
 }
 
 export interface PathResource {
   resourceId: number
+  courseId: number
+  chapterId: number
   resourceTitle: string
+  chapterTitle?: string | null
   courseTitle: string
   reason: string
   orderIndex: number
+  currentProgress: number
+  focusKnowledgePointId: number
+  focusKnowledgePointName: string
 }
 
 export interface Assignment {

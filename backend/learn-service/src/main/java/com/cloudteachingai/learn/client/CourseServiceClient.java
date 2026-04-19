@@ -25,4 +25,15 @@ public interface CourseServiceClient {
     CourseApiResponse<List<CourseKnowledgePointNodeResponse>> listKnowledgePointTree(
             @RequestHeader("Authorization") String authorization,
             @RequestParam("activeOnly") boolean activeOnly);
+
+    @GetMapping("/api/v1/courses/{courseId}")
+    CourseApiResponse<CourseSummaryResponse> getCourse(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable("courseId") Long courseId);
+
+    @GetMapping("/api/v1/courses/enrolled")
+    CourseApiResponse<PageResponse<CourseSummaryResponse>> listEnrolledCourses(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam("page") int page,
+            @RequestParam("pageSize") int pageSize);
 }

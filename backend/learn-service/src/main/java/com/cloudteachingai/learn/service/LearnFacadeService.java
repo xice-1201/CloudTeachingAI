@@ -6,6 +6,8 @@ import com.cloudteachingai.learn.client.CourseKnowledgePointNodeResponse;
 import com.cloudteachingai.learn.client.CourseResourceKnowledgePointResponse;
 import com.cloudteachingai.learn.client.CourseResourceResponse;
 import com.cloudteachingai.learn.client.CourseServiceClient;
+import com.cloudteachingai.learn.client.CourseSummaryResponse;
+import com.cloudteachingai.learn.client.PageResponse;
 import com.cloudteachingai.learn.controller.LearnController.UserContext;
 import com.cloudteachingai.learn.dto.AbilityMapResponse;
 import com.cloudteachingai.learn.dto.AbilityTestAnswerRequest;
@@ -15,6 +17,9 @@ import com.cloudteachingai.learn.dto.AbilityTestQuestionResponse;
 import com.cloudteachingai.learn.dto.AbilityTestStartRequest;
 import com.cloudteachingai.learn.dto.AbilityTestStartResponse;
 import com.cloudteachingai.learn.dto.CourseProgressResponse;
+import com.cloudteachingai.learn.dto.LearningPathFocusResponse;
+import com.cloudteachingai.learn.dto.LearningPathResourceResponse;
+import com.cloudteachingai.learn.dto.LearningPathResponse;
 import com.cloudteachingai.learn.dto.LearningProgressResponse;
 import com.cloudteachingai.learn.dto.UpdateLearningProgressRequest;
 import com.cloudteachingai.learn.entity.AbilityMapEntity;
@@ -54,6 +59,9 @@ public class LearnFacadeService {
     private static final String STATUS_COMPLETED = "COMPLETED";
     private static final int DEFAULT_QUESTION_LIMIT = 6;
     private static final int MAX_RADAR_POINTS = 8;
+    private static final int MAX_PATH_RESOURCES = 6;
+    private static final int MAX_PATH_FOCUS_POINTS = 3;
+    private static final double WEAK_MASTERY_THRESHOLD = 0.7D;
     private static final Map<String, Double> ANSWER_SCORES = Map.of(
             "A", 0.25D,
             "B", 0.5D,
@@ -272,66 +280,17 @@ public class LearnFacadeService {
 
     public List<AbilityMapResponse> getAbilityMap(String authorization, UserContext userContext) {
         assertStudent(userContext);
-
-        List<AbilityMapEntity> storedMaps = abilityMapRepository.findByStudentIdOrderByMasteryLevelDescUpdatedAtDesc(userContext.userId());
-        Map<Long, ProgressStats> progressStats = buildProgressStats(userContext.userId(), authorization);
-
-        Map<Long, AbilityMapResponse> responseMap = new LinkedHashMap<>();
-        for (AbilityMapEntity entity : storedMaps) {
-            ProgressStats stats = progressStats.get(entity.getKnowledgePointId());
-            double progressScore = stats == null ? entity.getProgressScore() : stats.averageProgress();
-            int resourceCount = stats == null ? entity.getResourceCount() : stats.resourceCount();
-            double mastery = stats == null
-                    ? entity.getMasteryLevel()
-                    : blendMastery(entity.getTestScore(), progressScore);
-            responseMap.put(entity.getKnowledgePointId(), AbilityMapResponse.builder()
-                    .knowledgePointId(entity.getKnowledgePointId())
-                    .knowledgePointName(entity.getKnowledgePointName())
-                    .knowledgePointPath(entity.getKnowledgePointPath())
-                    .masteryLevel(roundScore(mastery))
-                    .confidence(entity.getConfidence())
-                    .testScore(roundScore(entity.getTestScore()))
-                    .progressScore(roundScore(progressScore))
-                    .resourceCount(resourceCount)
-                    .source(stats == null ? entity.getSource() : "TEST_AND_PROGRESS")
-                    .lastTestedAt(entity.getLastTestedAt() == null ? null : entity.getLastTestedAt().toString())
-                    .build());
-        }
-
-        for (Map.Entry<Long, ProgressStats> entry : progressStats.entrySet()) {
-            if (responseMap.containsKey(entry.getKey())) {
-                continue;
-            }
-            ProgressStats stats = entry.getValue();
-            responseMap.put(entry.getKey(), AbilityMapResponse.builder()
-                    .knowledgePointId(stats.knowledgePointId())
-                    .knowledgePointName(stats.knowledgePointName())
-                    .knowledgePointPath(stats.knowledgePointPath())
-                    .masteryLevel(roundScore(stats.averageProgress()))
-                    .confidence(0.35D)
-                    .testScore(0D)
-                    .progressScore(roundScore(stats.averageProgress()))
-                    .resourceCount(stats.resourceCount())
-                    .source("LEARNING_PROGRESS")
-                    .lastTestedAt(null)
-                    .build());
-        }
-
-        return responseMap.values().stream()
-                .sorted(Comparator.comparing(AbilityMapResponse::getMasteryLevel).reversed()
-                        .thenComparing(AbilityMapResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
-                .limit(MAX_RADAR_POINTS)
-                .toList();
+        return buildAbilityMapResponses(userContext.userId(), authorization);
     }
 
-    public Object getLearningPath(UserContext userContext) {
+    public LearningPathResponse getLearningPath(String authorization, UserContext userContext) {
         assertStudent(userContext);
-        return null;
+        return buildLearningPath(userContext.userId(), authorization);
     }
 
-    public Object generateLearningPath(UserContext userContext) {
+    public LearningPathResponse generateLearningPath(String authorization, UserContext userContext) {
         assertStudent(userContext);
-        return null;
+        return buildLearningPath(userContext.userId(), authorization);
     }
 
     private List<AbilityMapResponse> rebuildAbilityMap(
@@ -381,6 +340,119 @@ public class LearnFacadeService {
                 .toList();
     }
 
+    private List<AbilityMapResponse> buildAbilityMapResponses(Long studentId, String authorization) {
+        List<AbilityMapEntity> storedMaps = abilityMapRepository.findByStudentIdOrderByMasteryLevelDescUpdatedAtDesc(studentId);
+        Map<Long, ProgressStats> progressStats = buildProgressStats(studentId, authorization);
+
+        Map<Long, AbilityMapResponse> responseMap = new LinkedHashMap<>();
+        for (AbilityMapEntity entity : storedMaps) {
+            ProgressStats stats = progressStats.get(entity.getKnowledgePointId());
+            double progressScore = stats == null ? entity.getProgressScore() : stats.averageProgress();
+            int resourceCount = stats == null ? entity.getResourceCount() : stats.resourceCount();
+            double mastery = stats == null
+                    ? entity.getMasteryLevel()
+                    : blendMastery(entity.getTestScore(), progressScore);
+            responseMap.put(entity.getKnowledgePointId(), AbilityMapResponse.builder()
+                    .knowledgePointId(entity.getKnowledgePointId())
+                    .knowledgePointName(entity.getKnowledgePointName())
+                    .knowledgePointPath(entity.getKnowledgePointPath())
+                    .masteryLevel(roundScore(mastery))
+                    .confidence(entity.getConfidence())
+                    .testScore(roundScore(entity.getTestScore()))
+                    .progressScore(roundScore(progressScore))
+                    .resourceCount(resourceCount)
+                    .source(stats == null ? entity.getSource() : "TEST_AND_PROGRESS")
+                    .lastTestedAt(entity.getLastTestedAt() == null ? null : entity.getLastTestedAt().toString())
+                    .build());
+        }
+
+        for (Map.Entry<Long, ProgressStats> entry : progressStats.entrySet()) {
+            if (responseMap.containsKey(entry.getKey())) {
+                continue;
+            }
+            ProgressStats stats = entry.getValue();
+            responseMap.put(entry.getKey(), AbilityMapResponse.builder()
+                    .knowledgePointId(stats.knowledgePointId())
+                    .knowledgePointName(stats.knowledgePointName())
+                    .knowledgePointPath(stats.knowledgePointPath())
+                    .masteryLevel(roundScore(stats.averageProgress()))
+                    .confidence(0.35D)
+                    .testScore(0D)
+                    .progressScore(roundScore(stats.averageProgress()))
+                    .resourceCount(stats.resourceCount())
+                    .source("LEARNING_PROGRESS")
+                    .lastTestedAt(null)
+                    .build());
+        }
+
+        return responseMap.values().stream()
+                .sorted(Comparator.comparing(AbilityMapResponse::getMasteryLevel).reversed()
+                        .thenComparing(AbilityMapResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+    }
+
+    private LearningPathResponse buildLearningPath(Long studentId, String authorization) {
+        List<AbilityMapResponse> focusCandidates = buildAbilityMapResponses(studentId, authorization).stream()
+                .sorted(Comparator.comparing(AbilityMapResponse::getMasteryLevel)
+                        .thenComparing(AbilityMapResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+        if (focusCandidates.isEmpty()) {
+            return null;
+        }
+
+        List<AbilityMapResponse> focusPoints = selectFocusKnowledgePoints(focusCandidates);
+        Map<Long, LearningProgressEntity> progressByResourceId = learningProgressRepository.findByStudentId(studentId).stream()
+                .collect(Collectors.toMap(
+                        LearningProgressEntity::getResourceId,
+                        entity -> entity,
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+
+        Set<Long> courseIds = collectCandidateCourseIds(progressByResourceId.values(), authorization);
+        if (courseIds.isEmpty()) {
+            return null;
+        }
+
+        Map<Long, CourseContext> courseContexts = loadCourseContexts(courseIds, authorization);
+        List<PathCandidate> candidates = buildPathCandidates(focusPoints, progressByResourceId, courseContexts);
+        if (candidates.isEmpty()) {
+            return null;
+        }
+
+        List<LearningPathResourceResponse> resources = new ArrayList<>();
+        for (int index = 0; index < Math.min(MAX_PATH_RESOURCES, candidates.size()); index++) {
+            PathCandidate candidate = candidates.get(index);
+            resources.add(LearningPathResourceResponse.builder()
+                    .resourceId(candidate.resourceId())
+                    .courseId(candidate.courseId())
+                    .chapterId(candidate.chapterId())
+                    .resourceTitle(candidate.resourceTitle())
+                    .chapterTitle(candidate.chapterTitle())
+                    .courseTitle(candidate.courseTitle())
+                    .reason(candidate.reason())
+                    .orderIndex(index + 1)
+                    .currentProgress(roundScore(candidate.currentProgress()))
+                    .focusKnowledgePointId(candidate.focusKnowledgePointId())
+                    .focusKnowledgePointName(candidate.focusKnowledgePointName())
+                    .build());
+        }
+
+        return LearningPathResponse.builder()
+                .studentId(studentId)
+                .generatedAt(OffsetDateTime.now(ZoneOffset.UTC).toString())
+                .focusKnowledgePoints(focusPoints.stream()
+                        .map(item -> LearningPathFocusResponse.builder()
+                                .knowledgePointId(item.getKnowledgePointId())
+                                .knowledgePointName(item.getKnowledgePointName())
+                                .knowledgePointPath(item.getKnowledgePointPath())
+                                .masteryLevel(item.getMasteryLevel())
+                                .build())
+                        .toList())
+                .resources(resources)
+                .build();
+    }
+
     private AbilityMapResponse toAbilityMapResponse(AbilityMapEntity entity) {
         return AbilityMapResponse.builder()
                 .knowledgePointId(entity.getKnowledgePointId())
@@ -416,6 +488,151 @@ public class LearnFacadeService {
     private String buildQuestionPrompt(CourseKnowledgePointNodeResponse point) {
         String path = point.getPath() == null || point.getPath().isBlank() ? point.getName() : point.getPath();
         return "请结合最近的学习情况，判断你对「" + path + "」的掌握程度。";
+    }
+
+    private List<AbilityMapResponse> selectFocusKnowledgePoints(List<AbilityMapResponse> abilityMap) {
+        List<AbilityMapResponse> weakPoints = abilityMap.stream()
+                .filter(item -> item.getMasteryLevel() != null && item.getMasteryLevel() < WEAK_MASTERY_THRESHOLD)
+                .limit(MAX_PATH_FOCUS_POINTS)
+                .toList();
+        if (!weakPoints.isEmpty()) {
+            return weakPoints;
+        }
+        return abilityMap.stream()
+                .limit(MAX_PATH_FOCUS_POINTS)
+                .toList();
+    }
+
+    private Set<Long> collectCandidateCourseIds(
+            Collection<LearningProgressEntity> progresses,
+            String authorization) {
+        Set<Long> courseIds = progresses.stream()
+                .map(LearningProgressEntity::getCourseId)
+                .filter(value -> value != null)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        try {
+            CourseApiResponse<PageResponse<CourseSummaryResponse>> response =
+                    courseServiceClient.listEnrolledCourses(authorization, 1, 100);
+            PageResponse<CourseSummaryResponse> page = response == null ? null : response.getData();
+            if (page != null && page.getItems() != null) {
+                page.getItems().stream()
+                        .map(CourseSummaryResponse::getId)
+                        .filter(value -> value != null)
+                        .forEach(courseIds::add);
+            }
+        } catch (FeignException.Forbidden ex) {
+            throw BusinessException.forbidden("No access to enrolled courses");
+        } catch (FeignException.Unauthorized ex) {
+            throw BusinessException.unauthorized("Invalid token");
+        } catch (FeignException ex) {
+            if (courseIds.isEmpty()) {
+                throw BusinessException.badRequest("Failed to load enrolled courses");
+            }
+        }
+
+        return courseIds;
+    }
+
+    private Map<Long, CourseContext> loadCourseContexts(Set<Long> courseIds, String authorization) {
+        Map<Long, CourseContext> contexts = new LinkedHashMap<>();
+        for (Long courseId : courseIds) {
+            CourseSummaryResponse course = getCourseSummary(courseId, authorization);
+            if (course == null) {
+                continue;
+            }
+
+            List<CourseChapterResponse> chapters = listCourseChapters(courseId, authorization);
+            Map<Long, CourseChapterResponse> chaptersById = chapters.stream()
+                    .collect(Collectors.toMap(
+                            CourseChapterResponse::getId,
+                            chapter -> chapter,
+                            (left, right) -> left,
+                            LinkedHashMap::new
+                    ));
+
+            List<CourseResourceResponse> resources = new ArrayList<>();
+            for (CourseChapterResponse chapter : chapters) {
+                resources.addAll(listChapterResources(chapter.getId(), authorization));
+            }
+            contexts.put(courseId, new CourseContext(course, chaptersById, resources));
+        }
+        return contexts;
+    }
+
+    private List<PathCandidate> buildPathCandidates(
+            List<AbilityMapResponse> focusPoints,
+            Map<Long, LearningProgressEntity> progressByResourceId,
+            Map<Long, CourseContext> courseContexts) {
+        Map<Long, PathCandidate> candidates = new LinkedHashMap<>();
+
+        for (AbilityMapResponse focusPoint : focusPoints) {
+            for (Map.Entry<Long, CourseContext> courseEntry : courseContexts.entrySet()) {
+                Long courseId = courseEntry.getKey();
+                CourseContext context = courseEntry.getValue();
+                for (CourseResourceResponse resource : context.resources()) {
+                    if (!matchesFocusPoint(resource, focusPoint.getKnowledgePointId())) {
+                        continue;
+                    }
+
+                    LearningProgressEntity progress = progressByResourceId.get(resource.getId());
+                    double currentProgress = progress == null ? 0D : clampProgress(progress.getProgress());
+                    if (progress != null && Boolean.TRUE.equals(progress.getCompleted())) {
+                        continue;
+                    }
+
+                    CourseChapterResponse chapter = context.chaptersById().get(resource.getChapterId());
+                    PathCandidate candidate = new PathCandidate(
+                            resource.getId(),
+                            courseId,
+                            resource.getChapterId(),
+                            resource.getTitle(),
+                            context.course().getTitle(),
+                            chapter == null ? null : chapter.getTitle(),
+                            focusPoint.getKnowledgePointId(),
+                            focusPoint.getKnowledgePointName(),
+                            currentProgress,
+                            scorePathCandidate(focusPoint, currentProgress),
+                            buildPathReason(focusPoint, currentProgress, resource.getTitle())
+                    );
+                    candidates.merge(resource.getId(), candidate, (left, right) ->
+                            left.score() >= right.score() ? left : right);
+                }
+            }
+        }
+
+        return candidates.values().stream()
+                .sorted(Comparator.comparing(PathCandidate::score).reversed()
+                        .thenComparing(PathCandidate::courseTitle, Comparator.nullsLast(String::compareToIgnoreCase))
+                        .thenComparing(PathCandidate::resourceTitle, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+    }
+
+    private boolean matchesFocusPoint(CourseResourceResponse resource, Long knowledgePointId) {
+        if (resource.getKnowledgePoints() == null || resource.getKnowledgePoints().isEmpty()) {
+            return false;
+        }
+        return resource.getKnowledgePoints().stream()
+                .map(CourseResourceKnowledgePointResponse::getId)
+                .anyMatch(knowledgePointId::equals);
+    }
+
+    private double scorePathCandidate(AbilityMapResponse focusPoint, double currentProgress) {
+        double weaknessScore = 1D - (focusPoint.getMasteryLevel() == null ? 0D : focusPoint.getMasteryLevel());
+        double remainingProgress = 1D - currentProgress;
+        return roundScore((weaknessScore * 0.8D) + (remainingProgress * 0.2D));
+    }
+
+    private String buildPathReason(AbilityMapResponse focusPoint, double currentProgress, String resourceTitle) {
+        int masteryPercent = (int) Math.round((focusPoint.getMasteryLevel() == null ? 0D : focusPoint.getMasteryLevel()) * 100D);
+        int progressPercent = Math.round((float) (currentProgress * 100D));
+        if (currentProgress > 0D) {
+            return "你在「" + focusPoint.getKnowledgePointName() + "」当前掌握度约为 "
+                    + masteryPercent + "%，而资源《" + resourceTitle + "》已学习 "
+                    + progressPercent + "%，适合继续完成以巩固薄弱点。";
+        }
+        return "你在「" + focusPoint.getKnowledgePointName() + "」当前掌握度约为 "
+                + masteryPercent + "%，该资源已标注覆盖这个知识点，适合作为下一步补强内容。";
     }
 
     private List<CourseKnowledgePointNodeResponse> collectQuestionTargets(CourseKnowledgePointNodeResponse root) {
@@ -485,7 +702,7 @@ public class LearnFacadeService {
 
         Set<Long> courseIds = progresses.stream()
                 .map(LearningProgressEntity::getCourseId)
-                .filter(id -> id != null)
+                .filter(value -> value != null)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (courseIds.isEmpty()) {
             return Collections.emptyMap();
@@ -512,7 +729,7 @@ public class LearnFacadeService {
                 .collect(Collectors.toMap(
                         ProgressStatsAccumulator::knowledgePointId,
                         ProgressStatsAccumulator::toStats,
-                        (left, _right) -> left,
+                        (left, right) -> left,
                         LinkedHashMap::new
                 ));
     }
@@ -527,6 +744,21 @@ public class LearnFacadeService {
             }
         }
         return resources;
+    }
+
+    private CourseSummaryResponse getCourseSummary(Long courseId, String authorization) {
+        try {
+            CourseApiResponse<CourseSummaryResponse> response = courseServiceClient.getCourse(authorization, courseId);
+            return response == null ? null : response.getData();
+        } catch (FeignException.NotFound ex) {
+            return null;
+        } catch (FeignException.Forbidden ex) {
+            throw BusinessException.forbidden("No access to this course");
+        } catch (FeignException.Unauthorized ex) {
+            throw BusinessException.unauthorized("Invalid token");
+        } catch (FeignException ex) {
+            return null;
+        }
     }
 
     private List<CourseChapterResponse> listCourseChapters(Long courseId, String authorization) {
@@ -625,6 +857,28 @@ public class LearnFacadeService {
             String knowledgePointPath,
             double averageProgress,
             int resourceCount
+    ) {
+    }
+
+    private record CourseContext(
+            CourseSummaryResponse course,
+            Map<Long, CourseChapterResponse> chaptersById,
+            List<CourseResourceResponse> resources
+    ) {
+    }
+
+    private record PathCandidate(
+            Long resourceId,
+            Long courseId,
+            Long chapterId,
+            String resourceTitle,
+            String courseTitle,
+            String chapterTitle,
+            Long focusKnowledgePointId,
+            String focusKnowledgePointName,
+            double currentProgress,
+            double score,
+            String reason
     ) {
     }
 

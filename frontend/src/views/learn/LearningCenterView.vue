@@ -90,6 +90,7 @@ const abilityMap = ref<AbilityMap[]>([])
 let chart: echarts.ECharts | null = null
 
 const sortedAbilityMap = computed(() => [...abilityMap.value].sort((left, right) => left.masteryLevel - right.masteryLevel))
+const chartAbilityMap = computed(() => [...sortedAbilityMap.value].slice(0, 8))
 const averageMastery = computed(() => {
   if (abilityMap.value.length === 0) return 0
   const total = abilityMap.value.reduce((sum, item) => sum + item.masteryLevel, 0)
@@ -156,7 +157,7 @@ async function loadAbilityMap() {
   abilityMap.value = await learnApi.getAbilityMap().catch(() => [])
 }
 
-watch(abilityMap, async (data) => {
+watch(chartAbilityMap, async (data) => {
   if (data.length === 0) {
     chart?.dispose()
     chart = null
