@@ -259,6 +259,19 @@ import { courseApi } from '@/api/course'
 import { userApi } from '@/api/user'
 import type { Chapter, Course, KnowledgePointNode, Resource, ResourceTagSuggestion, User } from '@/types'
 
+type RequestLikeError = Error & {
+  code?: number
+  config?: {
+    method?: string
+    url?: string
+  }
+  response?: {
+    status?: number
+    data?: unknown
+  }
+  payload?: unknown
+}
+
 const route = useRoute()
 const router = useRouter()
 const formRef = ref<FormInstance>()
@@ -378,9 +391,22 @@ function handleResourceFileChange(file: UploadFile) {
 }
 
 function logCourseEditError(step: string, error: unknown, extra?: Record<string, unknown>) {
+  const requestError = error as RequestLikeError
   console.group(`[CourseEditView] ${step} failed`)
   if (extra) {
     console.error('Context:', extra)
+  }
+  console.error('Request summary:', {
+    step,
+    code: requestError?.code,
+    method: requestError?.config?.method?.toUpperCase?.(),
+    url: requestError?.config?.url,
+    status: requestError?.response?.status,
+  })
+  if (requestError?.response?.data !== undefined) {
+    console.error('Response data:', requestError.response.data)
+  } else if (requestError?.payload !== undefined) {
+    console.error('Response payload:', requestError.payload)
   }
   console.error('Error object:', error)
   if (error instanceof Error && error.stack) {
@@ -440,8 +466,27 @@ async function loadStudentOptions(keyword = '') {
 async function ensureSelectedStudentsLoaded(studentIds: number[]) {
   const missingIds = studentIds.filter((studentId) => !studentOptions.value.some((student) => student.id === studentId))
   if (!missingIds.length) return
-  const users = await Promise.all(missingIds.map((studentId) => userApi.getUserById(String(studentId))))
-  mergeStudentOptions(users)
+
+  const results = await Promise.allSettled(missingIds.map((studentId) => userApi.getUserById(String(studentId))))
+  const users = results
+    .filter((result): result is PromiseFulfilledResult<User> => result.status === 'fulfilled')
+    .map((result) => result.value)
+
+  if (users.length) {
+    mergeStudentOptions(users)
+  }
+
+  const failedIds = missingIds.filter((_, index) => results[index]?.status === 'rejected')
+  if (failedIds.length) {
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        logCourseEditError('ensureSelectedStudentsLoaded', result.reason, {
+          missingStudentId: missingIds[index],
+        })
+      }
+    })
+    ElMessage.warning(`部分指定学生信息加载失败，已忽略 ${failedIds.length} 条失效学生记录`)
+  }
 }
 
 async function loadKnowledgePointTree() {
@@ -517,8 +562,35 @@ async function loadCurriculum() {
     const chapterList = await courseApi.listChapters(courseId.value)
     chapters.value = chapterList
     activeChapterKeys.value = chapterList.map((chapter) => String(chapter.id))
-    const resourceEntries = await Promise.all(chapterList.map(async (chapter) => [chapter.id, await courseApi.listResources(String(chapter.id))] as const))
-    resourceMap.value = Object.fromEntries(resourceEntries)
+    const resourceResults = await Promise.allSettled(
+      chapterList.map(async (chapter) => [chapter.id, await courseApi.listResources(String(chapter.id))] as const),
+    )
+
+    const nextResourceMap: Record<number, Resource[]> = {}
+    let failedChapterCount = 0
+
+    resourceResults.forEach((result, index) => {
+      const chapter = chapterList[index]
+      if (!chapter) return
+
+      if (result.status === 'fulfilled') {
+        const [chapterId, resources] = result.value
+        nextResourceMap[chapterId] = resources
+        return
+      }
+
+      failedChapterCount += 1
+      nextResourceMap[chapter.id] = []
+      logCourseEditError('loadCurriculum.resources', result.reason, {
+        courseId: courseId.value,
+        chapterId: chapter.id,
+      })
+    })
+
+    resourceMap.value = nextResourceMap
+    if (failedChapterCount > 0) {
+      ElMessage.warning(`有 ${failedChapterCount} 个章节的资源加载失败，页面已继续展示其余内容`)
+    }
   } catch (error) {
     logCourseEditError('loadCurriculum', error, { courseId: courseId.value })
     throw error
