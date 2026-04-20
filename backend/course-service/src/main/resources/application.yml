@@ -58,6 +58,16 @@ app:
     poll-interval-ms: ${APP_OUTBOX_POLL_INTERVAL_MS:1000}
     batch-size: ${APP_OUTBOX_BATCH_SIZE:50}
 
+ai:
+  tag-preview:
+    enabled: ${AI_TAG_PREVIEW_ENABLED:true}
+    provider-enabled: ${AI_TAG_PREVIEW_PROVIDER_ENABLED:true}
+    api-key: ${DEEPSEEK_API_KEY:}
+    base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+    model: ${DEEPSEEK_MODEL:deepseek-chat}
+    max-content-chars: ${AI_TAG_PREVIEW_MAX_CONTENT_CHARS:12000}
+    max-download-bytes: ${AI_TAG_PREVIEW_MAX_DOWNLOAD_BYTES:8388608}
+
 logging:
   level:
     com.cloudteachingai: DEBUG

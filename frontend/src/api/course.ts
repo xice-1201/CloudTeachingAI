@@ -126,8 +126,26 @@ export const courseApi = {
     title?: string
     description?: string
     type?: Resource['type']
+    sourceUrl?: string
+    fileName?: string
+    file?: File
   }): Promise<ResourceTagSuggestion[]> =>
-    request.post('/resource-tags/suggestions/preview', data),
+    data.file
+      ? (() => {
+          const formData = new FormData()
+          if (data.title) formData.append('title', data.title)
+          if (data.description) formData.append('description', data.description)
+          if (data.type) formData.append('type', data.type)
+          if (data.sourceUrl) formData.append('sourceUrl', data.sourceUrl)
+          formData.append('fileName', data.fileName || data.file.name)
+          formData.append('file', data.file)
+          return request.post('/resource-tags/suggestions/preview', formData, {
+            headers: {
+              'Content-Type': 'multipart/form-data',
+            },
+          })
+        })()
+      : request.post('/resource-tags/suggestions/preview', data),
 
   getResourceTagSuggestions: (resourceId: string): Promise<ResourceTagSuggestion[]> =>
     request.get(`/resources/${resourceId}/tag-suggestions`),

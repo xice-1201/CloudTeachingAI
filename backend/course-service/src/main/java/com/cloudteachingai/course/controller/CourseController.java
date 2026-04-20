@@ -329,12 +329,31 @@ public class CourseController {
         return ApiResponse.success(courseFacadeService.updateKnowledgePoint(knowledgePointId, request, userContext));
     }
 
-    @PostMapping("/resource-tags/suggestions/preview")
+    @PostMapping(value = "/resource-tags/suggestions/preview", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ApiResponse<List<ResourceTagSuggestionResponse>> previewResourceTagSuggestions(
             @RequestHeader("Authorization") String authorization,
             @RequestBody ResourceTagPreviewRequest request) {
         UserContext userContext = extractUserContext(authorization);
-        return ApiResponse.success(courseFacadeService.previewResourceTagSuggestions(request, userContext));
+        return ApiResponse.success(courseFacadeService.previewResourceTagSuggestions(request, null, userContext));
+    }
+
+    @PostMapping(value = "/resource-tags/suggestions/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<List<ResourceTagSuggestionResponse>> previewResourceTagSuggestionsWithFile(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String description,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String sourceUrl,
+            @RequestParam(required = false) String fileName,
+            @RequestPart(value = "file", required = false) MultipartFile file) {
+        UserContext userContext = extractUserContext(authorization);
+        ResourceTagPreviewRequest request = new ResourceTagPreviewRequest();
+        request.setTitle(title);
+        request.setDescription(description);
+        request.setType(type);
+        request.setSourceUrl(sourceUrl);
+        request.setFileName(fileName);
+        return ApiResponse.success(courseFacadeService.previewResourceTagSuggestions(request, file, userContext));
     }
 
     @GetMapping("/resources/{resourceId}/tag-suggestions")

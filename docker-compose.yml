@@ -231,6 +231,9 @@
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
       USER_SERVICE_URL: http://user-service:8002
       APP_STORAGE_ROOT: /app/storage
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
     volumes:
       - ./keys/public_key.pem:/app/keys/public_key.pem:ro
       - course-storage-data:/app/storage

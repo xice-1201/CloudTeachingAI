@@ -388,6 +388,7 @@ function handleResourceFileChange(file: UploadFile) {
   if (!file.raw) return
   selectedResourceFile.value = file.raw
   resourceDialog.form.size = file.raw.size
+  suggestions.value = []
 }
 
 function logCourseEditError(step: string, error: unknown, extra?: Record<string, unknown>) {
@@ -435,6 +436,12 @@ function removeSelectedKnowledgePoint(id: number) { applyKnowledgePointSelection
 function applySuggestedKnowledgePoints(ids: number[]) { applyKnowledgePointSelection([...resourceDialog.form.knowledgePointIds, ...ids]) }
 function clearKnowledgePointSelection() { applyKnowledgePointSelection([]) }
 function filterKnowledgePointNode(keyword: string, data: KnowledgePointNode) { if (!keyword) return true; const normalized = keyword.trim().toLowerCase(); return data.name.toLowerCase().includes(normalized) || data.path.toLowerCase().includes(normalized) }
+function extractFileName(value?: string) {
+  if (!value) return ''
+  const withoutQuery = value.split('?')[0] ?? value
+  const parts = withoutQuery.split('/')
+  return parts[parts.length - 1] ?? withoutQuery
+}
 function handleKnowledgePointCheck(data: KnowledgePointNode, checkedInfo: { checkedKeys: Array<string | number> }) {
   const checkedIds = checkedInfo.checkedKeys.map((item) => Number(item))
   if (data.nodeType !== 'POINT' && checkedIds.includes(data.id)) {
@@ -503,7 +510,18 @@ async function loadKnowledgePointTree() {
 async function loadTagSuggestions() {
   suggestionLoading.value = true
   try {
-    suggestions.value = await courseApi.previewResourceTagSuggestions({ title: resourceDialog.form.title, description: resourceDialog.form.description, type: resourceDialog.form.type })
+    const sourceUrl = resourceDialog.form.managedFile ? undefined : (resourceDialog.form.url?.trim() || undefined)
+    const fileName = selectedResourceFile.value?.name || extractFileName(sourceUrl)
+    suggestions.value = resourceDialog.isEdit && resourceDialog.form.managedFile && !selectedResourceFile.value
+      ? await courseApi.getResourceTagSuggestions(resourceDialog.resourceId)
+      : await courseApi.previewResourceTagSuggestions({
+          title: resourceDialog.form.title,
+          description: resourceDialog.form.description,
+          type: resourceDialog.form.type,
+          sourceUrl,
+          fileName,
+          file: selectedResourceFile.value ?? undefined,
+        })
     if (!suggestions.value.length) ElMessage.info('没有生成建议标签，请手动选择知识点')
   } finally {
     suggestionLoading.value = false

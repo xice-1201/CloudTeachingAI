@@ -57,6 +57,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -89,6 +90,7 @@ public class CourseFacadeService {
     private final UserServiceClient userServiceClient;
     private final CourseCoverStorageService courseCoverStorageService;
     private final ResourceStorageService resourceStorageService;
+    private final ResourceTagSuggestionService resourceTagSuggestionService;
     private final OutboxService outboxService;
 
     public PageResponse<CourseResponse> listCourses(UserContext userContext, int page, int pageSize, String keyword, String status) {
@@ -522,16 +524,20 @@ public class CourseFacadeService {
         return toKnowledgePointNodeResponse(saved, loadKnowledgePointMap(), List.of());
     }
 
-    public List<ResourceTagSuggestionResponse> previewResourceTagSuggestions(ResourceTagPreviewRequest request, UserContext userContext) {
+    public List<ResourceTagSuggestionResponse> previewResourceTagSuggestions(
+            ResourceTagPreviewRequest request,
+            MultipartFile file,
+            UserContext userContext
+    ) {
         assertRole(userContext, "TEACHER", "ADMIN");
-        return buildTagSuggestions(request.getTitle(), request.getDescription());
+        return resourceTagSuggestionService.suggestForPreview(request, file);
     }
 
     public List<ResourceTagSuggestionResponse> getResourceTagSuggestions(Long resourceId, UserContext userContext) {
         ResourceEntity resource = requireResource(resourceId);
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireManageableCourse(chapter.getCourseId(), userContext);
-        return buildTagSuggestions(resource.getTitle(), resource.getDescription());
+        return resourceTagSuggestionService.suggestForResource(resource);
     }
 
     @Transactional
