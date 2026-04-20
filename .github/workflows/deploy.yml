@@ -368,6 +368,7 @@ jobs:
             FRONTEND_CHANGED="${{ needs.detect-changes.outputs.frontend_changed }}"
             DEPLOY_ALL="${{ needs.detect-changes.outputs.deploy_all }}"
             SERVICES="${{ needs.detect-changes.outputs.services }}"
+            DEPLOY_SHA="${{ github.sha }}"
 
             echo "=== Deploying CloudTeachingAI ==="
             echo "Time: $(date)"
@@ -419,10 +420,29 @@ jobs:
 
             pull_image_if_needed() {
               local flag="$1"
-              local image="$2"
+              local image_repo="$2"
               if [ "$flag" = "true" ] || [ "$DEPLOY_ALL" = "true" ]; then
-                echo "Pulling $image"
-                docker pull "$image"
+                local sha_image="${image_repo}:${DEPLOY_SHA}"
+                local latest_image="${image_repo}:latest"
+
+                echo "Pulling $sha_image"
+                docker pull "$sha_image"
+                pull_status=$?
+                if [ "$pull_status" -ne 0 ]; then
+                  echo "docker pull failed for $sha_image with exit code $pull_status"
+                  exit "$pull_status"
+                fi
+
+                echo "Tagging $sha_image as $latest_image"
+                docker tag "$sha_image" "$latest_image"
+                tag_status=$?
+                if [ "$tag_status" -ne 0 ]; then
+                  echo "docker tag failed for $sha_image with exit code $tag_status"
+                  exit "$tag_status"
+                fi
+
+                echo "Resolved image digest:"
+                docker image inspect "$sha_image" --format='{{index .RepoDigests 0}}' || true
               fi
               return 0
             }
@@ -446,13 +466,13 @@ jobs:
               return 1
             }
 
-            pull_image_if_needed "$AUTH_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service:latest"
-            pull_image_if_needed "$USER_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service:latest"
-            pull_image_if_needed "$NOTIFY_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service:latest"
-            pull_image_if_needed "$COURSE_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service:latest"
-            pull_image_if_needed "$LEARN_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/learn-service:latest"
-            pull_image_if_needed "$ASSIGN_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/assign-service:latest"
-            pull_image_if_needed "$FRONTEND_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend:latest"
+            pull_image_if_needed "$AUTH_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service"
+            pull_image_if_needed "$USER_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service"
+            pull_image_if_needed "$NOTIFY_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service"
+            pull_image_if_needed "$COURSE_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service"
+            pull_image_if_needed "$LEARN_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/learn-service"
+            pull_image_if_needed "$ASSIGN_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/assign-service"
+            pull_image_if_needed "$FRONTEND_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend"
             echo "Finished image pull phase"
             echo "Selecting compose update strategy..."
 
@@ -460,7 +480,7 @@ jobs:
               true)
                 echo "Applying full compose update..."
                 compose_log=$(mktemp)
-                docker compose up -d --remove-orphans >"$compose_log" 2>&1
+                docker compose up -d --force-recreate --remove-orphans >"$compose_log" 2>&1
                 compose_status=$?
                 cat "$compose_log"
                 rm -f "$compose_log"
@@ -477,7 +497,7 @@ jobs:
                 echo "Applying incremental update..."
                 echo "Updating services: $SERVICES"
                 compose_log=$(mktemp)
-                docker compose up -d $SERVICES >"$compose_log" 2>&1
+                docker compose up -d --force-recreate $SERVICES >"$compose_log" 2>&1
                 compose_status=$?
                 cat "$compose_log"
                 rm -f "$compose_log"
