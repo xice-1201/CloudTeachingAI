@@ -59,6 +59,11 @@ export default defineConfig({
         target: 'http://localhost:8003',
         changeOrigin: true,
       },
+      '/knowledge-points': {
+        target: 'http://localhost:8003',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/knowledge-points/, '/api/v1/knowledge-points'),
+      },
       '/api/v1/learn': {
         target: 'http://localhost:8004',
         changeOrigin: true,
