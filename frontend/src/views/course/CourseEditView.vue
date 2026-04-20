@@ -377,11 +377,24 @@ function handleResourceFileChange(file: UploadFile) {
   resourceDialog.form.size = file.raw.size
 }
 
+function logCourseEditError(step: string, error: unknown, extra?: Record<string, unknown>) {
+  console.group(`[CourseEditView] ${step} failed`)
+  if (extra) {
+    console.error('Context:', extra)
+  }
+  console.error('Error object:', error)
+  if (error instanceof Error && error.stack) {
+    console.error('Stack trace:\n' + error.stack)
+  }
+  console.trace(`[CourseEditView] ${step} trace`)
+  console.groupEnd()
+}
+
 function courseStatusTag(status: Course['status']) { return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info' }
 function courseStatusLabel(status: Course['status']) { return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status] ?? status }
 function resourceTypeLabel(type: Resource['type']) { return { VIDEO: '视频', DOCUMENT: '文档', SLIDE: '课件' }[type] ?? type }
-function resourceTaggingLabel(status?: Resource['taggingStatus']) { return { CONFIRMED: '已标注', UNTAGGED: '待标注' }[status ?? 'UNTAGGED'] ?? '待标注' }
-function resourceTaggingType(status?: Resource['taggingStatus']) { return { CONFIRMED: 'success', UNTAGGED: 'warning' }[status ?? 'UNTAGGED'] ?? 'warning' }
+function resourceTaggingLabel(status?: Resource['taggingStatus']) { return { CONFIRMED: '已确认', SUGGESTED: '待确认', UNTAGGED: '待标注' }[status ?? 'UNTAGGED'] ?? '待标注' }
+function resourceTaggingType(status?: Resource['taggingStatus']) { return { CONFIRMED: 'success', SUGGESTED: 'warning', UNTAGGED: 'info' }[status ?? 'UNTAGGED'] ?? 'info' }
 function formatDuration(seconds: number) { const minutes = Math.floor(seconds / 60); const remainingSeconds = seconds % 60; return `${minutes}:${String(remainingSeconds).padStart(2, '0')}` }
 function formatFileSize(size: number) { if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`; if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`; return `${size} B` }
 function knowledgePointLabel(id: number) { return knowledgePointMap.value[id]?.path ?? `#${id}` }
@@ -416,6 +429,9 @@ async function loadStudentOptions(keyword = '') {
   try {
     const response = await userApi.listStudents({ page: 1, pageSize: 50, keyword })
     mergeStudentOptions(response.items)
+  } catch (error) {
+    logCourseEditError('loadStudentOptions', error, { keyword })
+    throw error
   } finally {
     studentLoading.value = false
   }
@@ -429,9 +445,14 @@ async function ensureSelectedStudentsLoaded(studentIds: number[]) {
 }
 
 async function loadKnowledgePointTree() {
-  const tree = await courseApi.listKnowledgePointTree({ activeOnly: true })
-  knowledgePointTree.value = tree
-  flattenKnowledgePoints(tree)
+  try {
+    const tree = await courseApi.listKnowledgePointTree({ activeOnly: true })
+    knowledgePointTree.value = tree
+    flattenKnowledgePoints(tree)
+  } catch (error) {
+    logCourseEditError('loadKnowledgePointTree', error)
+    throw error
+  }
 }
 
 async function loadTagSuggestions() {
@@ -474,24 +495,34 @@ function resetResourceDialog(chapterId = '') {
 
 async function loadCourse() {
   if (!isEdit.value) return
-  const course = await courseApi.getCourse(courseId.value)
-  form.title = course.title
-  form.description = course.description
-  form.coverImage = course.coverImage ?? ''
-  form.visibilityType = course.visibilityType ?? 'PUBLIC'
-  form.visibleStudentIds = [...(course.visibleStudentIds ?? [])]
-  setCoverPreview(form.coverImage)
-  courseStatus.value = course.status
-  if (form.visibleStudentIds.length) await ensureSelectedStudentsLoaded(form.visibleStudentIds)
+  try {
+    const course = await courseApi.getCourse(courseId.value)
+    form.title = course.title
+    form.description = course.description
+    form.coverImage = course.coverImage ?? ''
+    form.visibilityType = course.visibilityType ?? 'PUBLIC'
+    form.visibleStudentIds = [...(course.visibleStudentIds ?? [])]
+    setCoverPreview(form.coverImage)
+    courseStatus.value = course.status
+    if (form.visibleStudentIds.length) await ensureSelectedStudentsLoaded(form.visibleStudentIds)
+  } catch (error) {
+    logCourseEditError('loadCourse', error, { courseId: courseId.value })
+    throw error
+  }
 }
 
 async function loadCurriculum() {
   if (!isEdit.value) return
-  const chapterList = await courseApi.listChapters(courseId.value)
-  chapters.value = chapterList
-  activeChapterKeys.value = chapterList.map((chapter) => String(chapter.id))
-  const resourceEntries = await Promise.all(chapterList.map(async (chapter) => [chapter.id, await courseApi.listResources(String(chapter.id))] as const))
-  resourceMap.value = Object.fromEntries(resourceEntries)
+  try {
+    const chapterList = await courseApi.listChapters(courseId.value)
+    chapters.value = chapterList
+    activeChapterKeys.value = chapterList.map((chapter) => String(chapter.id))
+    const resourceEntries = await Promise.all(chapterList.map(async (chapter) => [chapter.id, await courseApi.listResources(String(chapter.id))] as const))
+    resourceMap.value = Object.fromEntries(resourceEntries)
+  } catch (error) {
+    logCourseEditError('loadCurriculum', error, { courseId: courseId.value })
+    throw error
+  }
 }
 
 async function uploadCoverIfNeeded() {
@@ -634,9 +665,25 @@ watch(knowledgePointKeyword, (keyword) => { knowledgePointTreeRef.value?.filter(
 onMounted(async () => {
   pageLoading.value = true
   try {
-    await Promise.all([loadStudentOptions(), loadKnowledgePointTree()])
+    const bootstrapResults = await Promise.allSettled([loadStudentOptions(), loadKnowledgePointTree()])
+    const studentResult = bootstrapResults[0]
+    const knowledgePointResult = bootstrapResults[1]
+
+    if (studentResult.status === 'rejected') {
+      ElMessage.warning('学生列表加载失败，编辑页已继续加载。请查看浏览器控制台定位原因。')
+    }
+    if (knowledgePointResult.status === 'rejected') {
+      knowledgePointTree.value = []
+      knowledgePointMap.value = {}
+      leafKnowledgePointCount.value = 0
+      ElMessage.warning('知识点树加载失败，编辑页已继续加载。请查看浏览器控制台定位原因。')
+    }
+
     await loadCourse()
     await loadCurriculum()
+  } catch (error) {
+    logCourseEditError('onMounted', error, { courseId: courseId.value, isEdit: isEdit.value })
+    ElMessage.error('课程编辑页初始化失败，请查看浏览器控制台中的详细堆栈。')
   } finally {
     pageLoading.value = false
   }

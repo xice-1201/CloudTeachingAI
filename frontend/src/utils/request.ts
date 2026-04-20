@@ -101,8 +101,10 @@ function logBrowserError(error: unknown, payload?: ErrorPayload) {
   const method = apiError?.config?.method?.toUpperCase?.() ?? 'UNKNOWN'
   const url = apiError?.config?.url ?? 'UNKNOWN_URL'
   const status = apiError?.response?.status ?? 'NO_STATUS'
+  const message = apiError?.message ?? payload?.message ?? 'Unknown error'
 
-  console.groupCollapsed(`[CloudTeachingAI Error] ${method} ${url} -> ${status}`)
+  console.group(`[CloudTeachingAI Error] ${method} ${url} -> ${status}`)
+  console.error('Summary:', { method, url, status, message, code: apiError?.code ?? payload?.code })
   console.error('Request config:', apiError?.config)
 
   if (payload) {
@@ -118,6 +120,7 @@ function logBrowserError(error: unknown, payload?: ErrorPayload) {
   if (apiError?.stack) {
     console.error('Browser stack trace:\n' + apiError.stack)
   }
+  console.trace('[CloudTeachingAI Error Trace]')
   console.groupEnd()
 }
 
