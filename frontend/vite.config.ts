@@ -55,6 +55,10 @@ export default defineConfig({
         target: 'http://localhost:8003',
         changeOrigin: true,
       },
+      '/api/v1/knowledge-points': {
+        target: 'http://localhost:8003',
+        changeOrigin: true,
+      },
       '/api/v1/learn': {
         target: 'http://localhost:8004',
         changeOrigin: true,
