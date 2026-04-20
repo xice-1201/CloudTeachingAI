@@ -9,9 +9,11 @@ public record ResourceTaggedEvent(
         Long resourceId,
         Long chapterId,
         Long courseId,
+        Long teacherId,
         String title,
+        String storageKey,
         String taggingStatus,
         String taggingUpdatedAt,
-        List<Long> knowledgePointIds
+        List<ResourceTaggedKnowledgePointEvent> knowledgePoints
 ) {
 }

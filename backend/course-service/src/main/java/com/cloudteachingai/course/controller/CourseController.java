@@ -10,6 +10,8 @@ import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
 import com.cloudteachingai.course.dto.DiscussionPostResponse;
 import com.cloudteachingai.course.dto.DiscussionPostUpsertRequest;
+import com.cloudteachingai.course.dto.InternalKnowledgePointResponse;
+import com.cloudteachingai.course.dto.InternalResourceTaggingContextResponse;
 import com.cloudteachingai.course.dto.KnowledgePointNodeResponse;
 import com.cloudteachingai.course.dto.KnowledgePointUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
@@ -415,6 +417,16 @@ public class CourseController {
             @RequestBody ResourceTagConfirmRequest request) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(courseFacadeService.confirmResourceTags(resourceId, request, userContext));
+    }
+
+    @GetMapping("/internal/resources/{resourceId}/tagging-context")
+    public ApiResponse<InternalResourceTaggingContextResponse> getResourceTaggingContext(@PathVariable Long resourceId) {
+        return ApiResponse.success(courseFacadeService.getResourceTaggingContext(resourceId));
+    }
+
+    @GetMapping("/internal/knowledge-points/leaf")
+    public ApiResponse<List<InternalKnowledgePointResponse>> listLeafKnowledgePoints() {
+        return ApiResponse.success(courseFacadeService.listLeafKnowledgePointsForTagging());
     }
 
     private UserContext extractUserContext(String authorization) {

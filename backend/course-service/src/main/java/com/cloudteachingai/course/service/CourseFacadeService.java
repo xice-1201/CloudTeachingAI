@@ -7,6 +7,8 @@ import com.cloudteachingai.course.dto.ChapterResponse;
 import com.cloudteachingai.course.dto.ChapterUpsertRequest;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
+import com.cloudteachingai.course.dto.InternalKnowledgePointResponse;
+import com.cloudteachingai.course.dto.InternalResourceTaggingContextResponse;
 import com.cloudteachingai.course.dto.KnowledgePointNodeResponse;
 import com.cloudteachingai.course.dto.KnowledgePointUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
@@ -20,7 +22,9 @@ import com.cloudteachingai.course.event.CourseUpdatedEvent;
 import com.cloudteachingai.course.event.EventTopics;
 import com.cloudteachingai.course.event.KnowledgePointUpdatedEvent;
 import com.cloudteachingai.course.event.NotificationSendEvent;
+import com.cloudteachingai.course.event.ResourceTaggedKnowledgePointEvent;
 import com.cloudteachingai.course.event.ResourceTaggedEvent;
+import com.cloudteachingai.course.event.ResourceUploadedEvent;
 import com.cloudteachingai.course.entity.ChapterEntity;
 import com.cloudteachingai.course.entity.CourseEntity;
 import com.cloudteachingai.course.entity.CourseVisibleStudentEntity;
@@ -356,15 +360,50 @@ public class CourseFacadeService {
         return toResourceResponse(resource, resourceTags.getOrDefault(resourceId, List.of()));
     }
 
+    public InternalResourceTaggingContextResponse getResourceTaggingContext(Long resourceId) {
+        ResourceEntity resource = requireResource(resourceId);
+        ChapterEntity chapter = requireChapter(resource.getChapterId());
+        CourseEntity course = requireCourse(chapter.getCourseId());
+        return InternalResourceTaggingContextResponse.builder()
+                .resourceId(resource.getId())
+                .chapterId(chapter.getId())
+                .courseId(course.getId())
+                .teacherId(course.getTeacherId())
+                .title(resource.getTitle())
+                .description(resource.getDescription())
+                .type(resource.getType().name())
+                .storageKey(resource.getStorageKey())
+                .build();
+    }
+
+    public List<InternalKnowledgePointResponse> listLeafKnowledgePointsForTagging() {
+        Map<Long, KnowledgePointEntity> knowledgePointMap = loadKnowledgePointMap();
+        return knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
+                .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
+                .map(item -> InternalKnowledgePointResponse.builder()
+                        .id(item.getId())
+                        .parentId(item.getParentId())
+                        .name(item.getName())
+                        .description(item.getDescription())
+                        .keywords(item.getKeywords())
+                        .nodeType(item.getNodeType().name())
+                        .path(buildKnowledgePointPath(item.getId(), knowledgePointMap))
+                        .build())
+                .toList();
+    }
+
     @Transactional
     public ResourceResponse createResource(Long chapterId, ResourceUpsertRequest request, UserContext userContext) {
         ChapterEntity chapter = requireChapter(chapterId);
-        requireManageableCourse(chapter.getCourseId(), userContext);
+        CourseEntity course = requireManageableCourse(chapter.getCourseId(), userContext);
 
         String storageKey = normalizeBlank(request.getUrl());
         if (!StringUtils.hasText(storageKey)) {
             throw BusinessException.badRequest("Please upload a resource file or provide an external URL");
         }
+
+        List<Long> manualKnowledgePointIds = normalizeKnowledgePointIds(request.getKnowledgePointIds());
+        ResourceStatus initialStatus = manualKnowledgePointIds.isEmpty() ? ResourceStatus.PROCESSING : ResourceStatus.PUBLISHED;
 
         ResourceEntity resource = ResourceEntity.builder()
                 .chapterId(chapterId)
@@ -375,11 +414,12 @@ public class CourseFacadeService {
                 .durationSeconds(request.getDuration())
                 .description(normalizeBlank(request.getDescription()))
                 .orderIndex(resolveResourceOrderIndex(chapterId, request.getOrderIndex()))
-                .status(ResourceStatus.PUBLISHED)
+                .status(initialStatus)
                 .build();
 
         ResourceEntity saved = resourceRepository.save(resource);
-        replaceResourceKnowledgePoints(saved, request.getKnowledgePointIds());
+        replaceResourceKnowledgePoints(saved, manualKnowledgePointIds);
+        publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds);
         Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(saved.getId()));
         return toResourceResponse(saved, resourceTags.getOrDefault(saved.getId(), List.of()));
     }
@@ -388,10 +428,11 @@ public class CourseFacadeService {
     public ResourceResponse updateResource(Long resourceId, ResourceUpsertRequest request, UserContext userContext) {
         ResourceEntity resource = requireResource(resourceId);
         ChapterEntity chapter = requireChapter(resource.getChapterId());
-        requireManageableCourse(chapter.getCourseId(), userContext);
+        CourseEntity course = requireManageableCourse(chapter.getCourseId(), userContext);
 
         String previousStorageKey = resource.getStorageKey();
         String updatedStorageKey = StringUtils.hasText(request.getUrl()) ? request.getUrl().trim() : previousStorageKey;
+        List<Long> manualKnowledgePointIds = normalizeKnowledgePointIds(request.getKnowledgePointIds());
 
         resource.setTitle(request.getTitle().trim());
         resource.setType(parseResourceType(request.getType()));
@@ -400,8 +441,10 @@ public class CourseFacadeService {
         resource.setDurationSeconds(request.getDuration());
         resource.setDescription(normalizeBlank(request.getDescription()));
         resource.setOrderIndex(resolveOrderIndex(request.getOrderIndex(), resource.getOrderIndex()));
+        resource.setStatus(manualKnowledgePointIds.isEmpty() ? ResourceStatus.PROCESSING : ResourceStatus.PUBLISHED);
         ResourceEntity saved = resourceRepository.save(resource);
-        replaceResourceKnowledgePoints(saved, request.getKnowledgePointIds());
+        replaceResourceKnowledgePoints(saved, manualKnowledgePointIds);
+        publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds);
         if (!Objects.equals(previousStorageKey, updatedStorageKey)) {
             resourceStorageService.deleteIfManaged(previousStorageKey);
         }
@@ -497,8 +540,78 @@ public class CourseFacadeService {
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireManageableCourse(chapter.getCourseId(), userContext);
         replaceResourceKnowledgePoints(resource, request.getKnowledgePointIds());
+        resource.setStatus(ResourceStatus.PUBLISHED);
+        resourceRepository.save(resource);
         Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(resource.getId()));
         return toResourceResponse(resource, resourceTags.getOrDefault(resource.getId(), List.of()));
+    }
+
+    @Transactional
+    public void applyAiTaggedResource(ResourceTaggedEvent event) {
+        ResourceEntity resource = requireResource(event.resourceId());
+        ChapterEntity chapter = requireChapter(resource.getChapterId());
+        CourseEntity course = requireCourse(chapter.getCourseId());
+
+        if (resource.getTaggingStatus() == ResourceTaggingStatus.CONFIRMED) {
+            return;
+        }
+        if (!Objects.equals(event.title(), resource.getTitle())
+                || !Objects.equals(event.storageKey(), resource.getStorageKey())) {
+            return;
+        }
+
+        boolean shouldNotifyTeacher = resource.getTaggingStatus() != ResourceTaggingStatus.SUGGESTED;
+        resourceKnowledgePointRepository.deleteByResourceId(resource.getId());
+
+        List<ResourceTaggedKnowledgePointEvent> knowledgePointEvents = event.knowledgePoints() == null
+                ? List.of()
+                : event.knowledgePoints().stream()
+                .filter(Objects::nonNull)
+                .filter(item -> item.knowledgePointId() != null)
+                .toList();
+        List<Long> knowledgePointIds = knowledgePointEvents.stream()
+                .map(ResourceTaggedKnowledgePointEvent::knowledgePointId)
+                .distinct()
+                .toList();
+
+        if (!knowledgePointIds.isEmpty()) {
+            Map<Long, KnowledgePointEntity> knowledgePointMap = knowledgePointRepository.findByIdIn(knowledgePointIds).stream()
+                    .filter(item -> Boolean.TRUE.equals(item.getActive()))
+                    .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
+                    .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+
+            List<ResourceKnowledgePointEntity> relations = new ArrayList<>();
+            for (ResourceTaggedKnowledgePointEvent knowledgePointEvent : knowledgePointEvents) {
+                KnowledgePointEntity knowledgePoint = knowledgePointMap.get(knowledgePointEvent.knowledgePointId());
+                if (knowledgePoint == null) {
+                    continue;
+                }
+                relations.add(ResourceKnowledgePointEntity.builder()
+                        .resourceId(resource.getId())
+                        .knowledgePointId(knowledgePoint.getId())
+                        .confidence(knowledgePointEvent.confidence() == null ? 0.5D : knowledgePointEvent.confidence())
+                        .source(ResourceTagSource.AI)
+                        .build());
+            }
+            if (!relations.isEmpty()) {
+                resourceKnowledgePointRepository.saveAll(relations);
+            }
+        }
+
+        boolean hasSuggestions = resourceKnowledgePointRepository.findByResourceIdIn(List.of(resource.getId())).stream().findAny().isPresent();
+        resource.setTaggingStatus(hasSuggestions ? ResourceTaggingStatus.SUGGESTED : ResourceTaggingStatus.UNTAGGED);
+        resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        resource.setStatus(ResourceStatus.PUBLISHED);
+        resourceRepository.save(resource);
+
+        if (shouldNotifyTeacher && hasSuggestions) {
+            outboxService.enqueue(EventTopics.NOTIFICATION_SEND, NotificationSendEvent.builder()
+                    .userId(course.getTeacherId())
+                    .type("COURSE")
+                    .title("资源 AI 标注已完成")
+                    .content("资源《" + resource.getTitle() + "》已生成 AI 标签建议，请进入课程内容管理页确认。")
+                    .build());
+        }
     }
 
     public ManagedResourceContent loadManagedResourceContent(Long resourceId, UserContext userContext) {
@@ -854,19 +967,23 @@ public class CourseFacadeService {
                 .build());
     }
 
-    private void publishResourceTaggedEvent(ResourceEntity resource, List<Long> knowledgePointIds) {
-        if (knowledgePointIds == null || knowledgePointIds.isEmpty()) {
+    private void publishResourceUploadedEventIfNeeded(
+            ResourceEntity resource,
+            ChapterEntity chapter,
+            CourseEntity course,
+            List<Long> manualKnowledgePointIds) {
+        if (manualKnowledgePointIds != null && !manualKnowledgePointIds.isEmpty()) {
             return;
         }
-
-        outboxService.enqueue(EventTopics.RESOURCE_TAGGED, ResourceTaggedEvent.builder()
+        outboxService.enqueue(EventTopics.RESOURCE_UPLOADED, ResourceUploadedEvent.builder()
                 .resourceId(resource.getId())
                 .chapterId(resource.getChapterId())
-                .courseId(requireChapter(resource.getChapterId()).getCourseId())
+                .courseId(course.getId())
+                .teacherId(course.getTeacherId())
                 .title(resource.getTitle())
-                .taggingStatus(resource.getTaggingStatus() == null ? null : resource.getTaggingStatus().name())
-                .taggingUpdatedAt(resource.getTaggingUpdatedAt() == null ? null : resource.getTaggingUpdatedAt().toString())
-                .knowledgePointIds(knowledgePointIds)
+                .description(resource.getDescription())
+                .type(resource.getType().name())
+                .storageKey(resource.getStorageKey())
                 .build());
     }
 
@@ -1155,7 +1272,6 @@ public class CourseFacadeService {
         resource.setTaggingStatus(ResourceTaggingStatus.CONFIRMED);
         resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         resourceRepository.save(resource);
-        publishResourceTaggedEvent(resource, knowledgePointIds);
     }
 
     private List<ResourceTagSuggestionResponse> buildTagSuggestions(String title, String description) {
