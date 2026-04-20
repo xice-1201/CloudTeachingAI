@@ -55,9 +55,18 @@ export default defineConfig({
         target: 'http://localhost:8003',
         changeOrigin: true,
       },
+      '/api/v1/resource-tags': {
+        target: 'http://localhost:8003',
+        changeOrigin: true,
+      },
       '/api/v1/knowledge-points': {
         target: 'http://localhost:8003',
         changeOrigin: true,
+      },
+      '/resource-tags': {
+        target: 'http://localhost:8003',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/resource-tags/, '/api/v1/resource-tags'),
       },
       '/knowledge-points': {
         target: 'http://localhost:8003',
