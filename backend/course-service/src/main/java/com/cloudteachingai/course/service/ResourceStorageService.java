@@ -96,6 +96,10 @@ public class ResourceStorageService {
         return StringUtils.hasText(storageKey) && storageKey.startsWith(MANAGED_PREFIX);
     }
 
+    public Path resolveManagedFilePath(String storageKey) {
+        return resolveManagedPath(storageKey);
+    }
+
     private Path resolveManagedPath(String storageKey) {
         if (!isManagedStorageKey(storageKey)) {
             throw BusinessException.badRequest("Invalid managed resource file path");
