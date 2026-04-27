@@ -9,7 +9,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: true
+    show-sql: ${SPRING_JPA_SHOW_SQL:false}
     properties:
       hibernate:
         format_sql: true
@@ -55,8 +55,11 @@ management:
 app:
   storage-root: ${APP_STORAGE_ROOT:storage}
   outbox:
+    enabled: ${APP_OUTBOX_ENABLED:false}
     poll-interval-ms: ${APP_OUTBOX_POLL_INTERVAL_MS:1000}
     batch-size: ${APP_OUTBOX_BATCH_SIZE:50}
+  kafka:
+    enabled: ${APP_KAFKA_ENABLED:false}
 
 ai:
   tag-preview:
@@ -84,3 +87,5 @@ logging:
   level:
     com.cloudteachingai: DEBUG
     org.springframework.web: INFO
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
