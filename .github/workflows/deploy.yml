@@ -427,7 +427,7 @@ jobs:
             pull_image_if_needed() {
               local flag="$1"
               local image_repo="$2"
-              if [ "$flag" = "true" ] || [ "$DEPLOY_ALL" = "true" ]; then
+              if [ "$flag" = "true" ]; then
                 local sha_image="${image_repo}:${DEPLOY_SHA}"
                 local latest_image="${image_repo}:latest"
 
@@ -449,6 +449,8 @@ jobs:
 
                 echo "Resolved image digest:"
                 docker image inspect "$sha_image" --format='{{index .RepoDigests 0}}' || true
+              else
+                echo "Skipping SHA pull for $image_repo, keep current latest image"
               fi
               return 0
             }
