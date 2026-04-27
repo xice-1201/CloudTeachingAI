@@ -512,6 +512,19 @@ async function loadTagSuggestions() {
   try {
     const sourceUrl = resourceDialog.form.managedFile ? undefined : (resourceDialog.form.url?.trim() || undefined)
     const fileName = selectedResourceFile.value?.name || extractFileName(sourceUrl)
+    console.info('[CourseEditView] loadTagSuggestions request', {
+      isEdit: resourceDialog.isEdit,
+      managedFile: resourceDialog.form.managedFile,
+      resourceId: resourceDialog.resourceId,
+      type: resourceDialog.form.type,
+      titlePresent: Boolean(resourceDialog.form.title?.trim()),
+      descriptionPresent: Boolean(resourceDialog.form.description?.trim()),
+      sourceUrlPresent: Boolean(sourceUrl),
+      localFilePresent: Boolean(selectedResourceFile.value),
+      localFileName: selectedResourceFile.value?.name,
+      localFileSize: selectedResourceFile.value?.size,
+      fileName,
+    })
     suggestions.value = resourceDialog.isEdit && resourceDialog.form.managedFile && !selectedResourceFile.value
       ? await courseApi.getResourceTagSuggestions(resourceDialog.resourceId)
       : await courseApi.previewResourceTagSuggestions({

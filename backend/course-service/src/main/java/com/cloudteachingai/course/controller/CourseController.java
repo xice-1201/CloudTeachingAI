@@ -29,6 +29,7 @@ import com.cloudteachingai.course.service.CourseInteractionService;
 import com.cloudteachingai.course.service.ResourceStorageService;
 import com.cloudteachingai.course.util.JwtUtil;
 import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
@@ -56,6 +57,7 @@ import java.util.concurrent.TimeUnit;
 @RestController
 @RequestMapping("/api/v1")
 @RequiredArgsConstructor
+@Slf4j
 public class CourseController {
 
     private final CourseFacadeService courseFacadeService;
@@ -334,6 +336,15 @@ public class CourseController {
             @RequestHeader("Authorization") String authorization,
             @RequestBody ResourceTagPreviewRequest request) {
         UserContext userContext = extractUserContext(authorization);
+        log.info(
+                "Resource tag preview request received: mode=json, userId={}, type={}, titlePresent={}, descriptionPresent={}, fileName={}, sourceUrlPresent={}",
+                userContext.userId(),
+                request.getType(),
+                request.getTitle() != null && !request.getTitle().isBlank(),
+                request.getDescription() != null && !request.getDescription().isBlank(),
+                request.getFileName(),
+                request.getSourceUrl() != null && !request.getSourceUrl().isBlank()
+        );
         return ApiResponse.success(courseFacadeService.previewResourceTagSuggestions(request, null, userContext));
     }
 
@@ -347,6 +358,17 @@ public class CourseController {
             @RequestParam(required = false) String fileName,
             @RequestPart(value = "file", required = false) MultipartFile file) {
         UserContext userContext = extractUserContext(authorization);
+        log.info(
+                "Resource tag preview request received: mode=multipart, userId={}, type={}, titlePresent={}, descriptionPresent={}, fileName={}, sourceUrlPresent={}, filePresent={}, fileSize={}",
+                userContext.userId(),
+                type,
+                title != null && !title.isBlank(),
+                description != null && !description.isBlank(),
+                fileName,
+                sourceUrl != null && !sourceUrl.isBlank(),
+                file != null && !file.isEmpty(),
+                file == null ? 0 : file.getSize()
+        );
         ResourceTagPreviewRequest request = new ResourceTagPreviewRequest();
         request.setTitle(title);
         request.setDescription(description);

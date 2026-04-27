@@ -128,10 +128,21 @@ public class ResourceTagSuggestionService {
     }
 
     public List<ResourceTagSuggestionResponse> suggestForPreview(ResourceTagPreviewRequest request, MultipartFile file) {
+        log.info(
+                "Start resource tag suggestion preview: type={}, titlePresent={}, descriptionPresent={}, sourceUrlPresent={}, fileName={}, filePresent={}, fileSize={}",
+                request.getType(),
+                StringUtils.hasText(request.getTitle()),
+                StringUtils.hasText(request.getDescription()),
+                StringUtils.hasText(request.getSourceUrl()),
+                request.getFileName(),
+                file != null && !file.isEmpty(),
+                file == null ? 0 : file.getSize()
+        );
         ExtractedContent extractedContent = file == null
                 ? tryExtractFromSourceUrl(request.getSourceUrl(), request.getFileName(), request.getType())
                 : tryExtractFromMultipart(file, request.getType());
         if (!previewEnabled) {
+            log.info("AI preview disabled, fallback to rule suggestions only");
             return buildRuleSuggestions(request, extractedContent);
         }
         return suggest(request, extractedContent);
@@ -156,6 +167,7 @@ public class ResourceTagSuggestionService {
                 .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
                 .toList();
         if (activeLeafKnowledgePoints.isEmpty()) {
+            log.warn("Resource tag suggestion aborted: no active leaf knowledge points");
             return List.of();
         }
 
@@ -167,6 +179,14 @@ public class ResourceTagSuggestionService {
                 activeLeafKnowledgePoints,
                 knowledgePointMap,
                 ruleSuggestions
+        );
+        log.info(
+                "Resource tag suggestion finished: type={}, extractedTextLength={}, metadataLength={}, ruleCount={}, aiCount={}",
+                request.getType(),
+                extractedContent == null ? 0 : extractedContent.text().length(),
+                extractedContent == null ? 0 : extractedContent.metadataSummary().length(),
+                ruleSuggestions.size(),
+                aiSuggestions.size()
         );
         return aiSuggestions.isEmpty() ? ruleSuggestions : aiSuggestions;
     }
@@ -186,6 +206,14 @@ public class ResourceTagSuggestionService {
 
         String analysisText = buildAnalysisText(request, extractedContent);
         if (!StringUtils.hasText(analysisText)) {
+            log.warn(
+                    "Skip AI tag preview because analysis text is empty. type={}, fileName={}, sourceUrlPresent={}, extractedTextLength={}, metadataLength={}",
+                    request.getType(),
+                    request.getFileName(),
+                    StringUtils.hasText(request.getSourceUrl()),
+                    extractedContent == null ? 0 : extractedContent.text().length(),
+                    extractedContent == null ? 0 : extractedContent.metadataSummary().length()
+            );
             return List.of();
         }
 
@@ -197,6 +225,7 @@ public class ResourceTagSuggestionService {
                 ruleSuggestions
         );
         if (llmCandidates.isEmpty()) {
+            log.warn("Skip AI tag preview because no LLM candidates were selected. type={}, analysisLength={}", request.getType(), analysisText.length());
             return List.of();
         }
 
@@ -509,6 +538,7 @@ public class ResourceTagSuggestionService {
     private ExtractedContent tryExtractFromMultipart(MultipartFile file, String declaredType) {
         try {
             if (isLikelyVideo(file.getOriginalFilename(), file.getContentType(), declaredType)) {
+                log.info("Preview extraction route: video multipart, fileName={}, contentType={}", file.getOriginalFilename(), file.getContentType());
                 Path tempVideo = createTempFile(file.getOriginalFilename());
                 try {
                     file.transferTo(tempVideo);
@@ -517,6 +547,7 @@ public class ResourceTagSuggestionService {
                     Files.deleteIfExists(tempVideo);
                 }
             }
+            log.info("Preview extraction route: document multipart, fileName={}, contentType={}", file.getOriginalFilename(), file.getContentType());
             byte[] bytes = file.getBytes();
             return extractFromBytes(bytes, file.getOriginalFilename(), file.getContentType(), declaredType);
         } catch (Exception ex) {
@@ -551,15 +582,18 @@ public class ResourceTagSuggestionService {
 
     private ExtractedContent tryExtractFromSourceUrl(String sourceUrl, String fileName, String declaredType) {
         if (!StringUtils.hasText(sourceUrl)) {
+            log.info("Skip sourceUrl extraction because sourceUrl is blank");
             return null;
         }
         try {
             URI uri = URI.create(sourceUrl.trim());
             if (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme())) {
+                log.warn("Skip sourceUrl extraction because scheme is unsupported: {}", uri.getScheme());
                 return null;
             }
             String resolvedFileName = StringUtils.hasText(fileName) ? fileName : extractFileName(uri.getPath());
             if (isLikelyVideo(resolvedFileName, null, declaredType)) {
+                log.info("Skip remote video download for preview, fallback to metadata only. fileName={}", resolvedFileName);
                 return new ExtractedContent("", truncate("remote video: " + resolvedFileName + "; source: " + sourceUrl, 1000));
             }
 
@@ -636,6 +670,13 @@ public class ResourceTagSuggestionService {
         VideoProbeInfo probeInfo = probeVideo(videoPath);
         String transcript = transcribeVideo(videoPath, probeInfo.durationSeconds());
         String metadataSummary = buildVideoMetadataSummary(fileName, contentType, probeInfo);
+        log.info(
+                "Video extraction completed: fileName={}, durationSeconds={}, transcriptLength={}, metadataLength={}",
+                fileName,
+                probeInfo.durationSeconds(),
+                transcript.length(),
+                metadataSummary.length()
+        );
         return new ExtractedContent(transcript, metadataSummary);
     }
 
@@ -701,9 +742,16 @@ public class ResourceTagSuggestionService {
 
     private String transcribeVideo(Path videoPath, double durationSeconds) {
         if (!videoTranscriptionEnabled || !videoTranscriptionProviderEnabled || !StringUtils.hasText(videoTranscriptionApiKey)) {
+            log.warn(
+                    "Skip video transcription because provider is not fully configured. enabled={}, providerEnabled={}, apiKeyPresent={}",
+                    videoTranscriptionEnabled,
+                    videoTranscriptionProviderEnabled,
+                    StringUtils.hasText(videoTranscriptionApiKey)
+            );
             return "";
         }
         if (!isCommandAvailable("ffmpeg")) {
+            log.warn("Skip video transcription because ffmpeg is unavailable in current runtime");
             return "";
         }
 
@@ -717,6 +765,12 @@ public class ResourceTagSuggestionService {
                 }
                 String transcript = requestAudioTranscription(audioClip);
                 if (StringUtils.hasText(transcript)) {
+                    log.info(
+                            "Video clip transcription completed: startSeconds={}, durationSeconds={}, transcriptLength={}",
+                            clipPlan.startSeconds(),
+                            clipPlan.durationSeconds(),
+                            transcript.length()
+                    );
                     transcriptSegments.add(transcript.trim());
                 }
             } catch (Exception ex) {
@@ -803,6 +857,7 @@ public class ResourceTagSuggestionService {
         try {
             String boundary = "----CloudTeachingAI" + UUID.randomUUID();
             byte[] requestBody = buildTranscriptionRequestBody(boundary, audioClip);
+            log.info("Requesting audio transcription: fileName={}, size={}", audioClip.getFileName(), Files.size(audioClip));
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(normalizeBaseUrl(videoTranscriptionBaseUrl) + "/audio/transcriptions"))
                     .timeout(Duration.ofSeconds(60))
