@@ -78,6 +78,15 @@ public class ResourceTagSuggestionService {
     @Value("${ai.tag-preview.model:deepseek-chat}")
     private String model;
 
+    @Value("${ai.tag-preview.fallback-api-key:}")
+    private String fallbackApiKey;
+
+    @Value("${ai.tag-preview.fallback-base-url:https://api.openai.com/v1}")
+    private String fallbackBaseUrl;
+
+    @Value("${ai.tag-preview.fallback-model:gpt-4.1-mini}")
+    private String fallbackModel;
+
     @Value("${ai.tag-preview.max-content-chars:12000}")
     private int maxContentChars;
 
@@ -169,7 +178,9 @@ public class ResourceTagSuggestionService {
             Map<Long, KnowledgePointEntity> knowledgePointMap,
             List<ResourceTagSuggestionResponse> ruleSuggestions
     ) {
-        if (!providerEnabled || !StringUtils.hasText(apiKey)) {
+        TagProvider tagProvider = resolveTagProvider();
+        if (!providerEnabled || tagProvider == null) {
+            log.info("Skip AI tag preview: provider disabled or no chat provider configured");
             return List.of();
         }
 
@@ -190,90 +201,142 @@ public class ResourceTagSuggestionService {
         }
 
         try {
-            Map<String, Object> payload = Map.of(
-                    "model", model,
-                    "temperature", 0.2,
-                    "response_format", Map.of("type", "json_object"),
-                    "messages", List.of(
-                            Map.of(
-                                    "role", "system",
-                                    "content", "You label educational resources with knowledge points. Choose only from the provided candidate leaf knowledge points and return JSON in the form {\"matches\":[{\"knowledgePointId\":1,\"confidence\":0.91,\"reason\":\"short reason\"}]}."
-                            ),
-                            Map.of(
-                                    "role", "user",
-                                    "content", objectMapper.writeValueAsString(Map.of(
-                                            "resource", Map.of(
-                                                    "title", Optional.ofNullable(request.getTitle()).orElse(""),
-                                                    "description", Optional.ofNullable(request.getDescription()).orElse(""),
-                                                    "type", Optional.ofNullable(request.getType()).orElse(""),
-                                                    "fileName", Optional.ofNullable(request.getFileName()).orElse(""),
-                                                    "sourceUrl", Optional.ofNullable(request.getSourceUrl()).orElse(""),
-                                                    "extractedContent", truncate(analysisText, maxContentChars)
-                                            ),
-                                            "candidateKnowledgePoints", llmCandidates.stream().map(item -> Map.of(
-                                                    "knowledgePointId", item.getId(),
-                                                    "name", item.getName(),
-                                                    "path", buildKnowledgePointPath(item.getId(), knowledgePointMap),
-                                                    "keywords", Optional.ofNullable(item.getKeywords()).orElse("")
-                                            )).toList()
-                                    ))
-                            )
-                    )
+            List<ResourceTagSuggestionResponse> strictSuggestions = requestAiSuggestions(
+                    tagProvider,
+                    request,
+                    analysisText,
+                    llmCandidates,
+                    knowledgePointMap,
+                    false
             );
-
-            HttpRequest httpRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(normalizeBaseUrl(baseUrl) + "/chat/completions"))
-                    .timeout(Duration.ofSeconds(45))
-                    .header("Authorization", "Bearer " + apiKey)
-                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
-                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                log.warn("AI tag preview request failed: status={}, body={}", response.statusCode(), truncate(response.body(), 1000));
-                return List.of();
+            if (!strictSuggestions.isEmpty()) {
+                return strictSuggestions;
             }
 
-            JsonNode root = objectMapper.readTree(response.body());
-            JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
-            if (contentNode.isMissingNode() || !StringUtils.hasText(contentNode.asText())) {
-                return List.of();
+            List<ResourceTagSuggestionResponse> permissiveSuggestions = requestAiSuggestions(
+                    tagProvider,
+                    request,
+                    analysisText,
+                    llmCandidates,
+                    knowledgePointMap,
+                    true
+            );
+            if (permissiveSuggestions.isEmpty()) {
+                log.info(
+                        "AI tag preview still returned no suggestions. type={}, fileName={}, analysisLength={}, providerBaseUrl={}",
+                        request.getType(),
+                        request.getFileName(),
+                        analysisText.length(),
+                        tagProvider.baseUrl()
+                );
             }
-
-            JsonNode matches = objectMapper.readTree(contentNode.asText()).path("matches");
-            if (!matches.isArray()) {
-                return List.of();
-            }
-
-            Map<Long, KnowledgePointEntity> candidateMap = llmCandidates.stream()
-                    .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
-            List<ResourceTagSuggestionResponse> suggestions = new ArrayList<>();
-            for (JsonNode match : matches) {
-                long knowledgePointId = match.path("knowledgePointId").asLong(-1L);
-                KnowledgePointEntity knowledgePoint = candidateMap.get(knowledgePointId);
-                if (knowledgePoint == null) {
-                    continue;
-                }
-                double confidence = Math.max(0.0D, Math.min(0.99D, match.path("confidence").asDouble(0.72D)));
-                suggestions.add(ResourceTagSuggestionResponse.builder()
-                        .knowledgePointId(knowledgePoint.getId())
-                        .knowledgePointName(knowledgePoint.getName())
-                        .path(buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap))
-                        .confidence(Math.round(confidence * 100.0D) / 100.0D)
-                        .reason(StringUtils.hasText(match.path("reason").asText()) ? match.path("reason").asText() : "AI content analysis")
-                        .build());
-            }
-            return suggestions.stream()
-                    .sorted(Comparator
-                            .comparing(ResourceTagSuggestionResponse::getConfidence, Comparator.reverseOrder())
-                            .thenComparing(ResourceTagSuggestionResponse::getPath))
-                    .limit(MAX_TAG_SUGGESTIONS)
-                    .toList();
+            return permissiveSuggestions;
         } catch (Exception ex) {
             log.warn("AI tag preview failed, fallback to rules", ex);
             return List.of();
         }
+    }
+
+    private List<ResourceTagSuggestionResponse> requestAiSuggestions(
+            TagProvider tagProvider,
+            ResourceTagPreviewRequest request,
+            String analysisText,
+            List<KnowledgePointEntity> llmCandidates,
+            Map<Long, KnowledgePointEntity> knowledgePointMap,
+            boolean allowClosestMatches
+    ) throws Exception {
+        Map<String, Object> payload = Map.of(
+                "model", tagProvider.model(),
+                "temperature", allowClosestMatches ? 0.35 : 0.2,
+                "response_format", Map.of("type", "json_object"),
+                "messages", List.of(
+                        Map.of(
+                                "role", "system",
+                                "content", allowClosestMatches
+                                        ? "You label educational resources with knowledge points. Choose only from the provided candidate leaf knowledge points. If there is no exact match, still return the closest 1 to 5 candidates with lower confidence instead of an empty list. Return JSON only in the form {\"matches\":[{\"knowledgePointId\":1,\"confidence\":0.61,\"reason\":\"short reason\"}]}."
+                                        : "You label educational resources with knowledge points. Choose only from the provided candidate leaf knowledge points and return JSON in the form {\"matches\":[{\"knowledgePointId\":1,\"confidence\":0.91,\"reason\":\"short reason\"}]}. If there is clear evidence, prefer precise matches."
+                        ),
+                        Map.of(
+                                "role", "user",
+                                "content", objectMapper.writeValueAsString(Map.of(
+                                        "resource", Map.of(
+                                                "title", Optional.ofNullable(request.getTitle()).orElse(""),
+                                                "description", Optional.ofNullable(request.getDescription()).orElse(""),
+                                                "type", Optional.ofNullable(request.getType()).orElse(""),
+                                                "fileName", Optional.ofNullable(request.getFileName()).orElse(""),
+                                                "sourceUrl", Optional.ofNullable(request.getSourceUrl()).orElse(""),
+                                                "extractedContent", truncate(analysisText, maxContentChars)
+                                        ),
+                                        "candidateKnowledgePoints", llmCandidates.stream().map(item -> Map.of(
+                                                "knowledgePointId", item.getId(),
+                                                "name", item.getName(),
+                                                "path", buildKnowledgePointPath(item.getId(), knowledgePointMap),
+                                                "keywords", Optional.ofNullable(item.getKeywords()).orElse("")
+                                        )).toList()
+                                ))
+                        )
+                )
+        );
+
+        HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create(normalizeBaseUrl(tagProvider.baseUrl()) + "/chat/completions"))
+                .timeout(Duration.ofSeconds(45))
+                .header("Authorization", "Bearer " + tagProvider.apiKey())
+                .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            log.warn("AI tag preview request failed: status={}, body={}", response.statusCode(), truncate(response.body(), 1000));
+            return List.of();
+        }
+
+        JsonNode root = objectMapper.readTree(response.body());
+        JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
+        if (contentNode.isMissingNode() || !StringUtils.hasText(contentNode.asText())) {
+            return List.of();
+        }
+
+        JsonNode matches = objectMapper.readTree(contentNode.asText()).path("matches");
+        if (!matches.isArray()) {
+            return List.of();
+        }
+
+        Map<Long, KnowledgePointEntity> candidateMap = llmCandidates.stream()
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+        List<ResourceTagSuggestionResponse> suggestions = new ArrayList<>();
+        for (JsonNode match : matches) {
+            long knowledgePointId = match.path("knowledgePointId").asLong(-1L);
+            KnowledgePointEntity knowledgePoint = candidateMap.get(knowledgePointId);
+            if (knowledgePoint == null) {
+                continue;
+            }
+            double confidence = Math.max(0.0D, Math.min(0.99D, match.path("confidence").asDouble(allowClosestMatches ? 0.58D : 0.72D)));
+            suggestions.add(ResourceTagSuggestionResponse.builder()
+                    .knowledgePointId(knowledgePoint.getId())
+                    .knowledgePointName(knowledgePoint.getName())
+                    .path(buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap))
+                    .confidence(Math.round(confidence * 100.0D) / 100.0D)
+                    .reason(StringUtils.hasText(match.path("reason").asText()) ? match.path("reason").asText() : "AI content analysis")
+                    .build());
+        }
+        return suggestions.stream()
+                .sorted(Comparator
+                        .comparing(ResourceTagSuggestionResponse::getConfidence, Comparator.reverseOrder())
+                        .thenComparing(ResourceTagSuggestionResponse::getPath))
+                .limit(MAX_TAG_SUGGESTIONS)
+                .toList();
+    }
+
+    private TagProvider resolveTagProvider() {
+        if (StringUtils.hasText(apiKey)) {
+            return new TagProvider(apiKey, baseUrl, model);
+        }
+        if (StringUtils.hasText(fallbackApiKey)) {
+            return new TagProvider(fallbackApiKey, fallbackBaseUrl, fallbackModel);
+        }
+        return null;
     }
 
     private List<KnowledgePointEntity> selectLlmCandidates(
@@ -974,5 +1037,8 @@ public class ResourceTagSuggestionService {
     }
 
     private record ClipPlan(double startSeconds, double durationSeconds) {
+    }
+
+    private record TagProvider(String apiKey, String baseUrl, String model) {
     }
 }

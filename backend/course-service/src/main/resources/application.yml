@@ -65,6 +65,9 @@ ai:
     api-key: ${DEEPSEEK_API_KEY:}
     base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
     model: ${DEEPSEEK_MODEL:deepseek-chat}
+    fallback-api-key: ${AI_TAG_PREVIEW_CHAT_API_KEY:${AI_TAG_PREVIEW_VIDEO_TRANSCRIPTION_API_KEY:${OPENAI_API_KEY:}}}
+    fallback-base-url: ${AI_TAG_PREVIEW_CHAT_BASE_URL:${AI_TAG_PREVIEW_VIDEO_TRANSCRIPTION_BASE_URL:${OPENAI_BASE_URL:https://api.openai.com/v1}}}
+    fallback-model: ${AI_TAG_PREVIEW_CHAT_MODEL:gpt-4.1-mini}
     max-content-chars: ${AI_TAG_PREVIEW_MAX_CONTENT_CHARS:12000}
     max-download-bytes: ${AI_TAG_PREVIEW_MAX_DOWNLOAD_BYTES:8388608}
     video-transcription:
