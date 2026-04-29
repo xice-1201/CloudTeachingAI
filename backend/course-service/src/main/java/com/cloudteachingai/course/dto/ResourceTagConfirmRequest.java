@@ -7,4 +7,5 @@ import java.util.List;
 @Data
 public class ResourceTagConfirmRequest {
     private List<Long> knowledgePointIds;
+    private List<String> tagLabels;
 }

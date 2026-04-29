@@ -21,6 +21,7 @@ public class ResourceResponse {
     private String taggingStatus;
     private String taggingUpdatedAt;
     private java.util.List<ResourceKnowledgePointResponse> knowledgePoints;
+    private java.util.List<ResourceTagResponse> tags;
     private Integer duration;
     private Long size;
     private Integer orderIndex;

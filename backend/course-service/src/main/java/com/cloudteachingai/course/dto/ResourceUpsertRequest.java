@@ -17,6 +17,7 @@ public class ResourceUpsertRequest {
 
     private String description;
     private List<Long> knowledgePointIds;
+    private List<String> tagLabels;
     private Integer duration;
     private Long size;
     private Integer orderIndex;

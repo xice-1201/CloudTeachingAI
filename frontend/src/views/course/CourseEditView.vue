@@ -82,14 +82,6 @@
             </div>
           </template>
 
-          <el-alert
-            v-if="!hasLeafKnowledgePoints"
-            type="warning"
-            :closable="false"
-            title="当前没有可用的叶子知识点，请先在管理员后台维护知识点体系。"
-            style="margin-bottom: 16px"
-          />
-
           <el-empty v-if="!chapters.length" description="还没有章节，先新增一个章节开始排课。" />
 
           <el-collapse v-else v-model="activeChapterKeys">
@@ -125,9 +117,9 @@
                       <span v-if="resource.size">大小 {{ formatFileSize(resource.size) }}</span>
                       <el-link :href="resource.url" target="_blank" type="primary">打开资源</el-link>
                     </div>
-                    <div v-if="resource.knowledgePoints?.length" class="resource-tags">
-                      <el-tag v-for="knowledgePoint in resource.knowledgePoints" :key="`${resource.id}-${knowledgePoint.id}`" size="small" effect="plain">
-                        {{ knowledgePoint.name }}
+                    <div v-if="resource.tags?.length || resource.knowledgePoints?.length" class="resource-tags">
+                      <el-tag v-for="tag in (resource.tags?.length ? resource.tags : resource.knowledgePoints)" :key="`${resource.id}-${tag.label ?? tag.id}`" size="small" effect="plain">
+                        {{ tag.label ?? tag.name }}
                       </el-tag>
                     </div>
                   </div>
@@ -183,61 +175,41 @@
           <el-col :span="12"><el-form-item label="大小(B)"><el-input-number v-model="resourceDialog.form.size" :min="0" :max="2147483647" style="width: 100%" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="排序"><el-input-number v-model="resourceDialog.form.orderIndex" :min="1" :max="999" /></el-form-item>
-        <el-divider content-position="left">知识点标签</el-divider>
-        <el-form-item label="已选标签" prop="knowledgePointIds">
+        <el-divider content-position="left">资源标签</el-divider>
+        <el-form-item label="手动标签">
           <div class="panel-block">
-            <div v-if="resourceDialog.form.knowledgePointIds.length" class="selected-tags">
-              <el-tag v-for="knowledgePointId in resourceDialog.form.knowledgePointIds" :key="knowledgePointId" closable effect="plain" @close="removeSelectedKnowledgePoint(knowledgePointId)">
-                {{ knowledgePointLabel(knowledgePointId) }}
-              </el-tag>
-            </div>
-            <div v-else class="field-tip">还没有选择知识点标签。</div>
+            <el-select
+              v-model="resourceDialog.form.tagLabels"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="输入或选择资源标签"
+              style="width: 100%"
+            />
+            <div class="field-tip">标签会优先复用系统已有标签，数量不足时 AI 会补充生成新标签。</div>
           </div>
         </el-form-item>
         <el-form-item label="AI建议">
           <div class="panel-block">
             <div class="tree-toolbar">
               <el-button :loading="suggestionLoading" @click="loadTagSuggestions">生成建议标签</el-button>
-              <el-button v-if="suggestions.length" type="primary" plain @click="applySuggestedKnowledgePoints(suggestions.map((item) => item.knowledgePointId))">一键接受建议</el-button>
+              <el-button v-if="suggestions.length" type="primary" plain @click="applySuggestedTags(suggestions.map((item) => item.label))">一键接受建议</el-button>
             </div>
             <div v-if="suggestions.length" class="suggestion-list">
-              <div v-for="suggestion in suggestions" :key="suggestion.knowledgePointId" class="suggestion-item">
+              <div v-for="suggestion in suggestions" :key="`${suggestion.kind}-${suggestion.label}`" class="suggestion-item">
                 <div>
-                  <div class="suggestion-title">{{ suggestion.knowledgePointName }}</div>
-                  <div class="suggestion-path">{{ suggestion.path }}</div>
+                  <div class="suggestion-title">
+                    {{ suggestion.label }}
+                    <el-tag size="small" effect="plain">{{ suggestion.kind === 'GENERATED' ? 'AI 新生成' : '复用现有标签' }}</el-tag>
+                  </div>
+                  <div v-if="suggestion.path" class="suggestion-path">{{ suggestion.path }}</div>
                   <div class="suggestion-path">{{ suggestion.reason }}</div>
                 </div>
-                <el-button link type="primary" @click="applySuggestedKnowledgePoints([suggestion.knowledgePointId])">采用</el-button>
+                <el-button link type="primary" @click="applySuggestedTags([suggestion.label])">采用</el-button>
               </div>
             </div>
-            <div v-else class="field-tip">可以根据资源标题和简介生成 AI 建议，也可以直接从分类树手动选择。</div>
-          </div>
-        </el-form-item>
-        <el-form-item label="分类树">
-          <div class="panel-block">
-            <div class="tree-toolbar">
-              <el-input v-model="knowledgePointKeyword" clearable placeholder="搜索知识点" />
-              <el-button @click="clearKnowledgePointSelection">清空已选</el-button>
-            </div>
-            <el-tree
-              ref="knowledgePointTreeRef"
-              class="knowledge-tree"
-              node-key="id"
-              show-checkbox
-              check-strictly
-              default-expand-all
-              :data="knowledgePointTree"
-              :props="{ label: 'name', children: 'children' }"
-              :filter-node-method="filterKnowledgePointNode"
-              @check="handleKnowledgePointCheck"
-            >
-              <template #default="{ data }">
-                <div class="knowledge-node">
-                  <span>{{ data.name }}</span>
-                  <span class="knowledge-node-path">{{ data.path }}</span>
-                </div>
-              </template>
-            </el-tree>
+            <div v-else class="field-tip">上传文件、填写资源地址，或至少补充标题/描述后再生成 AI 建议。</div>
           </div>
         </el-form-item>
       </el-form>
@@ -312,7 +284,7 @@ const resourceDialog = reactive({
   isEdit: false,
   chapterId: '',
   resourceId: '',
-  form: { title: '', type: 'DOCUMENT' as Resource['type'], url: '', description: '', managedFile: false, knowledgePointIds: [] as number[], duration: 0, size: 0, orderIndex: 1 },
+  form: { title: '', type: 'DOCUMENT' as Resource['type'], url: '', description: '', managedFile: false, knowledgePointIds: [] as number[], tagLabels: [] as string[], duration: 0, size: 0, orderIndex: 1 },
 })
 
 const rules: FormRules = {
@@ -434,6 +406,16 @@ function applyKnowledgePointSelection(ids: number[]) {
 
 function removeSelectedKnowledgePoint(id: number) { applyKnowledgePointSelection(resourceDialog.form.knowledgePointIds.filter((item) => item !== id)) }
 function applySuggestedKnowledgePoints(ids: number[]) { applyKnowledgePointSelection([...resourceDialog.form.knowledgePointIds, ...ids]) }
+function normalizeTagLabels(labels: string[]) {
+  const normalized = new Map<string, string>()
+  labels.forEach((label) => {
+    const value = label.trim()
+    if (!value) return
+    normalized.set(value.toLowerCase(), value)
+  })
+  return Array.from(normalized.values())
+}
+function applySuggestedTags(labels: string[]) { resourceDialog.form.tagLabels = normalizeTagLabels([...resourceDialog.form.tagLabels, ...labels]) }
 function clearKnowledgePointSelection() { applyKnowledgePointSelection([]) }
 function filterKnowledgePointNode(keyword: string, data: KnowledgePointNode) { if (!keyword) return true; const normalized = keyword.trim().toLowerCase(); return data.name.toLowerCase().includes(normalized) || data.path.toLowerCase().includes(normalized) }
 function extractFileName(value?: string) {
@@ -512,6 +494,18 @@ async function loadTagSuggestions() {
   try {
     const sourceUrl = resourceDialog.form.managedFile ? undefined : (resourceDialog.form.url?.trim() || undefined)
     const fileName = selectedResourceFile.value?.name || extractFileName(sourceUrl)
+    const hasPreviewInput = Boolean(
+      selectedResourceFile.value
+      || (resourceDialog.isEdit && resourceDialog.form.managedFile)
+      || sourceUrl
+      || resourceDialog.form.title?.trim()
+      || resourceDialog.form.description?.trim(),
+    )
+    if (!hasPreviewInput) {
+      ElMessage.warning('请先上传文件、填写资源地址，或至少补充标题/描述后再生成 AI 建议')
+      suggestions.value = []
+      return
+    }
     console.info('[CourseEditView] loadTagSuggestions request', {
       isEdit: resourceDialog.isEdit,
       managedFile: resourceDialog.form.managedFile,
@@ -535,7 +529,7 @@ async function loadTagSuggestions() {
           fileName,
           file: selectedResourceFile.value ?? undefined,
         })
-    if (!suggestions.value.length) ElMessage.info('没有生成建议标签，请手动选择知识点')
+    if (!suggestions.value.length) ElMessage.info('没有生成建议标签，请手动补充标签')
   } finally {
     suggestionLoading.value = false
   }
@@ -557,13 +551,13 @@ function resetResourceDialog(chapterId = '') {
   resourceDialog.resourceId = ''
   selectedResourceFile.value = null
   suggestions.value = []
-  knowledgePointKeyword.value = ''
   resourceDialog.form.title = ''
   resourceDialog.form.type = 'DOCUMENT'
   resourceDialog.form.url = ''
   resourceDialog.form.description = ''
   resourceDialog.form.managedFile = false
   resourceDialog.form.knowledgePointIds = []
+  resourceDialog.form.tagLabels = []
   resourceDialog.form.duration = 0
   resourceDialog.form.size = 0
   resourceDialog.form.orderIndex = (resourceMap.value[Number(chapterId)]?.length ?? 0) + 1
@@ -697,7 +691,6 @@ async function handleDeleteChapter(chapter: Chapter) {
 function openCreateResourceDialog(chapter: Chapter) {
   resetResourceDialog(String(chapter.id))
   resourceDialog.visible = true
-  nextTick(() => knowledgePointTreeRef.value?.setCheckedKeys([]))
 }
 
 function openEditResourceDialog(chapter: Chapter, resource: Resource) {
@@ -707,17 +700,19 @@ function openEditResourceDialog(chapter: Chapter, resource: Resource) {
   resourceDialog.resourceId = String(resource.id)
   selectedResourceFile.value = null
   suggestions.value = []
-  knowledgePointKeyword.value = ''
   resourceDialog.form.title = resource.title
   resourceDialog.form.type = resource.type
   resourceDialog.form.url = resource.managedFile ? '' : (resource.sourceUrl ?? resource.url)
   resourceDialog.form.description = resource.description ?? ''
   resourceDialog.form.managedFile = Boolean(resource.managedFile)
   resourceDialog.form.knowledgePointIds = [...(resource.knowledgePoints?.map((item) => item.id) ?? [])]
+  resourceDialog.form.tagLabels = normalizeTagLabels([
+    ...(resource.tags?.map((item) => item.label) ?? []),
+    ...(resource.knowledgePoints?.map((item) => item.name) ?? []),
+  ])
   resourceDialog.form.duration = resource.duration ?? 0
   resourceDialog.form.size = resource.size ?? 0
   resourceDialog.form.orderIndex = resource.orderIndex
-  nextTick(() => applyKnowledgePointSelection(resourceDialog.form.knowledgePointIds))
 }
 
 async function handleSubmitResource() {
@@ -736,7 +731,7 @@ async function handleSubmitResource() {
       type: resourceDialog.form.type,
       url: resourceUrl || undefined,
       description: resourceDialog.form.description || undefined,
-      knowledgePointIds: resourceDialog.form.knowledgePointIds,
+      tagLabels: normalizeTagLabels(resourceDialog.form.tagLabels),
       duration: resourceDialog.form.duration || undefined,
       size: resourceSize,
       orderIndex: resourceDialog.form.orderIndex,
@@ -763,14 +758,12 @@ async function handleDeleteResource(resource: Resource) {
   await loadCurriculum()
 }
 
-watch(knowledgePointKeyword, (keyword) => { knowledgePointTreeRef.value?.filter(keyword) })
-
 onMounted(async () => {
   pageLoading.value = true
   try {
-    const bootstrapResults = await Promise.allSettled([loadStudentOptions(), loadKnowledgePointTree()])
+    const bootstrapResults = await Promise.allSettled([loadStudentOptions()])
     const studentResult = bootstrapResults[0]
-    const knowledgePointResult = bootstrapResults[1]
+    const knowledgePointResult = { status: 'fulfilled' as const }
 
     if (studentResult.status === 'rejected') {
       ElMessage.warning('学生列表加载失败，编辑页已继续加载。请查看浏览器控制台定位原因。')

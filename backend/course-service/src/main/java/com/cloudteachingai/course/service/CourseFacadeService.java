@@ -16,6 +16,7 @@ import com.cloudteachingai.course.dto.ResourceKnowledgePointResponse;
 import com.cloudteachingai.course.dto.ResourceResponse;
 import com.cloudteachingai.course.dto.ResourceTagConfirmRequest;
 import com.cloudteachingai.course.dto.ResourceTagPreviewRequest;
+import com.cloudteachingai.course.dto.ResourceTagResponse;
 import com.cloudteachingai.course.dto.ResourceTagSuggestionResponse;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
 import com.cloudteachingai.course.event.CourseUpdatedEvent;
@@ -32,6 +33,7 @@ import com.cloudteachingai.course.entity.EnrollmentEntity;
 import com.cloudteachingai.course.entity.KnowledgePointEntity;
 import com.cloudteachingai.course.entity.ResourceEntity;
 import com.cloudteachingai.course.entity.ResourceKnowledgePointEntity;
+import com.cloudteachingai.course.entity.ResourceTagEntity;
 import com.cloudteachingai.course.entity.enums.CourseStatus;
 import com.cloudteachingai.course.entity.enums.CourseVisibilityType;
 import com.cloudteachingai.course.entity.enums.KnowledgePointType;
@@ -47,6 +49,7 @@ import com.cloudteachingai.course.repository.EnrollmentRepository;
 import com.cloudteachingai.course.repository.KnowledgePointRepository;
 import com.cloudteachingai.course.repository.ResourceKnowledgePointRepository;
 import com.cloudteachingai.course.repository.ResourceRepository;
+import com.cloudteachingai.course.repository.ResourceTagRepository;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -87,6 +90,7 @@ public class CourseFacadeService {
     private final CourseVisibleStudentRepository courseVisibleStudentRepository;
     private final KnowledgePointRepository knowledgePointRepository;
     private final ResourceKnowledgePointRepository resourceKnowledgePointRepository;
+    private final ResourceTagRepository resourceTagRepository;
     private final UserServiceClient userServiceClient;
     private final CourseCoverStorageService courseCoverStorageService;
     private final ResourceStorageService resourceStorageService;
@@ -349,8 +353,15 @@ public class CourseFacadeService {
         Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(resources.stream()
                 .map(ResourceEntity::getId)
                 .toList());
+        Map<Long, List<ResourceTagResponse>> resourceLabelMap = loadResourceTagMap(resources.stream()
+                .map(ResourceEntity::getId)
+                .toList());
         return resources.stream()
-                .map(resource -> toResourceResponse(resource, resourceTags.getOrDefault(resource.getId(), List.of())))
+                .map(resource -> toResourceResponse(
+                        resource,
+                        resourceTags.getOrDefault(resource.getId(), List.of()),
+                        resourceLabelMap.getOrDefault(resource.getId(), List.of())
+                ))
                 .toList();
     }
 
@@ -359,7 +370,12 @@ public class CourseFacadeService {
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireContentAccessibleCourse(chapter.getCourseId(), userContext);
         Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(resourceId));
-        return toResourceResponse(resource, resourceTags.getOrDefault(resourceId, List.of()));
+        Map<Long, List<ResourceTagResponse>> resourceLabelMap = loadResourceTagMap(List.of(resourceId));
+        return toResourceResponse(
+                resource,
+                resourceTags.getOrDefault(resourceId, List.of()),
+                resourceLabelMap.getOrDefault(resourceId, List.of())
+        );
     }
 
     public InternalResourceTaggingContextResponse getResourceTaggingContext(Long resourceId) {
@@ -405,7 +421,10 @@ public class CourseFacadeService {
         }
 
         List<Long> manualKnowledgePointIds = normalizeKnowledgePointIds(request.getKnowledgePointIds());
-        ResourceStatus initialStatus = manualKnowledgePointIds.isEmpty() ? ResourceStatus.PROCESSING : ResourceStatus.PUBLISHED;
+        List<String> manualTagLabels = normalizeTagLabels(request.getTagLabels());
+        ResourceStatus initialStatus = manualKnowledgePointIds.isEmpty() && manualTagLabels.isEmpty()
+                ? ResourceStatus.PROCESSING
+                : ResourceStatus.PUBLISHED;
 
         ResourceEntity resource = ResourceEntity.builder()
                 .chapterId(chapterId)
@@ -420,10 +439,15 @@ public class CourseFacadeService {
                 .build();
 
         ResourceEntity saved = resourceRepository.save(resource);
-        replaceResourceKnowledgePoints(saved, manualKnowledgePointIds);
-        publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds);
+        replaceManualResourceTags(saved, manualKnowledgePointIds, manualTagLabels);
+        publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds, manualTagLabels);
         Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(saved.getId()));
-        return toResourceResponse(saved, resourceTags.getOrDefault(saved.getId(), List.of()));
+        Map<Long, List<ResourceTagResponse>> resourceLabelMap = loadResourceTagMap(List.of(saved.getId()));
+        return toResourceResponse(
+                saved,
+                resourceTags.getOrDefault(saved.getId(), List.of()),
+                resourceLabelMap.getOrDefault(saved.getId(), List.of())
+        );
     }
 
     @Transactional
@@ -435,6 +459,7 @@ public class CourseFacadeService {
         String previousStorageKey = resource.getStorageKey();
         String updatedStorageKey = StringUtils.hasText(request.getUrl()) ? request.getUrl().trim() : previousStorageKey;
         List<Long> manualKnowledgePointIds = normalizeKnowledgePointIds(request.getKnowledgePointIds());
+        List<String> manualTagLabels = normalizeTagLabels(request.getTagLabels());
 
         resource.setTitle(request.getTitle().trim());
         resource.setType(parseResourceType(request.getType()));
@@ -443,15 +468,22 @@ public class CourseFacadeService {
         resource.setDurationSeconds(request.getDuration());
         resource.setDescription(normalizeBlank(request.getDescription()));
         resource.setOrderIndex(resolveOrderIndex(request.getOrderIndex(), resource.getOrderIndex()));
-        resource.setStatus(manualKnowledgePointIds.isEmpty() ? ResourceStatus.PROCESSING : ResourceStatus.PUBLISHED);
+        resource.setStatus(manualKnowledgePointIds.isEmpty() && manualTagLabels.isEmpty()
+                ? ResourceStatus.PROCESSING
+                : ResourceStatus.PUBLISHED);
         ResourceEntity saved = resourceRepository.save(resource);
-        replaceResourceKnowledgePoints(saved, manualKnowledgePointIds);
-        publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds);
+        replaceManualResourceTags(saved, manualKnowledgePointIds, manualTagLabels);
+        publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds, manualTagLabels);
         if (!Objects.equals(previousStorageKey, updatedStorageKey)) {
             resourceStorageService.deleteIfManaged(previousStorageKey);
         }
         Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(saved.getId()));
-        return toResourceResponse(saved, resourceTags.getOrDefault(saved.getId(), List.of()));
+        Map<Long, List<ResourceTagResponse>> resourceLabelMap = loadResourceTagMap(List.of(saved.getId()));
+        return toResourceResponse(
+                saved,
+                resourceTags.getOrDefault(saved.getId(), List.of()),
+                resourceLabelMap.getOrDefault(saved.getId(), List.of())
+        );
     }
 
     @Transactional
@@ -530,6 +562,13 @@ public class CourseFacadeService {
             UserContext userContext
     ) {
         assertRole(userContext, "TEACHER", "ADMIN");
+        if ((file == null || file.isEmpty())
+                && !StringUtils.hasText(request.getTitle())
+                && !StringUtils.hasText(request.getDescription())
+                && !StringUtils.hasText(request.getSourceUrl())
+                && !StringUtils.hasText(request.getFileName())) {
+            throw BusinessException.badRequest("Please upload a file or provide resource metadata before generating AI tag suggestions");
+        }
         return resourceTagSuggestionService.suggestForPreview(request, file);
     }
 
@@ -545,11 +584,16 @@ public class CourseFacadeService {
         ResourceEntity resource = requireResource(resourceId);
         ChapterEntity chapter = requireChapter(resource.getChapterId());
         requireManageableCourse(chapter.getCourseId(), userContext);
-        replaceResourceKnowledgePoints(resource, request.getKnowledgePointIds());
+        replaceManualResourceTags(resource, request.getKnowledgePointIds(), request.getTagLabels());
         resource.setStatus(ResourceStatus.PUBLISHED);
         resourceRepository.save(resource);
         Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(resource.getId()));
-        return toResourceResponse(resource, resourceTags.getOrDefault(resource.getId(), List.of()));
+        Map<Long, List<ResourceTagResponse>> resourceLabelMap = loadResourceTagMap(List.of(resource.getId()));
+        return toResourceResponse(
+                resource,
+                resourceTags.getOrDefault(resource.getId(), List.of()),
+                resourceLabelMap.getOrDefault(resource.getId(), List.of())
+        );
     }
 
     @Transactional
@@ -568,6 +612,7 @@ public class CourseFacadeService {
 
         boolean shouldNotifyTeacher = resource.getTaggingStatus() != ResourceTaggingStatus.SUGGESTED;
         resourceKnowledgePointRepository.deleteByResourceId(resource.getId());
+        resourceTagRepository.deleteByResourceId(resource.getId());
 
         List<ResourceTaggedKnowledgePointEvent> knowledgePointEvents = event.knowledgePoints() == null
                 ? List.of()
@@ -587,24 +632,38 @@ public class CourseFacadeService {
                     .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
 
             List<ResourceKnowledgePointEntity> relations = new ArrayList<>();
+            List<ResourceTagEntity> tagEntities = new ArrayList<>();
             for (ResourceTaggedKnowledgePointEvent knowledgePointEvent : knowledgePointEvents) {
                 KnowledgePointEntity knowledgePoint = knowledgePointMap.get(knowledgePointEvent.knowledgePointId());
                 if (knowledgePoint == null) {
                     continue;
                 }
+                double confidence = knowledgePointEvent.confidence() == null ? 0.5D : knowledgePointEvent.confidence();
                 relations.add(ResourceKnowledgePointEntity.builder()
                         .resourceId(resource.getId())
                         .knowledgePointId(knowledgePoint.getId())
-                        .confidence(knowledgePointEvent.confidence() == null ? 0.5D : knowledgePointEvent.confidence())
+                        .confidence(confidence)
+                        .source(ResourceTagSource.AI)
+                        .build());
+                tagEntities.add(ResourceTagEntity.builder()
+                        .resourceId(resource.getId())
+                        .label(knowledgePoint.getName())
+                        .normalizedLabel(normalizeSuggestionText(knowledgePoint.getName()))
+                        .knowledgePointId(knowledgePoint.getId())
+                        .confidence(confidence)
                         .source(ResourceTagSource.AI)
                         .build());
             }
             if (!relations.isEmpty()) {
                 resourceKnowledgePointRepository.saveAll(relations);
             }
+            if (!tagEntities.isEmpty()) {
+                resourceTagRepository.saveAll(tagEntities);
+            }
         }
 
-        boolean hasSuggestions = resourceKnowledgePointRepository.findByResourceIdIn(List.of(resource.getId())).stream().findAny().isPresent();
+        boolean hasSuggestions = !resourceTagRepository.findByResourceIdIn(List.of(resource.getId())).isEmpty()
+                || resourceKnowledgePointRepository.findByResourceIdIn(List.of(resource.getId())).stream().findAny().isPresent();
         resource.setTaggingStatus(hasSuggestions ? ResourceTaggingStatus.SUGGESTED : ResourceTaggingStatus.UNTAGGED);
         resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         resource.setStatus(ResourceStatus.PUBLISHED);
@@ -875,6 +934,26 @@ public class CourseFacadeService {
                 .toList()));
     }
 
+    private List<String> normalizeTagLabels(List<String> tagLabels) {
+        if (tagLabels == null || tagLabels.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashMap<String, String> normalizedToOriginal = new LinkedHashMap<>();
+        for (String tagLabel : tagLabels) {
+            if (!StringUtils.hasText(tagLabel)) {
+                continue;
+            }
+            String trimmed = tagLabel.trim();
+            String normalized = normalizeSuggestionText(trimmed);
+            if (!StringUtils.hasText(normalized)) {
+                continue;
+            }
+            normalizedToOriginal.putIfAbsent(normalized, trimmed);
+        }
+        return new ArrayList<>(normalizedToOriginal.values());
+    }
+
     private void validateVisibleStudents(CourseVisibilityType visibilityType, List<Long> visibleStudentIds) {
         if (visibilityType == CourseVisibilityType.SELECTED_STUDENTS && visibleStudentIds.isEmpty()) {
             throw BusinessException.badRequest("Please select at least one student for targeted visibility");
@@ -977,8 +1056,10 @@ public class CourseFacadeService {
             ResourceEntity resource,
             ChapterEntity chapter,
             CourseEntity course,
-            List<Long> manualKnowledgePointIds) {
-        if (manualKnowledgePointIds != null && !manualKnowledgePointIds.isEmpty()) {
+            List<Long> manualKnowledgePointIds,
+            List<String> manualTagLabels) {
+        if ((manualKnowledgePointIds != null && !manualKnowledgePointIds.isEmpty())
+                || (manualTagLabels != null && !manualTagLabels.isEmpty())) {
             return;
         }
         outboxService.enqueue(EventTopics.RESOURCE_UPLOADED, ResourceUploadedEvent.builder()
@@ -1072,7 +1153,11 @@ public class CourseFacadeService {
                 .build();
     }
 
-    private ResourceResponse toResourceResponse(ResourceEntity entity, List<ResourceKnowledgePointResponse> knowledgePoints) {
+    private ResourceResponse toResourceResponse(
+            ResourceEntity entity,
+            List<ResourceKnowledgePointResponse> knowledgePoints,
+            List<ResourceTagResponse> tags
+    ) {
         boolean managedFile = resourceStorageService.isManagedStorageKey(entity.getStorageKey());
         return ResourceResponse.builder()
                 .id(entity.getId())
@@ -1086,6 +1171,7 @@ public class CourseFacadeService {
                 .taggingStatus(entity.getTaggingStatus() == null ? ResourceTaggingStatus.UNTAGGED.name() : entity.getTaggingStatus().name())
                 .taggingUpdatedAt(entity.getTaggingUpdatedAt() == null ? null : entity.getTaggingUpdatedAt().toString())
                 .knowledgePoints(knowledgePoints)
+                .tags(tags)
                 .duration(entity.getDurationSeconds())
                 .size(entity.getFileSize())
                 .orderIndex(entity.getOrderIndex())
@@ -1210,6 +1296,30 @@ public class CourseFacadeService {
         return result;
     }
 
+    private Map<Long, List<ResourceTagResponse>> loadResourceTagMap(Collection<Long> resourceIds) {
+        if (resourceIds == null || resourceIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, KnowledgePointEntity> knowledgePointMap = loadKnowledgePointMap();
+        Map<Long, List<ResourceTagResponse>> result = new LinkedHashMap<>();
+        for (ResourceTagEntity tag : resourceTagRepository.findByResourceIdIn(resourceIds)) {
+            result.computeIfAbsent(tag.getResourceId(), ignored -> new ArrayList<>())
+                    .add(ResourceTagResponse.builder()
+                            .id(tag.getId())
+                            .label(tag.getLabel())
+                            .confidence(tag.getConfidence())
+                            .source(tag.getSource().name())
+                            .knowledgePointId(tag.getKnowledgePointId())
+                            .knowledgePointPath(tag.getKnowledgePointId() == null ? null : buildKnowledgePointPath(tag.getKnowledgePointId(), knowledgePointMap))
+                            .build());
+        }
+        result.values().forEach(items -> items.sort(Comparator
+                .comparing(ResourceTagResponse::getLabel)
+                .thenComparing(item -> item.getId() == null ? Long.MAX_VALUE : item.getId())));
+        return result;
+    }
+
     private KnowledgePointEntity requireValidKnowledgePointParent(Long parentId, KnowledgePointType nodeType) {
         if (nodeType == KnowledgePointType.SUBJECT) {
             if (parentId != null) {
@@ -1232,8 +1342,13 @@ public class CourseFacadeService {
         return parent;
     }
 
-    private void replaceResourceKnowledgePoints(ResourceEntity resource, List<Long> requestedKnowledgePointIds) {
+    private void replaceManualResourceTags(
+            ResourceEntity resource,
+            List<Long> requestedKnowledgePointIds,
+            List<String> requestedTagLabels
+    ) {
         List<Long> knowledgePointIds = normalizeKnowledgePointIds(requestedKnowledgePointIds);
+        List<String> tagLabels = normalizeTagLabels(requestedTagLabels);
         List<KnowledgePointEntity> knowledgePoints = knowledgePointIds.isEmpty()
                 ? List.of()
                 : knowledgePointRepository.findByIdIn(knowledgePointIds);
@@ -1251,107 +1366,70 @@ public class CourseFacadeService {
             }
         }
 
+        Map<Long, KnowledgePointEntity> activeLeafKnowledgePointMap = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
+                .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+        Map<String, KnowledgePointEntity> knowledgePointByNormalizedLabel = new LinkedHashMap<>();
+        for (KnowledgePointEntity knowledgePoint : activeLeafKnowledgePointMap.values()) {
+            knowledgePointByNormalizedLabel.putIfAbsent(normalizeSuggestionText(knowledgePoint.getName()), knowledgePoint);
+        }
+
         resourceKnowledgePointRepository.deleteByResourceId(resource.getId());
-        if (knowledgePoints.isEmpty()) {
+        resourceTagRepository.deleteByResourceId(resource.getId());
+        if (knowledgePoints.isEmpty() && tagLabels.isEmpty()) {
             resource.setTaggingStatus(ResourceTaggingStatus.UNTAGGED);
             resource.setTaggingUpdatedAt(null);
             resourceRepository.save(resource);
             return;
         }
 
-        Map<Long, ResourceTagSuggestionResponse> suggestionMap = buildTagSuggestions(resource.getTitle(), resource.getDescription()).stream()
-                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getKnowledgePointId(), item), Map::putAll);
+        LinkedHashMap<Long, ResourceKnowledgePointEntity> relationMap = new LinkedHashMap<>();
+        for (KnowledgePointEntity knowledgePoint : knowledgePoints) {
+            relationMap.put(knowledgePoint.getId(), ResourceKnowledgePointEntity.builder()
+                    .resourceId(resource.getId())
+                    .knowledgePointId(knowledgePoint.getId())
+                    .confidence(1D)
+                    .source(ResourceTagSource.MANUAL)
+                    .build());
+        }
 
-        List<ResourceKnowledgePointEntity> relations = knowledgePoints.stream()
-                .map(knowledgePoint -> {
-                    ResourceTagSuggestionResponse suggestion = suggestionMap.get(knowledgePoint.getId());
-                    return ResourceKnowledgePointEntity.builder()
-                            .resourceId(resource.getId())
-                            .knowledgePointId(knowledgePoint.getId())
-                            .confidence(suggestion == null ? 1D : suggestion.getConfidence())
-                            .source(suggestion == null ? ResourceTagSource.MANUAL : ResourceTagSource.AI)
-                            .build();
-                })
-                .toList();
-        resourceKnowledgePointRepository.saveAll(relations);
+        List<ResourceTagEntity> tagEntities = new ArrayList<>();
+        LinkedHashSet<String> mergedLabels = new LinkedHashSet<>(tagLabels);
+        for (KnowledgePointEntity knowledgePoint : knowledgePoints) {
+            mergedLabels.add(knowledgePoint.getName());
+        }
+
+        for (String tagLabel : mergedLabels) {
+            String normalizedLabel = normalizeSuggestionText(tagLabel);
+            KnowledgePointEntity matchedKnowledgePoint = knowledgePointByNormalizedLabel.get(normalizedLabel);
+            if (matchedKnowledgePoint != null) {
+                relationMap.putIfAbsent(matchedKnowledgePoint.getId(), ResourceKnowledgePointEntity.builder()
+                        .resourceId(resource.getId())
+                        .knowledgePointId(matchedKnowledgePoint.getId())
+                        .confidence(1D)
+                        .source(ResourceTagSource.MANUAL)
+                        .build());
+            }
+            tagEntities.add(ResourceTagEntity.builder()
+                    .resourceId(resource.getId())
+                    .label(tagLabel)
+                    .normalizedLabel(normalizedLabel)
+                    .knowledgePointId(matchedKnowledgePoint == null ? null : matchedKnowledgePoint.getId())
+                    .confidence(1D)
+                    .source(ResourceTagSource.MANUAL)
+                    .build());
+        }
+
+        if (!relationMap.isEmpty()) {
+            resourceKnowledgePointRepository.saveAll(relationMap.values());
+        }
+        if (!tagEntities.isEmpty()) {
+            resourceTagRepository.saveAll(tagEntities);
+        }
 
         resource.setTaggingStatus(ResourceTaggingStatus.CONFIRMED);
         resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         resourceRepository.save(resource);
-    }
-
-    private List<ResourceTagSuggestionResponse> buildTagSuggestions(String title, String description) {
-        String normalizedTitle = normalizeSuggestionText(title);
-        String normalizedFullText = normalizeSuggestionText(
-                (StringUtils.hasText(title) ? title : "") + " " + (StringUtils.hasText(description) ? description : "")
-        );
-        if (!StringUtils.hasText(normalizedFullText)) {
-            return List.of();
-        }
-
-        List<KnowledgePointEntity> activeLeafKnowledgePoints = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
-                .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
-                .toList();
-        Map<Long, KnowledgePointEntity> knowledgePointMap = loadKnowledgePointMap();
-        List<ResourceTagSuggestionResponse> suggestions = new ArrayList<>();
-
-        for (KnowledgePointEntity knowledgePoint : activeLeafKnowledgePoints) {
-            double score = 0D;
-            List<String> reasons = new ArrayList<>();
-            String pointName = normalizeSuggestionText(knowledgePoint.getName());
-            if (StringUtils.hasText(pointName) && normalizedTitle.contains(pointName)) {
-                score += 0.75D;
-                reasons.add("matched title");
-            } else if (StringUtils.hasText(pointName) && normalizedFullText.contains(pointName)) {
-                score += 0.65D;
-                reasons.add("matched knowledge point name");
-            }
-
-            for (String keyword : splitKeywords(knowledgePoint.getKeywords())) {
-                String normalizedKeyword = normalizeSuggestionText(keyword);
-                if (StringUtils.hasText(normalizedKeyword) && normalizedFullText.contains(normalizedKeyword)) {
-                    score += 0.18D;
-                    reasons.add("matched keyword \"" + keyword + "\"");
-                }
-            }
-
-            KnowledgePointEntity domain = knowledgePointMap.get(knowledgePoint.getParentId());
-            if (domain != null) {
-                String normalizedDomain = normalizeSuggestionText(domain.getName());
-                if (StringUtils.hasText(normalizedDomain) && normalizedFullText.contains(normalizedDomain)) {
-                    score += 0.08D;
-                    reasons.add("matched domain");
-                }
-
-                KnowledgePointEntity subject = domain.getParentId() == null ? null : knowledgePointMap.get(domain.getParentId());
-                if (subject != null) {
-                    String normalizedSubject = normalizeSuggestionText(subject.getName());
-                    if (StringUtils.hasText(normalizedSubject) && normalizedFullText.contains(normalizedSubject)) {
-                        score += 0.04D;
-                        reasons.add("matched subject");
-                    }
-                }
-            }
-
-            if (score < 0.18D) {
-                continue;
-            }
-
-            suggestions.add(ResourceTagSuggestionResponse.builder()
-                    .knowledgePointId(knowledgePoint.getId())
-                    .knowledgePointName(knowledgePoint.getName())
-                    .path(buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap))
-                    .confidence(Math.round(Math.min(0.99D, score) * 100.0D) / 100.0D)
-                    .reason(String.join("; ", reasons.stream().distinct().toList()))
-                    .build());
-        }
-
-        return suggestions.stream()
-                .sorted(Comparator
-                        .comparing(ResourceTagSuggestionResponse::getConfidence, Comparator.reverseOrder())
-                        .thenComparing(ResourceTagSuggestionResponse::getPath))
-                .limit(MAX_TAG_SUGGESTIONS)
-                .toList();
     }
 
     private String normalizeSuggestionText(String text) {

@@ -4,9 +4,11 @@ import com.cloudteachingai.course.dto.ResourceTagPreviewRequest;
 import com.cloudteachingai.course.dto.ResourceTagSuggestionResponse;
 import com.cloudteachingai.course.entity.KnowledgePointEntity;
 import com.cloudteachingai.course.entity.ResourceEntity;
+import com.cloudteachingai.course.entity.ResourceTagEntity;
 import com.cloudteachingai.course.entity.enums.KnowledgePointType;
 import com.cloudteachingai.course.entity.enums.ResourceType;
 import com.cloudteachingai.course.repository.KnowledgePointRepository;
+import com.cloudteachingai.course.repository.ResourceTagRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -52,6 +54,7 @@ public class ResourceTagSuggestionService {
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".m4v", ".webm");
 
     private final KnowledgePointRepository knowledgePointRepository;
+    private final ResourceTagRepository resourceTagRepository;
     private final ResourceStorageService resourceStorageService;
     private final ObjectMapper objectMapper;
     private final Tika tika = new Tika();
@@ -119,10 +122,12 @@ public class ResourceTagSuggestionService {
 
     public ResourceTagSuggestionService(
             KnowledgePointRepository knowledgePointRepository,
+            ResourceTagRepository resourceTagRepository,
             ResourceStorageService resourceStorageService,
             ObjectMapper objectMapper
     ) {
         this.knowledgePointRepository = knowledgePointRepository;
+        this.resourceTagRepository = resourceTagRepository;
         this.resourceStorageService = resourceStorageService;
         this.objectMapper = objectMapper;
     }
@@ -163,28 +168,21 @@ public class ResourceTagSuggestionService {
     }
 
     private List<ResourceTagSuggestionResponse> suggest(ResourceTagPreviewRequest request, ExtractedContent extractedContent) {
-        List<KnowledgePointEntity> activeLeafKnowledgePoints = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
-                .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
-                .toList();
-        if (activeLeafKnowledgePoints.isEmpty()) {
-            log.warn("Resource tag suggestion aborted: no active leaf knowledge points");
-            return List.of();
-        }
-
         Map<Long, KnowledgePointEntity> knowledgePointMap = loadKnowledgePointMap();
-        List<ResourceTagSuggestionResponse> ruleSuggestions = buildRuleSuggestions(request, extractedContent, activeLeafKnowledgePoints, knowledgePointMap);
+        List<TagCandidate> candidates = loadTagCandidates(knowledgePointMap);
+        List<ResourceTagSuggestionResponse> ruleSuggestions = buildRuleSuggestions(request, extractedContent, candidates);
         List<ResourceTagSuggestionResponse> aiSuggestions = buildAiSuggestions(
                 request,
                 extractedContent,
-                activeLeafKnowledgePoints,
-                knowledgePointMap,
+                candidates,
                 ruleSuggestions
         );
         log.info(
-                "Resource tag suggestion finished: type={}, extractedTextLength={}, metadataLength={}, ruleCount={}, aiCount={}",
+                "Resource tag suggestion finished: type={}, extractedTextLength={}, metadataLength={}, candidateCount={}, ruleCount={}, aiCount={}",
                 request.getType(),
                 extractedContent == null ? 0 : extractedContent.text().length(),
                 extractedContent == null ? 0 : extractedContent.metadataSummary().length(),
+                candidates.size(),
                 ruleSuggestions.size(),
                 aiSuggestions.size()
         );
@@ -194,8 +192,7 @@ public class ResourceTagSuggestionService {
     private List<ResourceTagSuggestionResponse> buildAiSuggestions(
             ResourceTagPreviewRequest request,
             ExtractedContent extractedContent,
-            List<KnowledgePointEntity> activeLeafKnowledgePoints,
-            Map<Long, KnowledgePointEntity> knowledgePointMap,
+            List<TagCandidate> candidates,
             List<ResourceTagSuggestionResponse> ruleSuggestions
     ) {
         TagProvider tagProvider = resolveTagProvider();
@@ -217,17 +214,7 @@ public class ResourceTagSuggestionService {
             return List.of();
         }
 
-        List<KnowledgePointEntity> llmCandidates = selectLlmCandidates(
-                activeLeafKnowledgePoints,
-                knowledgePointMap,
-                request,
-                extractedContent,
-                ruleSuggestions
-        );
-        if (llmCandidates.isEmpty()) {
-            log.warn("Skip AI tag preview because no LLM candidates were selected. type={}, analysisLength={}", request.getType(), analysisText.length());
-            return List.of();
-        }
+        List<TagCandidate> llmCandidates = selectLlmCandidates(candidates, request, extractedContent, ruleSuggestions);
 
         try {
             List<ResourceTagSuggestionResponse> strictSuggestions = requestAiSuggestions(
@@ -235,7 +222,6 @@ public class ResourceTagSuggestionService {
                     request,
                     analysisText,
                     llmCandidates,
-                    knowledgePointMap,
                     false
             );
             if (!strictSuggestions.isEmpty()) {
@@ -247,16 +233,16 @@ public class ResourceTagSuggestionService {
                     request,
                     analysisText,
                     llmCandidates,
-                    knowledgePointMap,
                     true
             );
             if (permissiveSuggestions.isEmpty()) {
                 log.info(
-                        "AI tag preview still returned no suggestions. type={}, fileName={}, analysisLength={}, providerBaseUrl={}",
+                        "AI tag preview still returned no suggestions. type={}, fileName={}, analysisLength={}, providerBaseUrl={}, candidateCount={}",
                         request.getType(),
                         request.getFileName(),
                         analysisText.length(),
-                        tagProvider.baseUrl()
+                        tagProvider.baseUrl(),
+                        llmCandidates.size()
                 );
             }
             return permissiveSuggestions;
@@ -270,8 +256,7 @@ public class ResourceTagSuggestionService {
             TagProvider tagProvider,
             ResourceTagPreviewRequest request,
             String analysisText,
-            List<KnowledgePointEntity> llmCandidates,
-            Map<Long, KnowledgePointEntity> knowledgePointMap,
+            List<TagCandidate> llmCandidates,
             boolean allowClosestMatches
     ) throws Exception {
         Map<String, Object> payload = Map.of(
@@ -282,8 +267,8 @@ public class ResourceTagSuggestionService {
                         Map.of(
                                 "role", "system",
                                 "content", allowClosestMatches
-                                        ? "You label educational resources with knowledge points. Choose only from the provided candidate leaf knowledge points. If there is no exact match, still return the closest 1 to 5 candidates with lower confidence instead of an empty list. Return JSON only in the form {\"matches\":[{\"knowledgePointId\":1,\"confidence\":0.61,\"reason\":\"short reason\"}]}."
-                                        : "You label educational resources with knowledge points. Choose only from the provided candidate leaf knowledge points and return JSON in the form {\"matches\":[{\"knowledgePointId\":1,\"confidence\":0.91,\"reason\":\"short reason\"}]}. If there is clear evidence, prefer precise matches."
+                                        ? "You label educational resources. First choose up to 5 best matches from the provided existing tag candidates. If the candidates are not enough, generate up to 3 additional concise tags in the same language as the resource. Return JSON only in the form {\"matchedExistingTags\":[{\"label\":\"tag\",\"confidence\":0.73,\"reason\":\"short reason\"}],\"generatedTags\":[{\"label\":\"new tag\",\"confidence\":0.58,\"reason\":\"short reason\"}]}. Prefer returning low-confidence approximate matches instead of an empty list."
+                                        : "You label educational resources. First choose up to 5 best matches from the provided existing tag candidates. If the candidates are not enough, generate up to 3 additional concise tags in the same language as the resource. Return JSON only in the form {\"matchedExistingTags\":[{\"label\":\"tag\",\"confidence\":0.91,\"reason\":\"short reason\"}],\"generatedTags\":[{\"label\":\"new tag\",\"confidence\":0.66,\"reason\":\"short reason\"}]}. Prefer precise labels and avoid duplicates."
                         ),
                         Map.of(
                                 "role", "user",
@@ -296,11 +281,13 @@ public class ResourceTagSuggestionService {
                                                 "sourceUrl", Optional.ofNullable(request.getSourceUrl()).orElse(""),
                                                 "extractedContent", truncate(analysisText, maxContentChars)
                                         ),
-                                        "candidateKnowledgePoints", llmCandidates.stream().map(item -> Map.of(
-                                                "knowledgePointId", item.getId(),
-                                                "name", item.getName(),
-                                                "path", buildKnowledgePointPath(item.getId(), knowledgePointMap),
-                                                "keywords", Optional.ofNullable(item.getKeywords()).orElse("")
+                                        "existingTagCandidates", llmCandidates.stream().map(item -> Map.of(
+                                                "label", item.label(),
+                                                "kind", item.kind(),
+                                                "knowledgePointId", item.knowledgePointId(),
+                                                "knowledgePointName", Optional.ofNullable(item.knowledgePointName()).orElse(""),
+                                                "path", Optional.ofNullable(item.path()).orElse(""),
+                                                "keywords", item.keywords()
                                         )).toList()
                                 ))
                         )
@@ -327,33 +314,50 @@ public class ResourceTagSuggestionService {
             return List.of();
         }
 
-        JsonNode matches = objectMapper.readTree(contentNode.asText()).path("matches");
-        if (!matches.isArray()) {
-            return List.of();
+        JsonNode parsed = objectMapper.readTree(contentNode.asText());
+        Map<String, TagCandidate> candidateMap = llmCandidates.stream()
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.normalizedLabel(), item), Map::putAll);
+        LinkedHashMap<String, ResourceTagSuggestionResponse> suggestions = new LinkedHashMap<>();
+
+        JsonNode matchedExistingTags = parsed.path("matchedExistingTags");
+        if (matchedExistingTags.isArray()) {
+            for (JsonNode match : matchedExistingTags) {
+                String label = normalizeDisplayLabel(match.path("label").asText());
+                TagCandidate candidate = candidateMap.get(normalizeSuggestionText(label));
+                if (candidate == null) {
+                    continue;
+                }
+                double confidence = Math.max(0.0D, Math.min(0.99D, match.path("confidence").asDouble(allowClosestMatches ? 0.58D : 0.72D)));
+                suggestions.putIfAbsent(candidate.normalizedLabel(), toSuggestionResponse(
+                        candidate,
+                        Math.round(confidence * 100.0D) / 100.0D,
+                        StringUtils.hasText(match.path("reason").asText()) ? match.path("reason").asText() : "AI matched existing tag"
+                ));
+            }
         }
 
-        Map<Long, KnowledgePointEntity> candidateMap = llmCandidates.stream()
-                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
-        List<ResourceTagSuggestionResponse> suggestions = new ArrayList<>();
-        for (JsonNode match : matches) {
-            long knowledgePointId = match.path("knowledgePointId").asLong(-1L);
-            KnowledgePointEntity knowledgePoint = candidateMap.get(knowledgePointId);
-            if (knowledgePoint == null) {
-                continue;
+        JsonNode generatedTags = parsed.path("generatedTags");
+        if (generatedTags.isArray()) {
+            for (JsonNode generated : generatedTags) {
+                String label = normalizeDisplayLabel(generated.path("label").asText());
+                String normalizedLabel = normalizeSuggestionText(label);
+                if (!StringUtils.hasText(normalizedLabel) || suggestions.containsKey(normalizedLabel)) {
+                    continue;
+                }
+                double confidence = Math.max(0.0D, Math.min(0.99D, generated.path("confidence").asDouble(allowClosestMatches ? 0.52D : 0.66D)));
+                suggestions.put(normalizedLabel, ResourceTagSuggestionResponse.builder()
+                        .label(label)
+                        .kind("GENERATED")
+                        .confidence(Math.round(confidence * 100.0D) / 100.0D)
+                        .reason(StringUtils.hasText(generated.path("reason").asText()) ? generated.path("reason").asText() : "AI generated tag")
+                        .build());
             }
-            double confidence = Math.max(0.0D, Math.min(0.99D, match.path("confidence").asDouble(allowClosestMatches ? 0.58D : 0.72D)));
-            suggestions.add(ResourceTagSuggestionResponse.builder()
-                    .knowledgePointId(knowledgePoint.getId())
-                    .knowledgePointName(knowledgePoint.getName())
-                    .path(buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap))
-                    .confidence(Math.round(confidence * 100.0D) / 100.0D)
-                    .reason(StringUtils.hasText(match.path("reason").asText()) ? match.path("reason").asText() : "AI content analysis")
-                    .build());
         }
-        return suggestions.stream()
+
+        return suggestions.values().stream()
                 .sorted(Comparator
                         .comparing(ResourceTagSuggestionResponse::getConfidence, Comparator.reverseOrder())
-                        .thenComparing(ResourceTagSuggestionResponse::getPath))
+                        .thenComparing(item -> Optional.ofNullable(item.getLabel()).orElse("")))
                 .limit(MAX_TAG_SUGGESTIONS)
                 .toList();
     }
@@ -368,20 +372,19 @@ public class ResourceTagSuggestionService {
         return null;
     }
 
-    private List<KnowledgePointEntity> selectLlmCandidates(
-            List<KnowledgePointEntity> activeLeafKnowledgePoints,
-            Map<Long, KnowledgePointEntity> knowledgePointMap,
+    private List<TagCandidate> selectLlmCandidates(
+            List<TagCandidate> candidates,
             ResourceTagPreviewRequest request,
             ExtractedContent extractedContent,
             List<ResourceTagSuggestionResponse> ruleSuggestions
     ) {
-        Map<Long, KnowledgePointEntity> byId = activeLeafKnowledgePoints.stream()
-                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
-        List<KnowledgePointEntity> seeded = new ArrayList<>();
+        Map<String, TagCandidate> byNormalizedLabel = candidates.stream()
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.normalizedLabel(), item), Map::putAll);
+        List<TagCandidate> seeded = new ArrayList<>();
         for (ResourceTagSuggestionResponse suggestion : ruleSuggestions) {
-            KnowledgePointEntity knowledgePoint = byId.get(suggestion.getKnowledgePointId());
-            if (knowledgePoint != null) {
-                seeded.add(knowledgePoint);
+            TagCandidate candidate = byNormalizedLabel.get(normalizeSuggestionText(suggestion.getLabel()));
+            if (candidate != null) {
+                seeded.add(candidate);
             }
         }
         if (seeded.size() >= MAX_LLM_CANDIDATES) {
@@ -390,20 +393,19 @@ public class ResourceTagSuggestionService {
 
         String normalizedTitle = normalizeSuggestionText(request.getTitle());
         String normalizedBody = normalizeSuggestionText(buildAnalysisText(request, extractedContent));
-        List<KnowledgePointEntity> ranked = activeLeafKnowledgePoints.stream()
+        List<TagCandidate> ranked = candidates.stream()
                 .sorted(Comparator
-                        .comparing((KnowledgePointEntity item) -> candidateScore(item, knowledgePointMap, normalizedTitle, normalizedBody))
+                        .comparing((TagCandidate item) -> candidateScore(item, normalizedTitle, normalizedBody))
                         .reversed()
-                        .thenComparing(KnowledgePointEntity::getOrderIndex)
-                        .thenComparing(KnowledgePointEntity::getId))
+                        .thenComparing(TagCandidate::label))
                 .toList();
 
-        LinkedHashMap<Long, KnowledgePointEntity> merged = new LinkedHashMap<>();
-        for (KnowledgePointEntity knowledgePoint : seeded) {
-            merged.putIfAbsent(knowledgePoint.getId(), knowledgePoint);
+        LinkedHashMap<String, TagCandidate> merged = new LinkedHashMap<>();
+        for (TagCandidate candidate : seeded) {
+            merged.putIfAbsent(candidate.normalizedLabel(), candidate);
         }
-        for (KnowledgePointEntity knowledgePoint : ranked) {
-            merged.putIfAbsent(knowledgePoint.getId(), knowledgePoint);
+        for (TagCandidate candidate : ranked) {
+            merged.putIfAbsent(candidate.normalizedLabel(), candidate);
             if (merged.size() >= MAX_LLM_CANDIDATES) {
                 break;
             }
@@ -411,44 +413,38 @@ public class ResourceTagSuggestionService {
         return new ArrayList<>(merged.values());
     }
 
-    private double candidateScore(
-            KnowledgePointEntity knowledgePoint,
-            Map<Long, KnowledgePointEntity> knowledgePointMap,
-            String normalizedTitle,
-            String normalizedBody
-    ) {
+    private double candidateScore(TagCandidate candidate, String normalizedTitle, String normalizedBody) {
         double score = 0.0D;
-        String pointName = normalizeSuggestionText(knowledgePoint.getName());
-        if (StringUtils.hasText(pointName) && normalizedTitle.contains(pointName)) {
+        if (StringUtils.hasText(candidate.normalizedLabel()) && normalizedTitle.contains(candidate.normalizedLabel())) {
             score += 0.7D;
-        } else if (StringUtils.hasText(pointName) && normalizedBody.contains(pointName)) {
+        } else if (StringUtils.hasText(candidate.normalizedLabel()) && normalizedBody.contains(candidate.normalizedLabel())) {
             score += 0.55D;
         }
-        for (String keyword : splitKeywords(knowledgePoint.getKeywords())) {
+        for (String keyword : candidate.keywords()) {
             String normalizedKeyword = normalizeSuggestionText(keyword);
             if (StringUtils.hasText(normalizedKeyword) && normalizedBody.contains(normalizedKeyword)) {
                 score += 0.2D;
             }
         }
-        KnowledgePointEntity domain = knowledgePointMap.get(knowledgePoint.getParentId());
-        if (domain != null && normalizedBody.contains(normalizeSuggestionText(domain.getName()))) {
-            score += 0.08D;
+        if (StringUtils.hasText(candidate.path())) {
+            for (String segment : candidate.path().split("/")) {
+                String normalizedSegment = normalizeSuggestionText(segment);
+                if (StringUtils.hasText(normalizedSegment) && normalizedBody.contains(normalizedSegment)) {
+                    score += 0.05D;
+                }
+            }
         }
         return score;
     }
 
     private List<ResourceTagSuggestionResponse> buildRuleSuggestions(ResourceTagPreviewRequest request, ExtractedContent extractedContent) {
-        List<KnowledgePointEntity> activeLeafKnowledgePoints = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
-                .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
-                .toList();
-        return buildRuleSuggestions(request, extractedContent, activeLeafKnowledgePoints, loadKnowledgePointMap());
+        return buildRuleSuggestions(request, extractedContent, loadTagCandidates(loadKnowledgePointMap()));
     }
 
     private List<ResourceTagSuggestionResponse> buildRuleSuggestions(
             ResourceTagPreviewRequest request,
             ExtractedContent extractedContent,
-            List<KnowledgePointEntity> activeLeafKnowledgePoints,
-            Map<Long, KnowledgePointEntity> knowledgePointMap
+            List<TagCandidate> candidates
     ) {
         String normalizedTitle = normalizeSuggestionText(request.getTitle());
         String normalizedFullText = normalizeSuggestionText(buildAnalysisText(request, extractedContent));
@@ -457,19 +453,18 @@ public class ResourceTagSuggestionService {
         }
 
         List<ResourceTagSuggestionResponse> suggestions = new ArrayList<>();
-        for (KnowledgePointEntity knowledgePoint : activeLeafKnowledgePoints) {
+        for (TagCandidate candidate : candidates) {
             double score = 0D;
             List<String> reasons = new ArrayList<>();
-            String pointName = normalizeSuggestionText(knowledgePoint.getName());
-            if (StringUtils.hasText(pointName) && normalizedTitle.contains(pointName)) {
+            if (StringUtils.hasText(candidate.normalizedLabel()) && normalizedTitle.contains(candidate.normalizedLabel())) {
                 score += 0.75D;
                 reasons.add("title match");
-            } else if (StringUtils.hasText(pointName) && normalizedFullText.contains(pointName)) {
-                score += 0.65D;
+            } else if (StringUtils.hasText(candidate.normalizedLabel()) && normalizedFullText.contains(candidate.normalizedLabel())) {
+                score += 0.6D;
                 reasons.add("content match");
             }
 
-            for (String keyword : splitKeywords(knowledgePoint.getKeywords())) {
+            for (String keyword : candidate.keywords()) {
                 String normalizedKeyword = normalizeSuggestionText(keyword);
                 if (StringUtils.hasText(normalizedKeyword) && normalizedFullText.contains(normalizedKeyword)) {
                     score += 0.18D;
@@ -477,20 +472,12 @@ public class ResourceTagSuggestionService {
                 }
             }
 
-            KnowledgePointEntity domain = knowledgePointMap.get(knowledgePoint.getParentId());
-            if (domain != null) {
-                String normalizedDomain = normalizeSuggestionText(domain.getName());
-                if (StringUtils.hasText(normalizedDomain) && normalizedFullText.contains(normalizedDomain)) {
-                    score += 0.08D;
-                    reasons.add("domain match");
-                }
-
-                KnowledgePointEntity subject = domain.getParentId() == null ? null : knowledgePointMap.get(domain.getParentId());
-                if (subject != null) {
-                    String normalizedSubject = normalizeSuggestionText(subject.getName());
-                    if (StringUtils.hasText(normalizedSubject) && normalizedFullText.contains(normalizedSubject)) {
+            if (StringUtils.hasText(candidate.path())) {
+                for (String segment : candidate.path().split("/")) {
+                    String normalizedSegment = normalizeSuggestionText(segment);
+                    if (StringUtils.hasText(normalizedSegment) && normalizedFullText.contains(normalizedSegment)) {
                         score += 0.04D;
-                        reasons.add("subject match");
+                        reasons.add("path match");
                     }
                 }
             }
@@ -499,21 +486,72 @@ public class ResourceTagSuggestionService {
                 continue;
             }
 
-            suggestions.add(ResourceTagSuggestionResponse.builder()
-                    .knowledgePointId(knowledgePoint.getId())
-                    .knowledgePointName(knowledgePoint.getName())
-                    .path(buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap))
-                    .confidence(Math.round(Math.min(0.99D, score) * 100.0D) / 100.0D)
-                    .reason(String.join("; ", reasons.stream().distinct().toList()))
-                    .build());
+            suggestions.add(toSuggestionResponse(
+                    candidate,
+                    Math.round(Math.min(0.99D, score) * 100.0D) / 100.0D,
+                    String.join("; ", reasons.stream().distinct().toList())
+            ));
         }
 
         return suggestions.stream()
                 .sorted(Comparator
                         .comparing(ResourceTagSuggestionResponse::getConfidence, Comparator.reverseOrder())
-                        .thenComparing(ResourceTagSuggestionResponse::getPath))
+                        .thenComparing(item -> Optional.ofNullable(item.getLabel()).orElse("")))
                 .limit(MAX_TAG_SUGGESTIONS)
                 .toList();
+    }
+
+    private List<TagCandidate> loadTagCandidates(Map<Long, KnowledgePointEntity> knowledgePointMap) {
+        LinkedHashMap<String, TagCandidate> candidates = new LinkedHashMap<>();
+
+        for (KnowledgePointEntity knowledgePoint : knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc()) {
+            if (knowledgePoint.getNodeType() != KnowledgePointType.POINT) {
+                continue;
+            }
+            TagCandidate candidate = new TagCandidate(
+                    knowledgePoint.getName(),
+                    normalizeSuggestionText(knowledgePoint.getName()),
+                    "EXISTING",
+                    knowledgePoint.getId(),
+                    knowledgePoint.getName(),
+                    buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap),
+                    splitKeywords(knowledgePoint.getKeywords())
+            );
+            if (StringUtils.hasText(candidate.normalizedLabel())) {
+                candidates.putIfAbsent(candidate.normalizedLabel(), candidate);
+            }
+        }
+
+        for (ResourceTagEntity tag : resourceTagRepository.findAllByOrderByNormalizedLabelAscIdAsc()) {
+            String normalizedLabel = normalizeSuggestionText(tag.getLabel());
+            if (!StringUtils.hasText(normalizedLabel)) {
+                continue;
+            }
+            KnowledgePointEntity knowledgePoint = tag.getKnowledgePointId() == null ? null : knowledgePointMap.get(tag.getKnowledgePointId());
+            candidates.putIfAbsent(normalizedLabel, new TagCandidate(
+                    tag.getLabel(),
+                    normalizedLabel,
+                    "EXISTING",
+                    tag.getKnowledgePointId(),
+                    knowledgePoint == null ? null : knowledgePoint.getName(),
+                    knowledgePoint == null ? null : buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap),
+                    knowledgePoint == null ? List.of() : splitKeywords(knowledgePoint.getKeywords())
+            ));
+        }
+
+        return new ArrayList<>(candidates.values());
+    }
+
+    private ResourceTagSuggestionResponse toSuggestionResponse(TagCandidate candidate, double confidence, String reason) {
+        return ResourceTagSuggestionResponse.builder()
+                .label(candidate.label())
+                .kind(candidate.kind())
+                .knowledgePointId(candidate.knowledgePointId())
+                .knowledgePointName(candidate.knowledgePointName())
+                .path(candidate.path())
+                .confidence(confidence)
+                .reason(reason)
+                .build();
     }
 
     private String buildAnalysisText(ResourceTagPreviewRequest request, ExtractedContent extractedContent) {
@@ -533,6 +571,10 @@ public class ResourceTagSuggestionService {
         if (StringUtils.hasText(value)) {
             target.add(value.trim());
         }
+    }
+
+    private String normalizeDisplayLabel(String label) {
+        return StringUtils.hasText(label) ? label.trim() : "";
     }
 
     private ExtractedContent tryExtractFromMultipart(MultipartFile file, String declaredType) {
@@ -1092,6 +1134,17 @@ public class ResourceTagSuggestionService {
     }
 
     private record ClipPlan(double startSeconds, double durationSeconds) {
+    }
+
+    private record TagCandidate(
+            String label,
+            String normalizedLabel,
+            String kind,
+            Long knowledgePointId,
+            String knowledgePointName,
+            String path,
+            List<String> keywords
+    ) {
     }
 
     private record TagProvider(String apiKey, String baseUrl, String model) {

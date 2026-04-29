@@ -57,10 +57,20 @@ export interface Resource {
   taggingStatus?: 'UNTAGGED' | 'SUGGESTED' | 'CONFIRMED'
   taggingUpdatedAt?: string | null
   knowledgePoints?: ResourceKnowledgePoint[]
+  tags?: ResourceTag[]
   duration?: number
   size?: number
   orderIndex: number
   createdAt: string
+}
+
+export interface ResourceTag {
+  id: number
+  label: string
+  confidence?: number
+  source?: 'AI' | 'MANUAL'
+  knowledgePointId?: number | null
+  knowledgePointPath?: string | null
 }
 
 export interface KnowledgePointNode {
@@ -86,9 +96,11 @@ export interface ResourceKnowledgePoint {
 }
 
 export interface ResourceTagSuggestion {
-  knowledgePointId: number
-  knowledgePointName: string
-  path: string
+  label: string
+  kind: 'EXISTING' | 'GENERATED'
+  knowledgePointId?: number | null
+  knowledgePointName?: string | null
+  path?: string | null
   confidence: number
   reason: string
 }

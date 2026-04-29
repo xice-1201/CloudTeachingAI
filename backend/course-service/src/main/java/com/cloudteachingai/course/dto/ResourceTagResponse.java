@@ -9,12 +9,11 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ResourceTagSuggestionResponse {
+public class ResourceTagResponse {
+    private Long id;
     private String label;
-    private String kind;
-    private Long knowledgePointId;
-    private String knowledgePointName;
-    private String path;
     private Double confidence;
-    private String reason;
+    private String source;
+    private Long knowledgePointId;
+    private String knowledgePointPath;
 }

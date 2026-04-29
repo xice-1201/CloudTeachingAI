@@ -150,7 +150,7 @@ export const courseApi = {
   getResourceTagSuggestions: (resourceId: string): Promise<ResourceTagSuggestion[]> =>
     request.get(`/resources/${resourceId}/tag-suggestions`),
 
-  confirmResourceTags: (resourceId: string, data: { knowledgePointIds: number[] }): Promise<Resource> =>
+  confirmResourceTags: (resourceId: string, data: { knowledgePointIds?: number[]; tagLabels?: string[] }): Promise<Resource> =>
     request.patch(`/resources/${resourceId}/tags`, data),
 
   createResource: (chapterId: string, data: Partial<Resource>): Promise<Resource> =>

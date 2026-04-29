@@ -32,14 +32,14 @@
 
         <el-card shadow="never" header="资源信息">
           <div v-if="resource?.description" class="resource-description">{{ resource.description }}</div>
-          <div v-if="resource?.knowledgePoints?.length" class="resource-tags">
+          <div v-if="resource?.tags?.length || resource?.knowledgePoints?.length" class="resource-tags">
             <el-tag
-              v-for="knowledgePoint in resource.knowledgePoints"
-              :key="`${resource.id}-${knowledgePoint.id}`"
+              v-for="tag in (resource?.tags?.length ? resource.tags : resource?.knowledgePoints)"
+              :key="`${resource?.id}-${tag.label ?? tag.id}`"
               size="small"
               effect="plain"
             >
-              {{ knowledgePoint.name }}
+              {{ tag.label ?? tag.name }}
             </el-tag>
           </div>
           <div v-else class="progress-text">当前资源还没有确认的知识点标签。</div>
