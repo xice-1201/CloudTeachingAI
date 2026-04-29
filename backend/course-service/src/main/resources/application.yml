@@ -33,6 +33,10 @@ spring:
         enabled: false
       config:
         enabled: false
+  servlet:
+    multipart:
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:256MB}
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:256MB}
 
 server:
   port: 8003
