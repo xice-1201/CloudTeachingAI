@@ -35,6 +35,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -52,6 +53,12 @@ public class ResourceTagSuggestionService {
     private static final int MAX_LLM_CANDIDATES = 120;
     private static final String MULTIPART_EOL = "\r\n";
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".m4v", ".webm");
+    private static final Set<String> TAG_STOP_WORDS = Set.of(
+            "the", "and", "for", "with", "from", "this", "that", "into", "about", "your", "have", "will",
+            "video", "document", "slide", "resource", "course", "lesson", "chapter",
+            "一个", "一种", "一些", "这个", "那个", "我们", "你们", "他们", "课程", "资源", "视频", "文档", "课件",
+            "学习", "内容", "相关", "介绍", "上传", "章节", "知识点"
+    );
 
     private final KnowledgePointRepository knowledgePointRepository;
     private final ResourceTagRepository resourceTagRepository;
@@ -186,7 +193,23 @@ public class ResourceTagSuggestionService {
                 ruleSuggestions.size(),
                 aiSuggestions.size()
         );
-        return aiSuggestions.isEmpty() ? ruleSuggestions : aiSuggestions;
+        if (!aiSuggestions.isEmpty()) {
+            return aiSuggestions;
+        }
+        if (!ruleSuggestions.isEmpty()) {
+            return ruleSuggestions;
+        }
+
+        List<ResourceTagSuggestionResponse> generatedFallbackSuggestions = buildGeneratedFallbackSuggestions(request, extractedContent, candidates);
+        if (!generatedFallbackSuggestions.isEmpty()) {
+            log.info(
+                    "Fallback generated tags used: type={}, count={}, fileName={}",
+                    request.getType(),
+                    generatedFallbackSuggestions.size(),
+                    request.getFileName()
+            );
+        }
+        return generatedFallbackSuggestions;
     }
 
     private List<ResourceTagSuggestionResponse> buildAiSuggestions(
@@ -540,6 +563,119 @@ public class ResourceTagSuggestionService {
         }
 
         return new ArrayList<>(candidates.values());
+    }
+
+    private List<ResourceTagSuggestionResponse> buildGeneratedFallbackSuggestions(
+            ResourceTagPreviewRequest request,
+            ExtractedContent extractedContent,
+            List<TagCandidate> candidates
+    ) {
+        String analysisText = buildAnalysisText(request, extractedContent);
+        if (!StringUtils.hasText(analysisText)) {
+            return List.of();
+        }
+
+        LinkedHashMap<String, ResourceTagSuggestionResponse> matchedExisting = new LinkedHashMap<>();
+        String normalizedBody = normalizeSuggestionText(analysisText);
+        for (TagCandidate candidate : candidates) {
+            if (!StringUtils.hasText(candidate.normalizedLabel())) {
+                continue;
+            }
+            if (!normalizedBody.contains(candidate.normalizedLabel())) {
+                continue;
+            }
+            double score = 0.68D;
+            if (StringUtils.hasText(request.getTitle())
+                    && normalizeSuggestionText(request.getTitle()).contains(candidate.normalizedLabel())) {
+                score = 0.82D;
+            }
+            matchedExisting.putIfAbsent(candidate.normalizedLabel(), toSuggestionResponse(
+                    candidate,
+                    score,
+                    "Fallback matched existing tag"
+            ));
+            if (matchedExisting.size() >= MAX_TAG_SUGGESTIONS) {
+                return matchedExisting.values().stream().toList();
+            }
+        }
+
+        Map<String, Integer> tokenScores = new HashMap<>();
+        for (String token : extractFallbackTokens(analysisText)) {
+            tokenScores.merge(token, 1, Integer::sum);
+        }
+
+        List<ResourceTagSuggestionResponse> generated = tokenScores.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()
+                        .thenComparing(Map.Entry::getKey))
+                .limit(MAX_TAG_SUGGESTIONS)
+                .map(entry -> ResourceTagSuggestionResponse.builder()
+                        .label(entry.getKey())
+                        .kind("GENERATED")
+                        .confidence(Math.min(0.79D, 0.45D + (entry.getValue() * 0.08D)))
+                        .reason("Fallback content keyword extraction")
+                        .build())
+                .toList();
+
+        LinkedHashMap<String, ResourceTagSuggestionResponse> merged = new LinkedHashMap<>(matchedExisting);
+        for (ResourceTagSuggestionResponse item : generated) {
+            merged.putIfAbsent(normalizeSuggestionText(item.getLabel()), item);
+            if (merged.size() >= MAX_TAG_SUGGESTIONS) {
+                break;
+            }
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    private List<String> extractFallbackTokens(String text) {
+        if (!StringUtils.hasText(text)) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (String rawPart : text.split("[\\s,.;:!?()\\[\\]{}<>/\\\\|\"'`~@#$%^&*_+=-]+")) {
+            String token = normalizeFallbackToken(rawPart);
+            if (isUsefulFallbackToken(token)) {
+                result.add(token);
+            }
+        }
+
+        String compact = text.replaceAll("\\s+", "");
+        java.util.regex.Matcher cjkMatcher = java.util.regex.Pattern.compile("[\\p{IsHan}]{2,8}").matcher(compact);
+        while (cjkMatcher.find()) {
+            String token = normalizeFallbackToken(cjkMatcher.group());
+            if (isUsefulFallbackToken(token)) {
+                result.add(token);
+            }
+        }
+        return new ArrayList<>(result);
+    }
+
+    private String normalizeFallbackToken(String token) {
+        if (!StringUtils.hasText(token)) {
+            return "";
+        }
+        return token.trim()
+                .replaceAll("^[^\\p{L}\\p{N}\\p{IsHan}]+|[^\\p{L}\\p{N}\\p{IsHan}]+$", "");
+    }
+
+    private boolean isUsefulFallbackToken(String token) {
+        if (!StringUtils.hasText(token)) {
+            return false;
+        }
+        String normalized = token.toLowerCase(Locale.ROOT);
+        if (TAG_STOP_WORDS.contains(normalized)) {
+            return false;
+        }
+        if (normalized.matches("\\d+")) {
+            return false;
+        }
+        if (token.length() < 2) {
+            return false;
+        }
+        if (token.length() > 24) {
+            return false;
+        }
+        return true;
     }
 
     private ResourceTagSuggestionResponse toSuggestionResponse(TagCandidate candidate, double confidence, String reason) {
