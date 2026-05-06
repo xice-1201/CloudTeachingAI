@@ -53,6 +53,11 @@ public class ResourceTagSuggestionService {
     private static final int MAX_LLM_CANDIDATES = 120;
     private static final String MULTIPART_EOL = "\r\n";
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".m4v", ".webm");
+    private static final Set<String> METADATA_TAG_STOP_WORDS = Set.of(
+            "audio", "video", "codec", "bitrate", "duration", "resolution", "frame", "frames", "fps",
+            "width", "height", "size", "bytes", "kbps", "mbps", "content", "format", "stream",
+            "h264", "h265", "hevc", "avc", "aac", "mp3", "opus", "pcm", "mov", "mp4", "m4v", "webm"
+    );
     private static final Set<String> TAG_STOP_WORDS = Set.of(
             "the", "and", "for", "with", "from", "this", "that", "into", "about", "your", "have", "will",
             "video", "document", "slide", "resource", "course", "lesson", "chapter",
@@ -224,10 +229,10 @@ public class ResourceTagSuggestionService {
             return List.of();
         }
 
-        String analysisText = buildAnalysisText(request, extractedContent);
+        String analysisText = buildSemanticAnalysisText(request, extractedContent);
         if (!StringUtils.hasText(analysisText)) {
             log.warn(
-                    "Skip AI tag preview because analysis text is empty. type={}, fileName={}, sourceUrlPresent={}, extractedTextLength={}, metadataLength={}",
+                    "Skip AI tag preview because semantic analysis text is empty. type={}, fileName={}, sourceUrlPresent={}, extractedTextLength={}, metadataLength={}",
                     request.getType(),
                     request.getFileName(),
                     StringUtils.hasText(request.getSourceUrl()),
@@ -415,7 +420,7 @@ public class ResourceTagSuggestionService {
         }
 
         String normalizedTitle = normalizeSuggestionText(request.getTitle());
-        String normalizedBody = normalizeSuggestionText(buildAnalysisText(request, extractedContent));
+        String normalizedBody = normalizeSuggestionText(buildSemanticAnalysisText(request, extractedContent));
         List<TagCandidate> ranked = candidates.stream()
                 .sorted(Comparator
                         .comparing((TagCandidate item) -> candidateScore(item, normalizedTitle, normalizedBody))
@@ -470,7 +475,7 @@ public class ResourceTagSuggestionService {
             List<TagCandidate> candidates
     ) {
         String normalizedTitle = normalizeSuggestionText(request.getTitle());
-        String normalizedFullText = normalizeSuggestionText(buildAnalysisText(request, extractedContent));
+        String normalizedFullText = normalizeSuggestionText(buildSemanticAnalysisText(request, extractedContent));
         if (!StringUtils.hasText(normalizedFullText)) {
             return List.of();
         }
@@ -570,8 +575,15 @@ public class ResourceTagSuggestionService {
             ExtractedContent extractedContent,
             List<TagCandidate> candidates
     ) {
-        String analysisText = buildAnalysisText(request, extractedContent);
+        String analysisText = buildSemanticAnalysisText(request, extractedContent);
         if (!StringUtils.hasText(analysisText)) {
+            log.info(
+                    "Skip generated fallback suggestions because semantic analysis text is empty. type={}, fileName={}, transcriptLength={}, metadataLength={}",
+                    request.getType(),
+                    request.getFileName(),
+                    extractedContent == null ? 0 : extractedContent.text().length(),
+                    extractedContent == null ? 0 : extractedContent.metadataSummary().length()
+            );
             return List.of();
         }
 
@@ -666,13 +678,31 @@ public class ResourceTagSuggestionService {
         if (TAG_STOP_WORDS.contains(normalized)) {
             return false;
         }
+        if (METADATA_TAG_STOP_WORDS.contains(normalized)) {
+            return false;
+        }
         if (normalized.matches("\\d+")) {
+            return false;
+        }
+        if (normalized.matches("\\d+[a-z]{1,4}")) {
+            return false;
+        }
+        if (normalized.matches("\\d+x\\d+")) {
+            return false;
+        }
+        if (normalized.matches("[a-z]+\\d+|\\d+[a-z]+")) {
+            return false;
+        }
+        if (normalized.matches("[a-f0-9]{8,}")) {
             return false;
         }
         if (token.length() < 2) {
             return false;
         }
         if (token.length() > 24) {
+            return false;
+        }
+        if (!token.matches(".*[\\p{IsHan}\\p{L}].*")) {
             return false;
         }
         return true;
@@ -701,6 +731,47 @@ public class ResourceTagSuggestionService {
             addIfText(parts, truncate(extractedContent.text(), maxContentChars));
         }
         return String.join(" ", parts);
+    }
+
+    private String buildSemanticAnalysisText(ResourceTagPreviewRequest request, ExtractedContent extractedContent) {
+        List<String> parts = new ArrayList<>();
+        addIfText(parts, request.getTitle());
+        addIfText(parts, request.getDescription());
+        if (!isVideoRequest(request)) {
+            addIfText(parts, sanitizeSemanticFileName(request.getFileName()));
+        }
+        if (extractedContent != null) {
+            addIfText(parts, truncate(extractedContent.text(), maxContentChars));
+        }
+        return String.join(" ", parts);
+    }
+
+    private boolean isVideoRequest(ResourceTagPreviewRequest request) {
+        return isLikelyVideo(request.getFileName(), null, request.getType())
+                || isLikelyVideo(extractFileName(request.getSourceUrl()), null, request.getType());
+    }
+
+    private String sanitizeSemanticFileName(String fileName) {
+        if (!StringUtils.hasText(fileName)) {
+            return "";
+        }
+        String withoutExtension = fileName;
+        int lastDot = withoutExtension.lastIndexOf('.');
+        if (lastDot > 0) {
+            withoutExtension = withoutExtension.substring(0, lastDot);
+        }
+        String normalized = withoutExtension
+                .replace('_', ' ')
+                .replace('-', ' ')
+                .replace('.', ' ')
+                .trim();
+        if (!StringUtils.hasText(normalized)) {
+            return "";
+        }
+        if (normalized.matches("(?i)[a-z0-9]{8,}")) {
+            return "";
+        }
+        return normalized;
     }
 
     private void addIfText(List<String> target, String value) {
@@ -855,6 +926,14 @@ public class ResourceTagSuggestionService {
                 transcript.length(),
                 metadataSummary.length()
         );
+        if (!StringUtils.hasText(transcript)) {
+            log.warn(
+                    "Video preview has no transcript content. fileName={}, durationSeconds={}, metadataLength={}",
+                    fileName,
+                    probeInfo.durationSeconds(),
+                    metadataSummary.length()
+            );
+        }
         return new ExtractedContent(transcript, metadataSummary);
     }
 
