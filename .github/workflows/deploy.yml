@@ -19,6 +19,7 @@ on:
           - course-service
           - learn-service
           - assign-service
+          - chat-agent
           - frontend
 
 env:
@@ -36,6 +37,7 @@ jobs:
       course_changed: ${{ steps.flags.outputs.course_changed }}
       learn_changed: ${{ steps.flags.outputs.learn_changed }}
       assign_changed: ${{ steps.flags.outputs.assign_changed }}
+      chat_changed: ${{ steps.flags.outputs.chat_changed }}
       frontend_changed: ${{ steps.flags.outputs.frontend_changed }}
       image_changed: ${{ steps.flags.outputs.image_changed }}
       deploy_all: ${{ steps.flags.outputs.deploy_all }}
@@ -66,6 +68,8 @@ jobs:
               - 'backend/learn-service/**'
             assign:
               - 'backend/assign-service/**'
+            chat:
+              - 'backend/chat-agent/**'
             frontend:
               - 'frontend/**'
             infra:
@@ -84,6 +88,7 @@ jobs:
             course_changed=false
             learn_changed=false
             assign_changed=false
+            chat_changed=false
             frontend_changed=false
             image_changed=false
             deploy_all=false
@@ -96,10 +101,11 @@ jobs:
               course_changed=true
               learn_changed=true
               assign_changed=true
+              chat_changed=true
               frontend_changed=true
               image_changed=true
               deploy_all=true
-              services="auth-service user-service notify-service course-service learn-service assign-service frontend"
+              services="auth-service user-service notify-service course-service learn-service assign-service chat-agent frontend"
             else
               case "$deploy_target" in
                 auth-service)
@@ -132,6 +138,11 @@ jobs:
                   image_changed=true
                   services="assign-service frontend"
                   ;;
+                chat-agent)
+                  chat_changed=true
+                  image_changed=true
+                  services="chat-agent frontend"
+                  ;;
                 frontend)
                   frontend_changed=true
                   image_changed=true
@@ -150,6 +161,7 @@ jobs:
             course_changed="${{ steps.changes.outputs.course }}"
             learn_changed="${{ steps.changes.outputs.learn }}"
             assign_changed="${{ steps.changes.outputs.assign }}"
+            chat_changed="${{ steps.changes.outputs.chat }}"
             frontend_changed="${{ steps.changes.outputs.frontend }}"
             infra_changed="${{ steps.changes.outputs.infra }}"
 
@@ -158,7 +170,7 @@ jobs:
             deploy_all=false
             services=""
 
-            for service_flag in "$auth_changed" "$user_changed" "$notify_changed" "$course_changed" "$learn_changed" "$assign_changed" "$frontend_changed"; do
+            for service_flag in "$auth_changed" "$user_changed" "$notify_changed" "$course_changed" "$learn_changed" "$assign_changed" "$chat_changed" "$frontend_changed"; do
               if [ "$service_flag" = "true" ]; then
                 image_changed=true
                 should_deploy=true
@@ -168,7 +180,7 @@ jobs:
             if [ "$infra_changed" = "true" ]; then
               deploy_all=true
               should_deploy=true
-              services="auth-service user-service notify-service course-service learn-service assign-service frontend"
+              services="auth-service user-service notify-service course-service learn-service assign-service chat-agent frontend"
             else
               if [ "$auth_changed" = "true" ]; then
                 services="$services auth-service"
@@ -188,7 +200,10 @@ jobs:
               if [ "$assign_changed" = "true" ]; then
                 services="$services assign-service"
               fi
-              if [ "$auth_changed" = "true" ] || [ "$user_changed" = "true" ] || [ "$notify_changed" = "true" ] || [ "$course_changed" = "true" ] || [ "$learn_changed" = "true" ] || [ "$assign_changed" = "true" ]; then
+              if [ "$chat_changed" = "true" ]; then
+                services="$services chat-agent"
+              fi
+              if [ "$auth_changed" = "true" ] || [ "$user_changed" = "true" ] || [ "$notify_changed" = "true" ] || [ "$course_changed" = "true" ] || [ "$learn_changed" = "true" ] || [ "$assign_changed" = "true" ] || [ "$chat_changed" = "true" ]; then
                 services="$services frontend"
               fi
               if [ "$frontend_changed" = "true" ]; then
@@ -205,6 +220,7 @@ jobs:
           echo "course_changed=$course_changed" >> "$GITHUB_OUTPUT"
           echo "learn_changed=$learn_changed" >> "$GITHUB_OUTPUT"
           echo "assign_changed=$assign_changed" >> "$GITHUB_OUTPUT"
+          echo "chat_changed=$chat_changed" >> "$GITHUB_OUTPUT"
           echo "frontend_changed=$frontend_changed" >> "$GITHUB_OUTPUT"
           echo "image_changed=$image_changed" >> "$GITHUB_OUTPUT"
           echo "deploy_all=$deploy_all" >> "$GITHUB_OUTPUT"
@@ -218,6 +234,7 @@ jobs:
           echo "course_changed=$course_changed"
           echo "learn_changed=$learn_changed"
           echo "assign_changed=$assign_changed"
+          echo "chat_changed=$chat_changed"
           echo "frontend_changed=$frontend_changed"
           echo "image_changed=$image_changed"
           echo "deploy_all=$deploy_all"
@@ -323,6 +340,19 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/assign-service:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/assign-service:latest
 
+      - name: Build and push chat-agent
+        if: needs.detect-changes.outputs.chat_changed == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/chat-agent
+          dockerfile: ./backend/chat-agent/Dockerfile
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/chat-agent:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/chat-agent:latest
+
       - name: Build and push frontend
         if: needs.detect-changes.outputs.frontend_changed == 'true'
         uses: docker/build-push-action@v5
@@ -365,6 +395,7 @@ jobs:
             COURSE_CHANGED="${{ needs.detect-changes.outputs.course_changed }}"
             LEARN_CHANGED="${{ needs.detect-changes.outputs.learn_changed }}"
             ASSIGN_CHANGED="${{ needs.detect-changes.outputs.assign_changed }}"
+            CHAT_CHANGED="${{ needs.detect-changes.outputs.chat_changed }}"
             FRONTEND_CHANGED="${{ needs.detect-changes.outputs.frontend_changed }}"
             DEPLOY_ALL="${{ needs.detect-changes.outputs.deploy_all }}"
             SERVICES="${{ needs.detect-changes.outputs.services }}"
@@ -480,6 +511,7 @@ jobs:
             pull_image_if_needed "$COURSE_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/course-service"
             pull_image_if_needed "$LEARN_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/learn-service"
             pull_image_if_needed "$ASSIGN_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/assign-service"
+            pull_image_if_needed "$CHAT_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/chat-agent"
             pull_image_if_needed "$FRONTEND_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/frontend"
             echo "Finished image pull phase"
             echo "Selecting compose update strategy..."
@@ -547,6 +579,9 @@ jobs:
             if [ "$DEPLOY_ALL" = "true" ] || [ "$ASSIGN_CHANGED" = "true" ]; then
               wait_for_service assign-service http://localhost:8005/actuator/health 3
             fi
+            if [ "$DEPLOY_ALL" = "true" ] || [ "$CHAT_CHANGED" = "true" ]; then
+              wait_for_service chat-agent http://localhost:8104/health 3
+            fi
 
             if [ "$DEPLOY_ALL" = "true" ] || [ "$FRONTEND_CHANGED" = "true" ]; then
               if curl -sf http://localhost:80 > /dev/null 2>&1; then
@@ -570,3 +605,4 @@ jobs:
             echo "course-service: http://${{ secrets.SERVER_HOST }}:8003"
             echo "learn-service: http://${{ secrets.SERVER_HOST }}:8004"
             echo "assign-service: http://${{ secrets.SERVER_HOST }}:8005"
+            echo "chat-agent: http://${{ secrets.SERVER_HOST }}:8104"

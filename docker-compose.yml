@@ -307,6 +307,27 @@
       retries: 3
       start_period: 60s
 
+  chat-agent:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/chat-agent:latest
+    container_name: chat-agent
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      CHAT_FALLBACK_ENABLED: ${CHAT_FALLBACK_ENABLED:-true}
+    ports:
+      - "8104:8104"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8104/health', timeout=5).read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   frontend:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/frontend:latest
     container_name: frontend
@@ -323,6 +344,8 @@
       learn-service:
         condition: service_healthy
       assign-service:
+        condition: service_healthy
+      chat-agent:
         condition: service_healthy
     environment:
       TZ: Asia/Shanghai

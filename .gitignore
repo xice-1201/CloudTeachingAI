@@ -25,6 +25,10 @@ build/
 target/
 *.log
 
+# Python
+__pycache__/
+*.py[cod]
+
 # OS
 .DS_Store
 Thumbs.db

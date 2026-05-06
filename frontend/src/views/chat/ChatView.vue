@@ -133,7 +133,8 @@ async function sendMessage() {
 
   const token = localStorage.getItem('token')
   const url = chatApi.sendMessage(currentSessionId.value, text)
-  const es = new EventSource(`${url}&Authorization=Bearer ${token}`)
+  const authQuery = token ? `&Authorization=${encodeURIComponent(`Bearer ${token}`)}` : ''
+  const es = new EventSource(`${url}${authQuery}`)
 
   es.onmessage = async (event) => {
     if (event.data === '[DONE]') {
