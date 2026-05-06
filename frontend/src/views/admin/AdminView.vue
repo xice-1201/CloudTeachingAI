@@ -115,8 +115,71 @@
         </el-table>
       </div>
 
-      <div v-else>
-        <p class="placeholder-text">课程管理功能将在后续阶段继续补齐。</p>
+      <div v-else-if="activeTab === 'courses'">
+        <div class="toolbar">
+          <el-form inline class="toolbar-form">
+            <el-form-item label="关键词">
+              <el-input
+                v-model="courseFilters.keyword"
+                clearable
+                placeholder="搜索课程名称"
+                style="width: 220px"
+                @keyup.enter="resetAndFetchCourses"
+                @clear="resetAndFetchCourses"
+              />
+            </el-form-item>
+            <el-form-item label="状态">
+              <el-select v-model="courseFilters.status" clearable placeholder="全部状态" style="width: 140px" @change="resetAndFetchCourses">
+                <el-option label="草稿" value="DRAFT" />
+                <el-option label="已发布" value="PUBLISHED" />
+                <el-option label="已归档" value="ARCHIVED" />
+              </el-select>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :icon="Search" @click="resetAndFetchCourses">查询</el-button>
+              <el-button :icon="Refresh" :loading="courseLoading" @click="fetchCourses">刷新</el-button>
+            </el-form-item>
+          </el-form>
+          <el-button type="primary" :icon="Plus" @click="router.push('/courses/create')">新建课程</el-button>
+        </div>
+
+        <el-table :data="courses" v-loading="courseLoading">
+          <el-table-column prop="title" label="课程名称" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="teacherName" label="授课教师" min-width="120" show-overflow-tooltip />
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              <el-tag :type="courseStatusTagType(row.status)">{{ courseStatusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="可见范围" min-width="150">
+            <template #default="{ row }">{{ courseVisibilityLabel(row) }}</template>
+          </el-table-column>
+          <el-table-column label="更新时间" width="170">
+            <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="320" fixed="right">
+            <template #default="{ row }">
+              <el-button :icon="View" link type="primary" @click="router.push(`/courses/${row.id}`)">查看</el-button>
+              <el-button :icon="Edit" link type="primary" @click="router.push(`/courses/${row.id}/edit`)">编辑</el-button>
+              <el-button v-if="row.status === 'DRAFT'" link type="success" @click="handlePublishCourse(row)">发布</el-button>
+              <el-button v-if="row.status === 'PUBLISHED'" link type="warning" @click="handleUnpublishCourse(row)">下架</el-button>
+              <el-button v-if="row.status !== 'ARCHIVED'" link type="warning" @click="handleArchiveCourse(row)">归档</el-button>
+              <el-button v-if="row.status === 'ARCHIVED'" link type="success" @click="handleRestoreCourse(row)">恢复</el-button>
+              <el-button :icon="Delete" link type="danger" @click="handleDeleteCourse(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-empty v-if="!courseLoading && courses.length === 0" description="暂无课程" />
+        <el-pagination
+          v-if="courseTotal > 0"
+          v-model:current-page="coursePage"
+          v-model:page-size="coursePageSize"
+          :total="courseTotal"
+          layout="total, sizes, prev, pager, next"
+          style="margin-top: 20px; justify-content: flex-end"
+          @change="fetchCourses"
+        />
       </div>
     </el-card>
 
@@ -138,21 +201,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { Delete, Edit, Plus, Refresh, Search, View } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { courseApi } from '@/api/course'
 import { systemApi, type ServiceHealthResult } from '@/api/system'
 import { userApi } from '@/api/user'
 import { useUserStore } from '@/store/user'
-import type { KnowledgePointNode, TeacherRegistrationApplication, User } from '@/types'
+import type { Course, KnowledgePointNode, TeacherRegistrationApplication, User } from '@/types'
 
 const userStore = useUserStore()
+const router = useRouter()
 const activeTab = ref('users')
 const users = ref<User[]>([])
 const teacherApplications = ref<TeacherRegistrationApplication[]>([])
+const courses = ref<Course[]>([])
 const userLoading = ref(false)
 const applicationLoading = ref(false)
+const courseLoading = ref(false)
 const knowledgePointLoading = ref(false)
 const knowledgePointSubmitting = ref(false)
 const serviceHealthLoading = ref(false)
@@ -160,6 +228,10 @@ const knowledgePointKeyword = ref('')
 const knowledgePointTree = ref<KnowledgePointNode[]>([])
 const serviceHealth = ref<ServiceHealthResult[]>([])
 const lastHealthCheckedAt = ref('')
+const coursePage = ref(1)
+const coursePageSize = ref(10)
+const courseTotal = ref(0)
+const courseFilters = reactive({ keyword: '', status: '' })
 const knowledgeTreeRef = ref<any>()
 const knowledgePointFormRef = ref<FormInstance>()
 
@@ -190,6 +262,14 @@ const serviceHealthSummary = computed(() => ({
 function roleTagType(role: string) { return { STUDENT: 'info', TEACHER: 'success', ADMIN: 'danger' }[role] ?? 'info' }
 function roleLabel(role: string) { return { STUDENT: '学生', TEACHER: '教师', ADMIN: '管理员' }[role] ?? role }
 function statusLabel(status: string) { return { PENDING: '待审批', APPROVED: '已通过', REJECTED: '已拒绝' }[status] ?? status }
+function courseStatusTagType(status: Course['status']) { return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info' }
+function courseStatusLabel(status: Course['status']) { return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status] ?? status }
+function courseVisibilityLabel(course: Course) {
+  if (course.visibilityType === 'SELECTED_STUDENTS') {
+    return `指定学生${course.visibleStudentCount ? ` · ${course.visibleStudentCount} 人` : ''}`
+  }
+  return '全体学生'
+}
 function knowledgeTypeLabel(type: KnowledgePointNode['nodeType']) { return { SUBJECT: '学科', DOMAIN: '知识领域', POINT: '知识点' }[type] ?? type }
 function nextKnowledgePointType(type: KnowledgePointNode['nodeType']) { return { SUBJECT: 'DOMAIN', DOMAIN: 'POINT', POINT: 'POINT' }[type] as KnowledgePointNode['nodeType'] }
 function filterKnowledgePointNode(keyword: string, data: KnowledgePointNode) { if (!keyword) return true; const normalized = keyword.trim().toLowerCase(); return data.name.toLowerCase().includes(normalized) || data.path.toLowerCase().includes(normalized) }
@@ -221,6 +301,27 @@ async function fetchKnowledgePoints() {
   } finally {
     knowledgePointLoading.value = false
   }
+}
+
+async function fetchCourses() {
+  courseLoading.value = true
+  try {
+    const response = await courseApi.listCourses({
+      page: coursePage.value,
+      pageSize: coursePageSize.value,
+      keyword: courseFilters.keyword || undefined,
+      status: courseFilters.status || undefined,
+    })
+    courses.value = response.items
+    courseTotal.value = response.total
+  } finally {
+    courseLoading.value = false
+  }
+}
+
+function resetAndFetchCourses() {
+  coursePage.value = 1
+  fetchCourses()
 }
 
 async function fetchServiceHealth() {
@@ -299,6 +400,43 @@ async function toggleKnowledgePoint(node: KnowledgePointNode) {
   await fetchKnowledgePoints()
 }
 
+async function handlePublishCourse(course: Course) {
+  const updatedCourse = await courseApi.publishCourse(String(course.id))
+  replaceCourse(updatedCourse)
+  ElMessage.success('课程已发布')
+}
+
+async function handleUnpublishCourse(course: Course) {
+  await ElMessageBox.confirm(`确认下架课程“${course.title}”吗？`, '下架课程', { type: 'warning' })
+  const updatedCourse = await courseApi.unpublishCourse(String(course.id))
+  replaceCourse(updatedCourse)
+  ElMessage.success('课程已下架')
+}
+
+async function handleArchiveCourse(course: Course) {
+  await ElMessageBox.confirm(`确认归档课程“${course.title}”吗？`, '归档课程', { type: 'warning' })
+  const updatedCourse = await courseApi.archiveCourse(String(course.id))
+  replaceCourse(updatedCourse)
+  ElMessage.success('课程已归档')
+}
+
+async function handleRestoreCourse(course: Course) {
+  const updatedCourse = await courseApi.restoreCourse(String(course.id))
+  replaceCourse(updatedCourse)
+  ElMessage.success('课程已恢复为草稿')
+}
+
+async function handleDeleteCourse(course: Course) {
+  await ElMessageBox.confirm(`确认删除课程“${course.title}”吗？该操作会删除课程下的章节和资源。`, '删除课程', { type: 'warning' })
+  await courseApi.deleteCourse(String(course.id))
+  ElMessage.success('课程已删除')
+  await fetchCourses()
+}
+
+function replaceCourse(updatedCourse: Course) {
+  courses.value = courses.value.map((course) => course.id === updatedCourse.id ? updatedCourse : course)
+}
+
 async function approveApplication(id: number) {
   if (!userStore.user) return
   try {
@@ -326,6 +464,7 @@ async function rejectApplication(id: number) {
 watch(activeTab, async (tab) => {
   if (tab === 'users') await fetchUsers()
   if (tab === 'teacherApplications') await fetchTeacherApplications()
+  if (tab === 'courses') await fetchCourses()
   if (tab === 'knowledgePoints') await fetchKnowledgePoints()
   if (tab === 'serviceHealth') await fetchServiceHealth()
 })
@@ -342,6 +481,8 @@ onMounted(async () => {
 <style scoped>
 .toolbar,.knowledge-row,.knowledge-actions,.knowledge-name,.health-summary { display: flex; align-items: center; gap: 12px; }
 .toolbar,.knowledge-row { justify-content: space-between; }
+.toolbar-form { align-items: center; }
+.toolbar-form :deep(.el-form-item) { margin-bottom: 0; }
 .knowledge-tree { padding: 8px 0; }
 .knowledge-row { width: 100%; padding: 8px 0; }
 .knowledge-path,.placeholder-text { color: #909399; font-size: 12px; }
