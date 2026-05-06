@@ -22,6 +22,9 @@ export const userApi = {
   listUsers: (params?: { page?: number; pageSize?: number; keyword?: string; role?: string; active?: boolean }): Promise<PageResponse<User>> =>
     request.get('/admin/users', { params }),
 
+  createUser: (data: { username: string; email: string; password: string; role: User['role'] }): Promise<User> =>
+    request.post('/admin/users', data),
+
   activateUser: (id: string | number): Promise<User> =>
     request.post(`/admin/users/${id}/activate`),
 

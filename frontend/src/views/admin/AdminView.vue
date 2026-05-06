@@ -42,6 +42,7 @@
               <el-button :icon="Refresh" :loading="userLoading" @click="fetchUsers">刷新</el-button>
             </el-form-item>
           </el-form>
+          <el-button type="primary" :icon="Plus" @click="openCreateUserDialog">新建用户</el-button>
         </div>
         <el-table :data="users" v-loading="userLoading">
           <el-table-column prop="username" label="用户名" />
@@ -254,6 +255,31 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="userDialog.visible" title="新建用户" width="520px">
+      <el-form ref="userFormRef" :model="userDialog.form" :rules="userRules" label-width="100px">
+        <el-form-item label="用户名" prop="username">
+          <el-input v-model="userDialog.form.username" placeholder="请输入用户名" />
+        </el-form-item>
+        <el-form-item label="邮箱" prop="email">
+          <el-input v-model="userDialog.form.email" placeholder="请输入邮箱" />
+        </el-form-item>
+        <el-form-item label="初始密码" prop="password">
+          <el-input v-model="userDialog.form.password" type="password" show-password placeholder="请输入初始密码" />
+        </el-form-item>
+        <el-form-item label="角色" prop="role">
+          <el-select v-model="userDialog.form.role" style="width: 100%">
+            <el-option label="学生" value="STUDENT" />
+            <el-option label="教师" value="TEACHER" />
+            <el-option label="管理员" value="ADMIN" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="userDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="userSubmitting" @click="handleCreateUser">创建</el-button>
+      </template>
+    </el-dialog>
+
     <el-drawer v-model="userDrawer.visible" title="用户详情" size="420px">
       <el-descriptions v-if="userDrawer.user" :column="1" border>
         <el-descriptions-item label="用户ID">{{ userDrawer.user.id }}</el-descriptions-item>
@@ -313,6 +339,7 @@ const userFilters = reactive({
 })
 const knowledgeTreeRef = ref<any>()
 const knowledgePointFormRef = ref<FormInstance>()
+const userFormRef = ref<FormInstance>()
 const userDrawer = ref({
   visible: false,
   user: null as User | null,
@@ -335,6 +362,33 @@ const knowledgePointDialog = ref({
 
 const knowledgePointRules: FormRules = {
   name: [{ required: true, message: '请输入节点名称', trigger: 'blur' }],
+}
+
+const userDialog = ref({
+  visible: false,
+  form: {
+    username: '',
+    email: '',
+    password: '',
+    role: 'STUDENT' as User['role'],
+  },
+})
+const userSubmitting = ref(false)
+
+const userRules: FormRules = {
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { min: 2, max: 50, message: '用户名长度需在 2-50 个字符之间', trigger: 'blur' },
+  ],
+  email: [
+    { required: true, message: '请输入邮箱', trigger: 'blur' },
+    { type: 'email', message: '请输入有效的邮箱地址', trigger: 'blur' },
+  ],
+  password: [
+    { required: true, message: '请输入初始密码', trigger: 'blur' },
+    { min: 8, max: 64, message: '密码长度需在 8-64 个字符之间', trigger: 'blur' },
+  ],
+  role: [{ required: true, message: '请选择角色', trigger: 'change' }],
 }
 
 const serviceHealthSummary = computed(() => ({
@@ -378,6 +432,39 @@ async function fetchUsers() {
 function resetAndFetchUsers() {
   userPage.value = 1
   fetchUsers()
+}
+
+function resetUserDialog() {
+  userDialog.value.form = {
+    username: '',
+    email: '',
+    password: '',
+    role: 'STUDENT',
+  }
+}
+
+function openCreateUserDialog() {
+  resetUserDialog()
+  userDialog.value.visible = true
+}
+
+async function handleCreateUser() {
+  await userFormRef.value?.validate()
+  userSubmitting.value = true
+  try {
+    await userApi.createUser({
+      username: userDialog.value.form.username.trim(),
+      email: userDialog.value.form.email.trim(),
+      password: userDialog.value.form.password,
+      role: userDialog.value.form.role,
+    })
+    ElMessage.success('用户已创建')
+    userDialog.value.visible = false
+    userPage.value = 1
+    await fetchUsers()
+  } finally {
+    userSubmitting.value = false
+  }
 }
 
 function openUserDrawer(user: User) {
