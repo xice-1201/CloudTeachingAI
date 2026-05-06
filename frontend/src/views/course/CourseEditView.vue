@@ -360,6 +360,13 @@ function handleResourceFileChange(file: UploadFile) {
   if (!file.raw) return
   selectedResourceFile.value = file.raw
   resourceDialog.form.size = file.raw.size
+  if (file.raw.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|mpe|mpeg|mpg|avi|wmv|mkv)$/i.test(file.raw.name)) {
+    resourceDialog.form.type = 'VIDEO'
+  } else if (file.raw.type.includes('presentation') || /\.(ppt|pptx|odp)$/i.test(file.raw.name)) {
+    resourceDialog.form.type = 'SLIDE'
+  } else if (file.raw.type.startsWith('application/') || file.raw.type.startsWith('text/')) {
+    resourceDialog.form.type = 'DOCUMENT'
+  }
   suggestions.value = []
 }
 

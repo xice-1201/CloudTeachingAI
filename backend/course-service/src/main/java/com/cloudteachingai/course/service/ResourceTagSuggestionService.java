@@ -1191,33 +1191,57 @@ public class ResourceTagSuggestionService {
         try {
             String boundary = "----CloudTeachingAI" + UUID.randomUUID();
             byte[] requestBody = buildTranscriptionRequestBody(boundary, audioClip);
-            log.info("Requesting audio transcription: fileName={}, size={}", audioClip.getFileName(), Files.size(audioClip));
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(normalizeBaseUrl(videoTranscriptionBaseUrl) + "/audio/transcriptions"))
-                    .timeout(Duration.ofSeconds(60))
-                    .header("Authorization", "Bearer " + videoTranscriptionApiKey)
-                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody))
-                    .build();
+            List<String> endpointCandidates = buildTranscriptionEndpointCandidates();
+            log.info(
+                    "Requesting audio transcription: fileName={}, size={}, endpoints={}",
+                    audioClip.getFileName(),
+                    Files.size(audioClip),
+                    endpointCandidates
+            );
+            for (String endpoint : endpointCandidates) {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(endpoint))
+                        .timeout(Duration.ofSeconds(60))
+                        .header("Authorization", "Bearer " + videoTranscriptionApiKey)
+                        .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody))
+                        .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                log.warn("Video transcription request failed: status={}, body={}", response.statusCode(), truncate(response.body(), 1000));
-                return "";
-            }
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    log.warn(
+                            "Video transcription request failed: endpoint={}, status={}, body={}",
+                            endpoint,
+                            response.statusCode(),
+                            truncate(response.body(), 1000)
+                    );
+                    continue;
+                }
 
-            JsonNode root = objectMapper.readTree(response.body());
-            if (root.hasNonNull("text")) {
-                return truncate(root.path("text").asText(), videoMaxTranscriptChars);
-            }
-            if (root.isTextual()) {
-                return truncate(root.asText(), videoMaxTranscriptChars);
+                JsonNode root = objectMapper.readTree(response.body());
+                if (root.hasNonNull("text")) {
+                    return truncate(root.path("text").asText(), videoMaxTranscriptChars);
+                }
+                if (root.isTextual()) {
+                    return truncate(root.asText(), videoMaxTranscriptChars);
+                }
+                log.warn("Video transcription response did not contain text field: endpoint={}, body={}", endpoint, truncate(response.body(), 1000));
             }
             return "";
         } catch (Exception ex) {
             log.warn("Failed to request video transcription", ex);
             return "";
         }
+    }
+
+    private List<String> buildTranscriptionEndpointCandidates() {
+        String normalizedBaseUrl = normalizeBaseUrl(videoTranscriptionBaseUrl);
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        candidates.add(normalizedBaseUrl + "/audio/transcriptions");
+        if (!normalizedBaseUrl.endsWith("/v1")) {
+            candidates.add(normalizedBaseUrl + "/v1/audio/transcriptions");
+        }
+        return new ArrayList<>(candidates);
     }
 
     private byte[] buildTranscriptionRequestBody(String boundary, Path audioClip) throws IOException {
