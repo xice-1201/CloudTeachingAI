@@ -7,6 +7,7 @@
       <el-tab-pane label="教师申请" name="teacherApplications" />
       <el-tab-pane label="知识点体系" name="knowledgePoints" />
       <el-tab-pane label="课程管理" name="courses" />
+      <el-tab-pane label="服务状态" name="serviceHealth" />
     </el-tabs>
 
     <el-card shadow="never" style="margin-top: 16px">
@@ -76,6 +77,44 @@
         </el-tree>
       </div>
 
+      <div v-else-if="activeTab === 'serviceHealth'">
+        <div class="toolbar">
+          <div>
+            <div class="health-summary">
+              <el-tag :type="serviceHealthSummary.down === 0 ? 'success' : 'danger'">
+                {{ serviceHealthSummary.down === 0 ? '全部正常' : `${serviceHealthSummary.down} 个异常` }}
+              </el-tag>
+              <span class="health-summary-text">
+                已检查 {{ serviceHealthSummary.total }} 个服务
+              </span>
+            </div>
+            <div class="knowledge-path">最后检查：{{ lastHealthCheckedAt ? formatDateTime(lastHealthCheckedAt) : '尚未检查' }}</div>
+          </div>
+          <el-button type="primary" :loading="serviceHealthLoading" @click="fetchServiceHealth">刷新状态</el-button>
+        </div>
+        <el-table :data="serviceHealth" v-loading="serviceHealthLoading">
+          <el-table-column prop="name" label="服务" min-width="150" />
+          <el-table-column label="状态" width="120">
+            <template #default="{ row }">
+              <el-tag :type="row.status === 'UP' ? 'success' : 'danger'">{{ row.status === 'UP' ? '正常' : '异常' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="响应耗时" width="120">
+            <template #default="{ row }">{{ row.responseTimeMs ?? '-' }} ms</template>
+          </el-table-column>
+          <el-table-column label="HTTP" width="100">
+            <template #default="{ row }">{{ row.httpStatus ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="endpoint" label="检查路径" min-width="180" />
+          <el-table-column label="最近检查" min-width="170">
+            <template #default="{ row }">{{ formatDateTime(row.checkedAt) }}</template>
+          </el-table-column>
+          <el-table-column label="说明" min-width="180">
+            <template #default="{ row }">{{ row.message ?? '健康检查通过' }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+
       <div v-else>
         <p class="placeholder-text">课程管理功能将在后续阶段继续补齐。</p>
       </div>
@@ -99,10 +138,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { courseApi } from '@/api/course'
+import { systemApi, type ServiceHealthResult } from '@/api/system'
 import { userApi } from '@/api/user'
 import { useUserStore } from '@/store/user'
 import type { KnowledgePointNode, TeacherRegistrationApplication, User } from '@/types'
@@ -115,8 +155,11 @@ const userLoading = ref(false)
 const applicationLoading = ref(false)
 const knowledgePointLoading = ref(false)
 const knowledgePointSubmitting = ref(false)
+const serviceHealthLoading = ref(false)
 const knowledgePointKeyword = ref('')
 const knowledgePointTree = ref<KnowledgePointNode[]>([])
+const serviceHealth = ref<ServiceHealthResult[]>([])
+const lastHealthCheckedAt = ref('')
 const knowledgeTreeRef = ref<any>()
 const knowledgePointFormRef = ref<FormInstance>()
 
@@ -139,12 +182,18 @@ const knowledgePointRules: FormRules = {
   name: [{ required: true, message: '请输入节点名称', trigger: 'blur' }],
 }
 
+const serviceHealthSummary = computed(() => ({
+  total: serviceHealth.value.length,
+  down: serviceHealth.value.filter((item) => item.status !== 'UP').length,
+}))
+
 function roleTagType(role: string) { return { STUDENT: 'info', TEACHER: 'success', ADMIN: 'danger' }[role] ?? 'info' }
 function roleLabel(role: string) { return { STUDENT: '学生', TEACHER: '教师', ADMIN: '管理员' }[role] ?? role }
 function statusLabel(status: string) { return { PENDING: '待审批', APPROVED: '已通过', REJECTED: '已拒绝' }[status] ?? status }
 function knowledgeTypeLabel(type: KnowledgePointNode['nodeType']) { return { SUBJECT: '学科', DOMAIN: '知识领域', POINT: '知识点' }[type] ?? type }
 function nextKnowledgePointType(type: KnowledgePointNode['nodeType']) { return { SUBJECT: 'DOMAIN', DOMAIN: 'POINT', POINT: 'POINT' }[type] as KnowledgePointNode['nodeType'] }
 function filterKnowledgePointNode(keyword: string, data: KnowledgePointNode) { if (!keyword) return true; const normalized = keyword.trim().toLowerCase(); return data.name.toLowerCase().includes(normalized) || data.path.toLowerCase().includes(normalized) }
+function formatDateTime(value: string) { return new Date(value).toLocaleString('zh-CN') }
 
 async function fetchUsers() {
   userLoading.value = true
@@ -171,6 +220,16 @@ async function fetchKnowledgePoints() {
     knowledgePointTree.value = await courseApi.listKnowledgePointTree({ activeOnly: false })
   } finally {
     knowledgePointLoading.value = false
+  }
+}
+
+async function fetchServiceHealth() {
+  serviceHealthLoading.value = true
+  try {
+    serviceHealth.value = await systemApi.listServiceHealth()
+    lastHealthCheckedAt.value = new Date().toISOString()
+  } finally {
+    serviceHealthLoading.value = false
   }
 }
 
@@ -268,6 +327,7 @@ watch(activeTab, async (tab) => {
   if (tab === 'users') await fetchUsers()
   if (tab === 'teacherApplications') await fetchTeacherApplications()
   if (tab === 'knowledgePoints') await fetchKnowledgePoints()
+  if (tab === 'serviceHealth') await fetchServiceHealth()
 })
 
 watch(knowledgePointKeyword, (keyword) => {
@@ -280,9 +340,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.toolbar,.knowledge-row,.knowledge-actions,.knowledge-name { display: flex; align-items: center; gap: 12px; }
+.toolbar,.knowledge-row,.knowledge-actions,.knowledge-name,.health-summary { display: flex; align-items: center; gap: 12px; }
 .toolbar,.knowledge-row { justify-content: space-between; }
 .knowledge-tree { padding: 8px 0; }
 .knowledge-row { width: 100%; padding: 8px 0; }
 .knowledge-path,.placeholder-text { color: #909399; font-size: 12px; }
+.health-summary-text { color: #606266; font-size: 13px; }
 </style>

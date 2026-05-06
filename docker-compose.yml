@@ -373,6 +373,8 @@
         condition: service_healthy
       assign-service:
         condition: service_healthy
+      tag-agent:
+        condition: service_healthy
       chat-agent:
         condition: service_healthy
     environment:
