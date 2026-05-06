@@ -7,6 +7,7 @@
       <el-tab-pane label="教师申请" name="teacherApplications" />
       <el-tab-pane label="知识点体系" name="knowledgePoints" />
       <el-tab-pane label="课程管理" name="courses" />
+      <el-tab-pane label="操作日志" name="auditLogs" />
       <el-tab-pane label="服务状态" name="serviceHealth" />
     </el-tabs>
 
@@ -238,6 +239,73 @@
           @change="fetchCourses"
         />
       </div>
+
+      <div v-else-if="activeTab === 'auditLogs'">
+        <div class="toolbar">
+          <el-form inline class="toolbar-form">
+            <el-form-item label="关键词">
+              <el-input
+                v-model="auditLogFilters.keyword"
+                clearable
+                placeholder="搜索操作者、对象或说明"
+                style="width: 240px"
+                @keyup.enter="resetAndFetchAuditLogs"
+                @clear="resetAndFetchAuditLogs"
+              />
+            </el-form-item>
+            <el-form-item label="动作">
+              <el-select v-model="auditLogFilters.action" clearable placeholder="全部动作" style="width: 190px" @change="resetAndFetchAuditLogs">
+                <el-option label="创建用户" value="USER_CREATED" />
+                <el-option label="启用用户" value="USER_ACTIVATED" />
+                <el-option label="停用用户" value="USER_DEACTIVATED" />
+                <el-option label="通过教师申请" value="TEACHER_APPLICATION_APPROVED" />
+                <el-option label="拒绝教师申请" value="TEACHER_APPLICATION_REJECTED" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="对象">
+              <el-select v-model="auditLogFilters.targetType" clearable placeholder="全部对象" style="width: 180px" @change="resetAndFetchAuditLogs">
+                <el-option label="用户" value="USER" />
+                <el-option label="教师申请" value="TEACHER_REGISTRATION_APPLICATION" />
+              </el-select>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :icon="Search" @click="resetAndFetchAuditLogs">查询</el-button>
+              <el-button :icon="Refresh" :loading="auditLogLoading" @click="fetchAuditLogs">刷新</el-button>
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <el-table :data="auditLogs" v-loading="auditLogLoading">
+          <el-table-column label="时间" width="170">
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作者" min-width="140">
+            <template #default="{ row }">{{ row.actorName || actorFallback(row.actorId) }}</template>
+          </el-table-column>
+          <el-table-column label="动作" width="150">
+            <template #default="{ row }"><el-tag>{{ auditActionLabel(row.action) }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="对象" width="120">
+            <template #default="{ row }">{{ auditTargetTypeLabel(row.targetType) }}</template>
+          </el-table-column>
+          <el-table-column label="对象名称" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.targetName || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="说明" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.detail || '-' }}</template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!auditLogLoading && auditLogs.length === 0" description="暂无操作日志" />
+        <el-pagination
+          v-if="auditLogTotal > 0"
+          v-model:current-page="auditLogPage"
+          v-model:page-size="auditLogPageSize"
+          :total="auditLogTotal"
+          layout="total, sizes, prev, pager, next"
+          style="margin-top: 20px; justify-content: flex-end"
+          @change="fetchAuditLogs"
+        />
+      </div>
     </el-card>
 
     <el-dialog v-model="knowledgePointDialog.visible" :title="knowledgePointDialog.isEdit ? '编辑知识点' : '新增知识点'" width="560px">
@@ -307,7 +375,7 @@ import { courseApi } from '@/api/course'
 import { systemApi, type ServiceHealthResult } from '@/api/system'
 import { userApi } from '@/api/user'
 import { useUserStore } from '@/store/user'
-import type { Course, KnowledgePointNode, TeacherRegistrationApplication, User } from '@/types'
+import type { AdminAuditLog, Course, KnowledgePointNode, TeacherRegistrationApplication, User } from '@/types'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -329,6 +397,12 @@ const coursePage = ref(1)
 const coursePageSize = ref(10)
 const courseTotal = ref(0)
 const courseFilters = reactive({ keyword: '', status: '' })
+const auditLogs = ref<AdminAuditLog[]>([])
+const auditLogLoading = ref(false)
+const auditLogPage = ref(1)
+const auditLogPageSize = ref(10)
+const auditLogTotal = ref(0)
+const auditLogFilters = reactive({ keyword: '', action: '', targetType: '' })
 const userPage = ref(1)
 const userPageSize = ref(10)
 const userTotal = ref(0)
@@ -401,6 +475,9 @@ function roleLabel(role: string) { return { STUDENT: '学生', TEACHER: '教师'
 function statusLabel(status: string) { return { PENDING: '待审批', APPROVED: '已通过', REJECTED: '已拒绝' }[status] ?? status }
 function courseStatusTagType(status: Course['status']) { return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info' }
 function courseStatusLabel(status: Course['status']) { return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status] ?? status }
+function auditActionLabel(action: string) { return { USER_CREATED: '创建用户', USER_ACTIVATED: '启用用户', USER_DEACTIVATED: '停用用户', TEACHER_APPLICATION_APPROVED: '通过教师申请', TEACHER_APPLICATION_REJECTED: '拒绝教师申请' }[action] ?? action }
+function auditTargetTypeLabel(targetType: string) { return { USER: '用户', TEACHER_REGISTRATION_APPLICATION: '教师申请' }[targetType] ?? targetType }
+function actorFallback(actorId?: number | null) { return actorId ? `User-${actorId}` : '系统' }
 function courseVisibilityLabel(course: Course) {
   if (course.visibilityType === 'SELECTED_STUDENTS') {
     return `指定学生${course.visibleStudentCount ? ` · ${course.visibleStudentCount} 人` : ''}`
@@ -523,6 +600,28 @@ async function fetchCourses() {
 function resetAndFetchCourses() {
   coursePage.value = 1
   fetchCourses()
+}
+
+async function fetchAuditLogs() {
+  auditLogLoading.value = true
+  try {
+    const response = await userApi.listAuditLogs({
+      page: auditLogPage.value,
+      pageSize: auditLogPageSize.value,
+      keyword: auditLogFilters.keyword || undefined,
+      action: auditLogFilters.action || undefined,
+      targetType: auditLogFilters.targetType || undefined,
+    })
+    auditLogs.value = response.items
+    auditLogTotal.value = response.total
+  } finally {
+    auditLogLoading.value = false
+  }
+}
+
+function resetAndFetchAuditLogs() {
+  auditLogPage.value = 1
+  fetchAuditLogs()
 }
 
 async function fetchServiceHealth() {
@@ -667,6 +766,7 @@ watch(activeTab, async (tab) => {
   if (tab === 'teacherApplications') await fetchTeacherApplications()
   if (tab === 'courses') await fetchCourses()
   if (tab === 'knowledgePoints') await fetchKnowledgePoints()
+  if (tab === 'auditLogs') await fetchAuditLogs()
   if (tab === 'serviceHealth') await fetchServiceHealth()
 })
 

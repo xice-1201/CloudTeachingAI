@@ -1,5 +1,6 @@
 package com.cloudteachingai.user.controller;
 
+import com.cloudteachingai.user.dto.AdminAuditLogResponse;
 import com.cloudteachingai.user.dto.ApiResponse;
 import com.cloudteachingai.user.dto.CreateTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.user.dto.CreateUserRequest;
@@ -11,6 +12,7 @@ import com.cloudteachingai.user.dto.UpdateProfileRequest;
 import com.cloudteachingai.user.dto.UserResponse;
 import com.cloudteachingai.user.entity.User;
 import com.cloudteachingai.user.service.SystemHealthService;
+import com.cloudteachingai.user.service.AdminAuditLogService;
 import com.cloudteachingai.user.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,11 +38,14 @@ public class UserController {
 
     private final UserService userService;
     private final SystemHealthService systemHealthService;
+    private final AdminAuditLogService adminAuditLogService;
 
     @PostMapping("/admin/users")
-    public ApiResponse<UserResponse> createUser(@Valid @RequestBody CreateUserRequest request) {
+    public ApiResponse<UserResponse> createUser(
+            @RequestHeader(value = "X-User-Id", required = false) Long actorId,
+            @Valid @RequestBody CreateUserRequest request) {
         log.info("Create user request: email={}, role={}", request.getEmail(), request.getRole());
-        return ApiResponse.success(userService.createUser(request));
+        return ApiResponse.success(userService.createUser(request, actorId));
     }
 
     @GetMapping("/admin/users")
@@ -54,13 +59,27 @@ public class UserController {
     }
 
     @PostMapping("/admin/users/{id}/activate")
-    public ApiResponse<UserResponse> activateUser(@PathVariable Long id) {
-        return ApiResponse.success(userService.updateUserActive(id, true));
+    public ApiResponse<UserResponse> activateUser(
+            @RequestHeader(value = "X-User-Id", required = false) Long actorId,
+            @PathVariable Long id) {
+        return ApiResponse.success(userService.updateUserActive(id, true, actorId));
     }
 
     @PostMapping("/admin/users/{id}/deactivate")
-    public ApiResponse<UserResponse> deactivateUser(@PathVariable Long id) {
-        return ApiResponse.success(userService.updateUserActive(id, false));
+    public ApiResponse<UserResponse> deactivateUser(
+            @RequestHeader(value = "X-User-Id", required = false) Long actorId,
+            @PathVariable Long id) {
+        return ApiResponse.success(userService.updateUserActive(id, false, actorId));
+    }
+
+    @GetMapping("/admin/audit-logs")
+    public ApiResponse<PageResponse<AdminAuditLogResponse>> listAuditLogs(
+            @RequestParam(defaultValue = "") String keyword,
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String targetType,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(adminAuditLogService.listLogs(keyword, action, targetType, page, pageSize));
     }
 
     @GetMapping("/admin/teacher-registration-applications")

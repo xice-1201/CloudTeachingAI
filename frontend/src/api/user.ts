@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { User, PageResponse, TeacherRegistrationApplication } from '@/types'
+import type { AdminAuditLog, User, PageResponse, TeacherRegistrationApplication } from '@/types'
 
 export const userApi = {
   getProfile: (config?: Record<string, any>): Promise<User> =>
@@ -30,6 +30,15 @@ export const userApi = {
 
   deactivateUser: (id: string | number): Promise<User> =>
     request.post(`/admin/users/${id}/deactivate`),
+
+  listAuditLogs: (params?: {
+    page?: number
+    pageSize?: number
+    keyword?: string
+    action?: string
+    targetType?: string
+  }): Promise<PageResponse<AdminAuditLog>> =>
+    request.get('/admin/audit-logs', { params }),
 
   listStudents: (params?: { page?: number; pageSize?: number; keyword?: string }): Promise<PageResponse<User>> =>
     request.get('/users/students', { params }),

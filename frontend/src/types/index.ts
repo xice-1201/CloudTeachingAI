@@ -330,3 +330,15 @@ export interface TeacherRegistrationApplication {
   requestedAt: string
   reviewedAt?: string
 }
+
+export interface AdminAuditLog {
+  id: number
+  actorId?: number | null
+  actorName?: string | null
+  action: string
+  targetType: string
+  targetId?: number | null
+  targetName?: string | null
+  detail?: string | null
+  createdAt: string
+}

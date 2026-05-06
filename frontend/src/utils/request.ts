@@ -69,6 +69,18 @@ function clearStoredSession() {
   localStorage.removeItem('userInfo')
 }
 
+function getStoredUserId() {
+  const raw = localStorage.getItem('userInfo')
+  if (!raw) return null
+
+  try {
+    const user = JSON.parse(raw) as { id?: number | string }
+    return user.id == null ? null : String(user.id)
+  } catch {
+    return null
+  }
+}
+
 function buildErrorMessage(payload?: ErrorPayload, fallback = '请求失败') {
   if (payload?.message) {
     return payload.message
@@ -129,6 +141,10 @@ request.interceptors.request.use(
     const token = localStorage.getItem('token')
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
+    }
+    const userId = getStoredUserId()
+    if (userId && config.headers && !config.headers['X-User-Id']) {
+      config.headers['X-User-Id'] = userId
     }
     return config
   },

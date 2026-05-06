@@ -38,9 +38,10 @@ public class UserService {
     private final TeacherRegistrationApplicationRepository teacherRegistrationApplicationRepository;
     private final AuthServiceClient authServiceClient;
     private final NotifyServiceClient notifyServiceClient;
+    private final AdminAuditLogService adminAuditLogService;
 
     @Transactional
-    public UserResponse createUser(CreateUserRequest request) {
+    public UserResponse createUser(CreateUserRequest request, Long actorId) {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw BusinessException.conflict("邮箱已被注册");
         }
@@ -63,6 +64,14 @@ public class UserService {
 
         log.info("User created successfully: id={}, email={}, role={}", user.getId(), user.getEmail(), user.getRole());
         sendWelcomeNotification(user);
+        adminAuditLogService.record(
+                actorId,
+                "USER_CREATED",
+                "USER",
+                user.getId(),
+                user.getUsername(),
+                "Created " + user.getRole() + " user: " + user.getEmail()
+        );
 
         return UserResponse.from(user);
     }
@@ -141,11 +150,19 @@ public class UserService {
     }
 
     @Transactional
-    public UserResponse updateUserActive(Long userId, boolean active) {
+    public UserResponse updateUserActive(Long userId, boolean active, Long actorId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("用户不存在"));
         user.setIsActive(active);
         user = userRepository.save(user);
+        adminAuditLogService.record(
+                actorId,
+                active ? "USER_ACTIVATED" : "USER_DEACTIVATED",
+                "USER",
+                user.getId(),
+                user.getUsername(),
+                (active ? "Activated user: " : "Deactivated user: ") + user.getEmail()
+        );
         return UserResponse.from(user);
     }
 
@@ -232,6 +249,14 @@ public class UserService {
         sendWelcomeNotification(user);
         sendTeacherApprovalNotification(user);
         sendTeacherApprovalEmail(user);
+        adminAuditLogService.record(
+                request.getReviewerId(),
+                "TEACHER_APPLICATION_APPROVED",
+                "TEACHER_REGISTRATION_APPLICATION",
+                application.getId(),
+                application.getUsername(),
+                "Approved teacher application and created user: " + user.getEmail()
+        );
         log.info("Teacher registration application approved: applicationId={}, userId={}", applicationId, user.getId());
         return TeacherRegistrationApplicationResponse.from(application);
     }
@@ -254,6 +279,14 @@ public class UserService {
         application = teacherRegistrationApplicationRepository.save(application);
 
         sendTeacherRejectionNotification(application);
+        adminAuditLogService.record(
+                request.getReviewerId(),
+                "TEACHER_APPLICATION_REJECTED",
+                "TEACHER_REGISTRATION_APPLICATION",
+                application.getId(),
+                application.getUsername(),
+                "Rejected teacher application: " + application.getEmail()
+        );
         log.info("Teacher registration application rejected: applicationId={}", applicationId);
         return TeacherRegistrationApplicationResponse.from(application);
     }
