@@ -20,8 +20,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -124,6 +127,26 @@ public class UserService {
         }
         List<UserResponse> items = users.getContent().stream().map(UserResponse::from).toList();
         return new PageResponse<>(items, (int) users.getTotalElements(), page, pageSize);
+    }
+
+    public PageResponse<UserResponse> listUsers(String keyword, String role, Boolean active, int page, int pageSize) {
+        Pageable pageable = PageRequest.of(toPageIndex(page), toPageSize(pageSize), Sort.by(Sort.Direction.DESC, "createdAt"));
+        Specification<User> specification = Specification
+                .where(withKeyword(keyword))
+                .and(withRole(role))
+                .and(withActive(active));
+        Page<User> users = userRepository.findAll(specification, pageable);
+        List<UserResponse> items = users.getContent().stream().map(UserResponse::from).toList();
+        return new PageResponse<>(items, (int) users.getTotalElements(), page, pageSize);
+    }
+
+    @Transactional
+    public UserResponse updateUserActive(Long userId, boolean active) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> BusinessException.notFound("用户不存在"));
+        user.setIsActive(active);
+        user = userRepository.save(user);
+        return UserResponse.from(user);
     }
 
     @Transactional
@@ -287,5 +310,45 @@ public class UserService {
 
     private void sendTeacherRejectionNotification(TeacherRegistrationApplication application) {
         log.info("Teacher registration application rejected notification prepared: email={}", application.getEmail());
+    }
+
+    private int toPageIndex(int page) {
+        return Math.max(page, 1) - 1;
+    }
+
+    private int toPageSize(int pageSize) {
+        return Math.max(1, Math.min(pageSize, 100));
+    }
+
+    private Specification<User> withKeyword(String keyword) {
+        return (root, query, criteriaBuilder) -> {
+            if (!StringUtils.hasText(keyword)) {
+                return criteriaBuilder.conjunction();
+            }
+            String pattern = "%" + keyword.trim().toLowerCase() + "%";
+            return criteriaBuilder.or(
+                    criteriaBuilder.like(criteriaBuilder.lower(root.get("username")), pattern),
+                    criteriaBuilder.like(criteriaBuilder.lower(root.get("email")), pattern)
+            );
+        };
+    }
+
+    private Specification<User> withRole(String role) {
+        return (root, query, criteriaBuilder) -> {
+            if (!StringUtils.hasText(role)) {
+                return criteriaBuilder.conjunction();
+            }
+            try {
+                return criteriaBuilder.equal(root.get("role"), User.UserRole.valueOf(role.trim().toUpperCase()));
+            } catch (IllegalArgumentException ex) {
+                throw BusinessException.badRequest("用户角色无效");
+            }
+        };
+    }
+
+    private Specification<User> withActive(Boolean active) {
+        return (root, query, criteriaBuilder) -> active == null
+                ? criteriaBuilder.conjunction()
+                : criteriaBuilder.equal(root.get("isActive"), active);
     }
 }

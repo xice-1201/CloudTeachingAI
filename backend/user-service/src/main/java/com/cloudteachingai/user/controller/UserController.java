@@ -43,6 +43,26 @@ public class UserController {
         return ApiResponse.success(userService.createUser(request));
     }
 
+    @GetMapping("/admin/users")
+    public ApiResponse<PageResponse<UserResponse>> listUsers(
+            @RequestParam(defaultValue = "") String keyword,
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) Boolean active,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(userService.listUsers(keyword, role, active, page, pageSize));
+    }
+
+    @PostMapping("/admin/users/{id}/activate")
+    public ApiResponse<UserResponse> activateUser(@PathVariable Long id) {
+        return ApiResponse.success(userService.updateUserActive(id, true));
+    }
+
+    @PostMapping("/admin/users/{id}/deactivate")
+    public ApiResponse<UserResponse> deactivateUser(@PathVariable Long id) {
+        return ApiResponse.success(userService.updateUserActive(id, false));
+    }
+
     @GetMapping("/admin/teacher-registration-applications")
     public ApiResponse<List<TeacherRegistrationApplicationResponse>> listPendingTeacherRegistrationApplications() {
         return ApiResponse.success(userService.listPendingTeacherRegistrationApplications());

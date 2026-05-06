@@ -20,6 +20,10 @@ public class BusinessException extends RuntimeException {
         return new BusinessException(40301, message);
     }
 
+    public static BusinessException badRequest(String message) {
+        return new BusinessException(40001, message);
+    }
+
     public static BusinessException notFound(String message) {
         return new BusinessException(40401, message);
     }

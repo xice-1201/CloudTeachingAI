@@ -12,6 +12,37 @@
 
     <el-card shadow="never" style="margin-top: 16px">
       <div v-if="activeTab === 'users'">
+        <div class="toolbar">
+          <el-form inline class="toolbar-form">
+            <el-form-item label="关键词">
+              <el-input
+                v-model="userFilters.keyword"
+                clearable
+                placeholder="搜索用户名或邮箱"
+                style="width: 220px"
+                @keyup.enter="resetAndFetchUsers"
+                @clear="resetAndFetchUsers"
+              />
+            </el-form-item>
+            <el-form-item label="角色">
+              <el-select v-model="userFilters.role" clearable placeholder="全部角色" style="width: 140px" @change="resetAndFetchUsers">
+                <el-option label="学生" value="STUDENT" />
+                <el-option label="教师" value="TEACHER" />
+                <el-option label="管理员" value="ADMIN" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="状态">
+              <el-select v-model="userFilters.active" clearable placeholder="全部状态" style="width: 140px" @change="resetAndFetchUsers">
+                <el-option label="启用" :value="true" />
+                <el-option label="停用" :value="false" />
+              </el-select>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :icon="Search" @click="resetAndFetchUsers">查询</el-button>
+              <el-button :icon="Refresh" :loading="userLoading" @click="fetchUsers">刷新</el-button>
+            </el-form-item>
+          </el-form>
+        </div>
         <el-table :data="users" v-loading="userLoading">
           <el-table-column prop="username" label="用户名" />
           <el-table-column prop="email" label="邮箱" />
@@ -21,7 +52,32 @@
           <el-table-column label="状态" width="100">
             <template #default="{ row }"><el-tag :type="row.isActive ? 'success' : 'info'">{{ row.isActive ? '启用' : '停用' }}</el-tag></template>
           </el-table-column>
+          <el-table-column label="创建时间" width="170">
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="180" fixed="right">
+            <template #default="{ row }">
+              <el-button :icon="View" link type="primary" @click="openUserDrawer(row)">查看</el-button>
+              <el-button
+                link
+                :type="row.isActive ? 'warning' : 'success'"
+                @click="toggleUserActive(row)"
+              >
+                {{ row.isActive ? '停用' : '启用' }}
+              </el-button>
+            </template>
+          </el-table-column>
         </el-table>
+        <el-empty v-if="!userLoading && users.length === 0" description="暂无用户" />
+        <el-pagination
+          v-if="userTotal > 0"
+          v-model:current-page="userPage"
+          v-model:page-size="userPageSize"
+          :total="userTotal"
+          layout="total, sizes, prev, pager, next"
+          style="margin-top: 20px; justify-content: flex-end"
+          @change="fetchUsers"
+        />
       </div>
 
       <div v-else-if="activeTab === 'teacherApplications'">
@@ -197,6 +253,21 @@
         <el-button type="primary" :loading="knowledgePointSubmitting" @click="handleSubmitKnowledgePoint">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-drawer v-model="userDrawer.visible" title="用户详情" size="420px">
+      <el-descriptions v-if="userDrawer.user" :column="1" border>
+        <el-descriptions-item label="用户ID">{{ userDrawer.user.id }}</el-descriptions-item>
+        <el-descriptions-item label="用户名">{{ userDrawer.user.username }}</el-descriptions-item>
+        <el-descriptions-item label="邮箱">{{ userDrawer.user.email }}</el-descriptions-item>
+        <el-descriptions-item label="角色">
+          <el-tag :type="roleTagType(userDrawer.user.role)">{{ roleLabel(userDrawer.user.role) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag :type="userDrawer.user.isActive ? 'success' : 'info'">{{ userDrawer.user.isActive ? '启用' : '停用' }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ formatDateTime(userDrawer.user.createdAt) }}</el-descriptions-item>
+      </el-descriptions>
+    </el-drawer>
   </div>
 </template>
 
@@ -232,8 +303,20 @@ const coursePage = ref(1)
 const coursePageSize = ref(10)
 const courseTotal = ref(0)
 const courseFilters = reactive({ keyword: '', status: '' })
+const userPage = ref(1)
+const userPageSize = ref(10)
+const userTotal = ref(0)
+const userFilters = reactive({
+  keyword: '',
+  role: '',
+  active: undefined as boolean | undefined,
+})
 const knowledgeTreeRef = ref<any>()
 const knowledgePointFormRef = ref<FormInstance>()
+const userDrawer = ref({
+  visible: false,
+  user: null as User | null,
+})
 
 const knowledgePointDialog = ref({
   visible: false,
@@ -278,11 +361,42 @@ function formatDateTime(value: string) { return new Date(value).toLocaleString('
 async function fetchUsers() {
   userLoading.value = true
   try {
-    const [students, teachers] = await Promise.all([userApi.listStudents({ page: 1, pageSize: 100 }), userApi.listTeachers({ page: 1, pageSize: 100 })])
-    users.value = [...teachers.items, ...students.items]
+    const response = await userApi.listUsers({
+      page: userPage.value,
+      pageSize: userPageSize.value,
+      keyword: userFilters.keyword || undefined,
+      role: userFilters.role || undefined,
+      active: userFilters.active,
+    })
+    users.value = response.items
+    userTotal.value = response.total
   } finally {
     userLoading.value = false
   }
+}
+
+function resetAndFetchUsers() {
+  userPage.value = 1
+  fetchUsers()
+}
+
+function openUserDrawer(user: User) {
+  userDrawer.value.user = user
+  userDrawer.value.visible = true
+}
+
+async function toggleUserActive(user: User) {
+  if (user.isActive) {
+    await ElMessageBox.confirm(`确认将用户“${user.username}”标记为停用吗？`, '停用用户', { type: 'warning' })
+  }
+  const updatedUser = user.isActive
+    ? await userApi.deactivateUser(user.id)
+    : await userApi.activateUser(user.id)
+  users.value = users.value.map((item) => item.id === updatedUser.id ? updatedUser : item)
+  if (userDrawer.value.user?.id === updatedUser.id) {
+    userDrawer.value.user = updatedUser
+  }
+  ElMessage.success(updatedUser.isActive ? '用户已启用' : '用户已停用')
 }
 
 async function fetchTeacherApplications() {

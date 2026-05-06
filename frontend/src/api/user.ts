@@ -19,6 +19,15 @@ export const userApi = {
   getUserById: (id: string): Promise<User> =>
     request.get(`/users/${id}`),
 
+  listUsers: (params?: { page?: number; pageSize?: number; keyword?: string; role?: string; active?: boolean }): Promise<PageResponse<User>> =>
+    request.get('/admin/users', { params }),
+
+  activateUser: (id: string | number): Promise<User> =>
+    request.post(`/admin/users/${id}/activate`),
+
+  deactivateUser: (id: string | number): Promise<User> =>
+    request.post(`/admin/users/${id}/deactivate`),
+
   listStudents: (params?: { page?: number; pageSize?: number; keyword?: string }): Promise<PageResponse<User>> =>
     request.get('/users/students', { params }),
 
