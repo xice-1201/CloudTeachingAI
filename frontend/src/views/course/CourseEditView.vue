@@ -124,6 +124,9 @@
                     </div>
                   </div>
                   <div class="resource-actions">
+                    <el-button v-if="resource.tags?.length || resource.knowledgePoints?.length" link type="primary" @click="openResourceTagReviewDialog(resource)">
+                      {{ resource.taggingStatus === 'SUGGESTED' ? '审核AI标注' : '调整标签' }}
+                    </el-button>
                     <el-button link type="primary" @click="openEditResourceDialog(chapter, resource)">编辑</el-button>
                     <el-button link type="danger" @click="handleDeleteResource(resource)">删除</el-button>
                   </div>
@@ -218,6 +221,38 @@
         <el-button type="primary" :loading="resourceSubmitting" @click="handleSubmitResource">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="tagReviewDialog.visible" title="审核资源标签" width="720px">
+      <div v-if="tagReviewDialog.resource" class="tag-review">
+        <div class="tag-review-title">
+          <span>{{ tagReviewDialog.resource.title }}</span>
+          <el-tag size="small" :type="resourceTaggingType(tagReviewDialog.resource.taggingStatus)">
+            {{ resourceTaggingLabel(tagReviewDialog.resource.taggingStatus) }}
+          </el-tag>
+        </div>
+        <div class="field-tip">保留需要采用的 AI 推荐标签，也可以取消勾选后仅确认剩余标签。</div>
+
+        <el-empty v-if="!tagReviewDialog.options.length" description="当前资源还没有可确认的标签" />
+        <el-checkbox-group v-else v-model="tagReviewDialog.selectedKeys" class="tag-review-options">
+          <label v-for="option in tagReviewDialog.options" :key="option.key" class="tag-review-option">
+            <el-checkbox :value="option.key">
+              <div class="tag-review-option-main">
+                <div class="tag-review-option-title">
+                  <span>{{ option.label }}</span>
+                  <el-tag v-if="option.source" size="small" effect="plain">{{ option.source === 'AI' ? 'AI 推荐' : '手动' }}</el-tag>
+                  <el-tag v-if="option.confidence !== undefined" size="small" effect="plain">{{ Math.round(option.confidence * 100) }}%</el-tag>
+                </div>
+                <div v-if="option.path" class="suggestion-path">{{ option.path }}</div>
+              </div>
+            </el-checkbox>
+          </label>
+        </el-checkbox-group>
+      </div>
+      <template #footer>
+        <el-button @click="tagReviewDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="tagReviewSubmitting" @click="confirmReviewedResourceTags">确认采用</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -244,6 +279,15 @@ type RequestLikeError = Error & {
   payload?: unknown
 }
 
+type TagReviewOption = {
+  key: string
+  label: string
+  knowledgePointId?: number | null
+  path?: string | null
+  confidence?: number
+  source?: ResourceTag['source'] | ResourceKnowledgePoint['source']
+}
+
 const route = useRoute()
 const router = useRouter()
 const formRef = ref<FormInstance>()
@@ -256,6 +300,7 @@ const chapterSubmitting = ref(false)
 const resourceSubmitting = ref(false)
 const studentLoading = ref(false)
 const suggestionLoading = ref(false)
+const tagReviewSubmitting = ref(false)
 const selectedResourceFile = ref<File | null>(null)
 
 const chapters = ref<Chapter[]>([])
@@ -281,6 +326,12 @@ const resourceDialog = reactive({
   chapterId: '',
   resourceId: '',
   form: { title: '', type: 'DOCUMENT' as Resource['type'], url: '', description: '', managedFile: false, knowledgePointIds: [] as number[], tagLabels: [] as string[], duration: 0, size: 0, orderIndex: 1 },
+})
+const tagReviewDialog = reactive({
+  visible: false,
+  resource: null as Resource | null,
+  options: [] as TagReviewOption[],
+  selectedKeys: [] as string[],
 })
 
 const rules: FormRules = {
@@ -386,6 +437,8 @@ function formatDuration(seconds: number) { const minutes = Math.floor(seconds / 
 function formatFileSize(size: number) { if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`; if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`; return `${size} B` }
 function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.label : tag.name }
 function resourceTagKey(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.label : tag.id }
+function resourceTagPath(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.knowledgePointPath : tag.path }
+function resourceTagKnowledgePointId(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.knowledgePointId : tag.id }
 function normalizeTagLabels(labels: string[]) {
   const normalized = new Map<string, string>()
   labels.forEach((label) => {
@@ -396,6 +449,44 @@ function normalizeTagLabels(labels: string[]) {
   return Array.from(normalized.values())
 }
 function applySuggestedTags(labels: string[]) { resourceDialog.form.tagLabels = normalizeTagLabels([...resourceDialog.form.tagLabels, ...labels]) }
+function buildTagReviewOptions(resource: Resource) {
+  const options = new Map<string, TagReviewOption>()
+  const tags = [
+    ...(resource.tags ?? []),
+    ...(resource.knowledgePoints ?? []),
+  ]
+
+  for (const tag of tags) {
+    const label = resourceTagLabel(tag)
+    const knowledgePointId = resourceTagKnowledgePointId(tag)
+    const key = knowledgePointId ? `kp:${knowledgePointId}` : `label:${label.trim().toLowerCase()}`
+    if (!label || options.has(key)) continue
+    options.set(key, {
+      key,
+      label,
+      knowledgePointId,
+      path: resourceTagPath(tag),
+      confidence: tag.confidence,
+      source: tag.source,
+    })
+  }
+  return Array.from(options.values())
+}
+function replaceResourceInMap(updatedResource: Resource) {
+  const nextResourceMap = { ...resourceMap.value }
+  const chapterResources = nextResourceMap[updatedResource.chapterId] ?? []
+  nextResourceMap[updatedResource.chapterId] = chapterResources.map((resource) => (
+    resource.id === updatedResource.id ? updatedResource : resource
+  ))
+  resourceMap.value = nextResourceMap
+}
+function openResourceTagReviewDialog(resource: Resource) {
+  const options = buildTagReviewOptions(resource)
+  tagReviewDialog.resource = resource
+  tagReviewDialog.options = options
+  tagReviewDialog.selectedKeys = options.map((option) => option.key)
+  tagReviewDialog.visible = true
+}
 function extractFileName(value?: string) {
   if (!value) return ''
   const withoutQuery = value.split('?')[0] ?? value
@@ -722,6 +813,32 @@ async function handleDeleteResource(resource: Resource) {
   await loadCurriculum()
 }
 
+async function confirmReviewedResourceTags() {
+  if (!tagReviewDialog.resource) return
+  const selectedOptions = tagReviewDialog.options.filter((option) => tagReviewDialog.selectedKeys.includes(option.key))
+  tagReviewSubmitting.value = true
+  try {
+    const knowledgePointIds = selectedOptions
+      .map((option) => option.knowledgePointId)
+      .filter((id): id is number => typeof id === 'number')
+    const tagLabels = selectedOptions
+      .filter((option) => !option.knowledgePointId)
+      .map((option) => option.label)
+    const updatedResource = await courseApi.confirmResourceTags(String(tagReviewDialog.resource.id), {
+      knowledgePointIds,
+      tagLabels,
+    })
+    replaceResourceInMap(updatedResource)
+    tagReviewDialog.visible = false
+    tagReviewDialog.resource = null
+    tagReviewDialog.options = []
+    tagReviewDialog.selectedKeys = []
+    ElMessage.success(selectedOptions.length ? '资源标签已确认' : '资源标签已清空')
+  } finally {
+    tagReviewSubmitting.value = false
+  }
+}
+
 onMounted(async () => {
   pageLoading.value = true
   try {
@@ -751,7 +868,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page-subtitle,.card-subtitle,.field-tip,.knowledge-node-path,.suggestion-path { margin-top: 8px; color: #909399; font-size: 12px; }
-.card-header,.chapter-header,.tree-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.card-header,.chapter-header,.tree-toolbar,.tag-review-title,.tag-review-option-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .cover-uploader { width: 220px; height: 132px; border: 1px dashed #d9d9d9; border-radius: 8px; cursor: pointer; overflow: hidden; }
 .cover-preview { width: 100%; height: 100%; object-fit: cover; }
 .cover-placeholder { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #909399; }
@@ -765,4 +882,10 @@ onBeforeUnmount(() => {
 .resource-actions { display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0; }
 .knowledge-tree { max-height: 260px; overflow: auto; border: 1px solid #ebeef5; border-radius: 8px; padding: 8px 12px; }
 .knowledge-node { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
+.tag-review { display: grid; gap: 12px; }
+.tag-review-title { justify-content: flex-start; color: #303133; font-size: 16px; font-weight: 600; }
+.tag-review-options { display: grid; gap: 10px; max-height: 360px; overflow: auto; }
+.tag-review-option { display: block; padding: 12px; border: 1px solid #ebeef5; border-radius: 8px; background: #fafafa; cursor: pointer; }
+.tag-review-option-main { display: grid; gap: 4px; min-width: 0; }
+.tag-review-option-title { justify-content: flex-start; color: #303133; font-weight: 500; }
 </style>
