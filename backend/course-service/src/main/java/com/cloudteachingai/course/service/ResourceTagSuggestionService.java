@@ -52,7 +52,9 @@ public class ResourceTagSuggestionService {
     private static final int MAX_TAG_SUGGESTIONS = 8;
     private static final int MAX_LLM_CANDIDATES = 120;
     private static final String MULTIPART_EOL = "\r\n";
-    private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".m4v", ".webm");
+    private static final Set<String> VIDEO_EXTENSIONS = Set.of(
+            ".mp4", ".mov", ".m4v", ".webm", ".mpe", ".mpeg", ".mpg", ".avi", ".wmv", ".mkv"
+    );
     private static final Set<String> METADATA_TAG_STOP_WORDS = Set.of(
             "audio", "video", "codec", "bitrate", "duration", "resolution", "frame", "frames", "fps",
             "width", "height", "size", "bytes", "kbps", "mbps", "content", "format", "stream",
@@ -229,7 +231,8 @@ public class ResourceTagSuggestionService {
             return List.of();
         }
 
-        String analysisText = buildSemanticAnalysisText(request, extractedContent);
+        SemanticAnalysis analysis = buildSemanticAnalysis(request, extractedContent);
+        String analysisText = analysis.text();
         if (!StringUtils.hasText(analysisText)) {
             log.warn(
                     "Skip AI tag preview because semantic analysis text is empty. type={}, fileName={}, sourceUrlPresent={}, extractedTextLength={}, metadataLength={}",
@@ -420,7 +423,7 @@ public class ResourceTagSuggestionService {
         }
 
         String normalizedTitle = normalizeSuggestionText(request.getTitle());
-        String normalizedBody = normalizeSuggestionText(buildSemanticAnalysisText(request, extractedContent));
+        String normalizedBody = normalizeSuggestionText(buildSemanticAnalysis(request, extractedContent).text());
         List<TagCandidate> ranked = candidates.stream()
                 .sorted(Comparator
                         .comparing((TagCandidate item) -> candidateScore(item, normalizedTitle, normalizedBody))
@@ -475,7 +478,7 @@ public class ResourceTagSuggestionService {
             List<TagCandidate> candidates
     ) {
         String normalizedTitle = normalizeSuggestionText(request.getTitle());
-        String normalizedFullText = normalizeSuggestionText(buildSemanticAnalysisText(request, extractedContent));
+        String normalizedFullText = normalizeSuggestionText(buildSemanticAnalysis(request, extractedContent).text());
         if (!StringUtils.hasText(normalizedFullText)) {
             return List.of();
         }
@@ -575,7 +578,8 @@ public class ResourceTagSuggestionService {
             ExtractedContent extractedContent,
             List<TagCandidate> candidates
     ) {
-        String analysisText = buildSemanticAnalysisText(request, extractedContent);
+        SemanticAnalysis analysis = buildSemanticAnalysis(request, extractedContent);
+        String analysisText = analysis.text();
         if (!StringUtils.hasText(analysisText)) {
             log.info(
                     "Skip generated fallback suggestions because semantic analysis text is empty. type={}, fileName={}, transcriptLength={}, metadataLength={}",
@@ -624,7 +628,7 @@ public class ResourceTagSuggestionService {
                         .label(entry.getKey())
                         .kind("GENERATED")
                         .confidence(Math.min(0.79D, 0.45D + (entry.getValue() * 0.08D)))
-                        .reason("Fallback content keyword extraction")
+                        .reason(buildGeneratedFallbackReason(entry.getKey(), request, extractedContent, analysis))
                         .build())
                 .toList();
 
@@ -733,17 +737,59 @@ public class ResourceTagSuggestionService {
         return String.join(" ", parts);
     }
 
-    private String buildSemanticAnalysisText(ResourceTagPreviewRequest request, ExtractedContent extractedContent) {
+    private SemanticAnalysis buildSemanticAnalysis(ResourceTagPreviewRequest request, ExtractedContent extractedContent) {
         List<String> parts = new ArrayList<>();
+        boolean titleUsed = StringUtils.hasText(request.getTitle());
+        boolean descriptionUsed = StringUtils.hasText(request.getDescription());
+        boolean contentUsed = extractedContent != null && StringUtils.hasText(extractedContent.text());
+        boolean fileNameUsed = false;
+
         addIfText(parts, request.getTitle());
         addIfText(parts, request.getDescription());
         if (!isVideoRequest(request)) {
-            addIfText(parts, sanitizeSemanticFileName(request.getFileName()));
+            String sanitizedFileName = sanitizeSemanticFileName(request.getFileName());
+            if (StringUtils.hasText(sanitizedFileName)) {
+                addIfText(parts, sanitizedFileName);
+                fileNameUsed = true;
+            }
         }
-        if (extractedContent != null) {
+        if (contentUsed) {
             addIfText(parts, truncate(extractedContent.text(), maxContentChars));
         }
-        return String.join(" ", parts);
+        return new SemanticAnalysis(String.join(" ", parts), titleUsed, descriptionUsed, fileNameUsed, contentUsed);
+    }
+
+    private String buildGeneratedFallbackReason(
+            String token,
+            ResourceTagPreviewRequest request,
+            ExtractedContent extractedContent,
+            SemanticAnalysis analysis
+    ) {
+        String normalizedToken = normalizeSuggestionText(token);
+        List<String> sources = new ArrayList<>();
+        if (analysis.titleUsed() && containsSemanticToken(request.getTitle(), normalizedToken)) {
+            sources.add("title");
+        }
+        if (analysis.descriptionUsed() && containsSemanticToken(request.getDescription(), normalizedToken)) {
+            sources.add("description");
+        }
+        if (analysis.contentUsed() && containsSemanticToken(extractedContent == null ? null : extractedContent.text(), normalizedToken)) {
+            sources.add(isVideoRequest(request) ? "transcript" : "content");
+        }
+        if (analysis.fileNameUsed() && containsSemanticToken(sanitizeSemanticFileName(request.getFileName()), normalizedToken)) {
+            sources.add("file name");
+        }
+        if (sources.isEmpty()) {
+            return "Fallback keyword extraction";
+        }
+        return "Fallback keyword extraction from " + String.join("/", sources);
+    }
+
+    private boolean containsSemanticToken(String source, String normalizedToken) {
+        if (!StringUtils.hasText(source) || !StringUtils.hasText(normalizedToken)) {
+            return false;
+        }
+        return normalizeSuggestionText(source).contains(normalizedToken);
     }
 
     private boolean isVideoRequest(ResourceTagPreviewRequest request) {
@@ -1343,6 +1389,15 @@ public class ResourceTagSuggestionService {
     }
 
     private record ExtractedContent(String text, String metadataSummary) {
+    }
+
+    private record SemanticAnalysis(
+            String text,
+            boolean titleUsed,
+            boolean descriptionUsed,
+            boolean fileNameUsed,
+            boolean contentUsed
+    ) {
     }
 
     private record VideoProbeInfo(double durationSeconds, String metadataSummary) {
