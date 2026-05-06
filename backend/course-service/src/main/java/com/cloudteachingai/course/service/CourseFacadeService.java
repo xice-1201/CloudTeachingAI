@@ -1,5 +1,6 @@
 package com.cloudteachingai.course.service;
 
+import com.cloudteachingai.course.client.CreateAdminAuditLogRequest;
 import com.cloudteachingai.course.client.UserServiceClient;
 import com.cloudteachingai.course.client.UserServiceResponse;
 import com.cloudteachingai.course.client.ResourceTagAgentClient;
@@ -54,6 +55,7 @@ import com.cloudteachingai.course.repository.ResourceTagRepository;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -80,9 +82,11 @@ import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CourseFacadeService {
 
     private static final int MAX_TAG_SUGGESTIONS = 8;
+    private static final String AUDIT_TARGET_COURSE = "COURSE";
 
     private final CourseRepository courseRepository;
     private final ChapterRepository chapterRepository;
@@ -182,6 +186,7 @@ public class CourseFacadeService {
         CourseEntity saved = courseRepository.save(course);
         syncVisibleStudents(saved.getId(), visibilityType, visibleStudentIds);
         publishCourseUpdatedEvent(saved, "CREATED");
+        recordCourseAudit(userContext, saved, "COURSE_CREATED", "Created course");
 
         return toCourseResponse(
                 saved,
@@ -211,6 +216,7 @@ public class CourseFacadeService {
         CourseEntity saved = courseRepository.save(course);
         syncVisibleStudents(saved.getId(), visibilityType, visibleStudentIds);
         publishCourseUpdatedEvent(saved, "UPDATED");
+        recordCourseAudit(userContext, saved, "COURSE_UPDATED", "Updated course");
 
         return toCourseResponse(
                 saved,
@@ -223,10 +229,12 @@ public class CourseFacadeService {
     @Transactional
     public void deleteCourse(Long id, UserContext userContext) {
         CourseEntity course = requireManageableCourse(id, userContext);
+        String title = course.getTitle();
         deleteManagedResourcesForCourse(id);
         courseVisibleStudentRepository.deleteByCourseId(id);
         courseRepository.delete(course);
         courseCoverStorageService.deleteIfManaged(course.getCoverKey());
+        recordCourseAudit(userContext, id, title, "COURSE_DELETED", "Deleted course");
     }
 
     @Transactional
@@ -237,6 +245,7 @@ public class CourseFacadeService {
         CourseEntity saved = courseRepository.save(course);
         publishCourseUpdatedEvent(saved, "PUBLISHED");
         publishCoursePublishedNotifications(saved);
+        recordCourseAudit(userContext, saved, "COURSE_PUBLISHED", "Published course");
         return toCourseResponseAfterMutation(saved);
     }
 
@@ -249,6 +258,7 @@ public class CourseFacadeService {
         course.setStatus(CourseStatus.DRAFT);
         CourseEntity saved = courseRepository.save(course);
         publishCourseUpdatedEvent(saved, "UNPUBLISHED");
+        recordCourseAudit(userContext, saved, "COURSE_UNPUBLISHED", "Unpublished course");
         return toCourseResponseAfterMutation(saved);
     }
 
@@ -261,6 +271,7 @@ public class CourseFacadeService {
         course.setStatus(CourseStatus.ARCHIVED);
         CourseEntity saved = courseRepository.save(course);
         publishCourseUpdatedEvent(saved, "ARCHIVED");
+        recordCourseAudit(userContext, saved, "COURSE_ARCHIVED", "Archived course");
         return toCourseResponseAfterMutation(saved);
     }
 
@@ -273,6 +284,7 @@ public class CourseFacadeService {
         course.setStatus(CourseStatus.DRAFT);
         CourseEntity saved = courseRepository.save(course);
         publishCourseUpdatedEvent(saved, "RESTORED");
+        recordCourseAudit(userContext, saved, "COURSE_RESTORED", "Restored course");
         return toCourseResponseAfterMutation(saved);
     }
 
@@ -1101,6 +1113,27 @@ public class CourseFacadeService {
             // Keep course queries available while user-service is unstable or misconfigured.
         }
         return "User-" + teacherId;
+    }
+
+    private void recordCourseAudit(UserContext userContext, CourseEntity course, String action, String detail) {
+        recordCourseAudit(userContext, course.getId(), course.getTitle(), action, detail);
+    }
+
+    private void recordCourseAudit(UserContext userContext, Long courseId, String title, String action, String detail) {
+        try {
+            userServiceClient.createAdminAuditLog(CreateAdminAuditLogRequest.builder()
+                    .actorId(userContext.userId())
+                    .action(action)
+                    .targetType(AUDIT_TARGET_COURSE)
+                    .targetId(courseId)
+                    .targetName(title)
+                    .detail(detail)
+                    .build());
+        } catch (FeignException ex) {
+            log.warn("Failed to record course audit log: action={}, courseId={}, status={}", action, courseId, ex.status());
+        } catch (Exception ex) {
+            log.warn("Failed to record course audit log: action={}, courseId={}", action, courseId, ex);
+        }
     }
 
     private Map<Long, List<Long>> loadVisibleStudentIds(List<CourseEntity> courses) {

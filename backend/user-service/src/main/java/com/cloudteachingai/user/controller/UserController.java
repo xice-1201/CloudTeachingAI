@@ -2,6 +2,7 @@ package com.cloudteachingai.user.controller;
 
 import com.cloudteachingai.user.dto.AdminAuditLogResponse;
 import com.cloudteachingai.user.dto.ApiResponse;
+import com.cloudteachingai.user.dto.CreateAdminAuditLogRequest;
 import com.cloudteachingai.user.dto.CreateTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.user.dto.CreateUserRequest;
 import com.cloudteachingai.user.dto.PageResponse;
@@ -80,6 +81,19 @@ public class UserController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         return ApiResponse.success(adminAuditLogService.listLogs(keyword, action, targetType, page, pageSize));
+    }
+
+    @PostMapping("/internal/admin-audit-logs")
+    public ApiResponse<AdminAuditLogResponse> createInternalAuditLog(
+            @Valid @RequestBody CreateAdminAuditLogRequest request) {
+        return ApiResponse.success(adminAuditLogService.record(
+                request.getActorId(),
+                request.getAction(),
+                request.getTargetType(),
+                request.getTargetId(),
+                request.getTargetName(),
+                request.getDetail()
+        ));
     }
 
     @GetMapping("/admin/teacher-registration-applications")

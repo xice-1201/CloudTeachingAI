@@ -260,12 +260,20 @@
                 <el-option label="停用用户" value="USER_DEACTIVATED" />
                 <el-option label="通过教师申请" value="TEACHER_APPLICATION_APPROVED" />
                 <el-option label="拒绝教师申请" value="TEACHER_APPLICATION_REJECTED" />
+                <el-option label="创建课程" value="COURSE_CREATED" />
+                <el-option label="编辑课程" value="COURSE_UPDATED" />
+                <el-option label="发布课程" value="COURSE_PUBLISHED" />
+                <el-option label="下架课程" value="COURSE_UNPUBLISHED" />
+                <el-option label="归档课程" value="COURSE_ARCHIVED" />
+                <el-option label="恢复课程" value="COURSE_RESTORED" />
+                <el-option label="删除课程" value="COURSE_DELETED" />
               </el-select>
             </el-form-item>
             <el-form-item label="对象">
               <el-select v-model="auditLogFilters.targetType" clearable placeholder="全部对象" style="width: 180px" @change="resetAndFetchAuditLogs">
                 <el-option label="用户" value="USER" />
                 <el-option label="教师申请" value="TEACHER_REGISTRATION_APPLICATION" />
+                <el-option label="课程" value="COURSE" />
               </el-select>
             </el-form-item>
             <el-form-item>
@@ -475,8 +483,8 @@ function roleLabel(role: string) { return { STUDENT: '学生', TEACHER: '教师'
 function statusLabel(status: string) { return { PENDING: '待审批', APPROVED: '已通过', REJECTED: '已拒绝' }[status] ?? status }
 function courseStatusTagType(status: Course['status']) { return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info' }
 function courseStatusLabel(status: Course['status']) { return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status] ?? status }
-function auditActionLabel(action: string) { return { USER_CREATED: '创建用户', USER_ACTIVATED: '启用用户', USER_DEACTIVATED: '停用用户', TEACHER_APPLICATION_APPROVED: '通过教师申请', TEACHER_APPLICATION_REJECTED: '拒绝教师申请' }[action] ?? action }
-function auditTargetTypeLabel(targetType: string) { return { USER: '用户', TEACHER_REGISTRATION_APPLICATION: '教师申请' }[targetType] ?? targetType }
+function auditActionLabel(action: string) { return { USER_CREATED: '创建用户', USER_ACTIVATED: '启用用户', USER_DEACTIVATED: '停用用户', TEACHER_APPLICATION_APPROVED: '通过教师申请', TEACHER_APPLICATION_REJECTED: '拒绝教师申请', COURSE_CREATED: '创建课程', COURSE_UPDATED: '编辑课程', COURSE_PUBLISHED: '发布课程', COURSE_UNPUBLISHED: '下架课程', COURSE_ARCHIVED: '归档课程', COURSE_RESTORED: '恢复课程', COURSE_DELETED: '删除课程' }[action] ?? action }
+function auditTargetTypeLabel(targetType: string) { return { USER: '用户', TEACHER_REGISTRATION_APPLICATION: '教师申请', COURSE: '课程' }[targetType] ?? targetType }
 function actorFallback(actorId?: number | null) { return actorId ? `User-${actorId}` : '系统' }
 function courseVisibilityLabel(course: Course) {
   if (course.visibilityType === 'SELECTED_STUDENTS') {

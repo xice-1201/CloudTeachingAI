@@ -24,12 +24,12 @@ public class AdminAuditLogService {
     private final UserRepository userRepository;
 
     @Transactional
-    public void record(Long actorId, String action, String targetType, Long targetId, String targetName, String detail) {
+    public AdminAuditLogResponse record(Long actorId, String action, String targetType, Long targetId, String targetName, String detail) {
         String actorName = actorId == null
                 ? null
                 : userRepository.findById(actorId).map(User::getUsername).orElse("User-" + actorId);
 
-        adminAuditLogRepository.save(AdminAuditLog.builder()
+        AdminAuditLog saved = adminAuditLogRepository.save(AdminAuditLog.builder()
                 .actorId(actorId)
                 .actorName(actorName)
                 .action(action)
@@ -38,6 +38,7 @@ public class AdminAuditLogService {
                 .targetName(targetName)
                 .detail(detail)
                 .build());
+        return AdminAuditLogResponse.from(saved);
     }
 
     public PageResponse<AdminAuditLogResponse> listLogs(String keyword, String action, String targetType, int page, int pageSize) {
