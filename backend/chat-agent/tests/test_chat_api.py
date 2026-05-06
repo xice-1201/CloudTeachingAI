@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import importlib
+import base64
+import json
+import sys
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+
+class FakeResponder:
+    async def stream_reply(self, history, message):
+        yield "收到："
+        yield message
+
+
+def bearer_for_user(user_id: str) -> str:
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode("utf-8")).decode("utf-8").rstrip("=")
+    payload = base64.urlsafe_b64encode(json.dumps({"sub": user_id}).encode("utf-8")).decode("utf-8").rstrip("=")
+    return f"Bearer {header}.{payload}.signature"
+
+
+def load_chat_main():
+    for module_name in list(sys.modules):
+        if module_name == "app" or module_name.startswith("app."):
+            del sys.modules[module_name]
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    return importlib.import_module("app.main")
+
+
+def test_chat_session_lifecycle_and_streaming_reply():
+    chat_main = load_chat_main()
+    chat_main.store = chat_main.ChatStore()
+    chat_main.responder = FakeResponder()
+
+    client = TestClient(chat_main.app)
+    headers = {"Authorization": bearer_for_user("42")}
+
+    created = client.post("/api/v1/chat/sessions", headers=headers).json()
+    assert created["code"] == 0
+    session_id = created["data"]["id"]
+    assert created["data"]["userId"] == 42
+
+    listed = client.get("/api/v1/chat/sessions", headers=headers).json()
+    assert [session["id"] for session in listed["data"]] == [session_id]
+
+    with client.stream(
+        "GET",
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        params={"message": "请总结这节课"},
+        headers=headers,
+    ) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert "data: 收到：" in body
+    assert "data: 请总结这节课" in body
+    assert "data: [DONE]" in body
+
+    session = client.get(f"/api/v1/chat/sessions/{session_id}", headers=headers).json()
+    assert [message["role"] for message in session["data"]["messages"]] == ["user", "assistant"]
+    assert session["data"]["messages"][1]["content"] == "收到：请总结这节课"
+
+    deleted = client.delete(f"/api/v1/chat/sessions/{session_id}", headers=headers).json()
+    assert deleted["code"] == 0
+    missing = client.get(f"/api/v1/chat/sessions/{session_id}", headers=headers)
+    assert missing.status_code == 404
+
+
+def test_chat_sessions_are_scoped_by_user():
+    chat_main = load_chat_main()
+    chat_main.store = chat_main.ChatStore()
+    chat_main.responder = FakeResponder()
+
+    client = TestClient(chat_main.app)
+    session_id = client.post(
+        "/api/v1/chat/sessions",
+        headers={"Authorization": bearer_for_user("teacher-a")},
+    ).json()["data"]["id"]
+
+    response = client.get(
+        f"/api/v1/chat/sessions/{session_id}",
+        headers={"Authorization": bearer_for_user("teacher-b")},
+    )
+
+    assert response.status_code == 404
