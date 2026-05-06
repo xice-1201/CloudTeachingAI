@@ -529,7 +529,13 @@ async function loadTagSuggestions() {
           fileName,
           file: selectedResourceFile.value ?? undefined,
         })
-    if (!suggestions.value.length) ElMessage.info('没有生成建议标签，请手动补充标签')
+    if (!suggestions.value.length) {
+      if (resourceDialog.form.type === 'VIDEO') {
+        ElMessage.warning('未成功获取视频转写，暂时无法基于内容生成标签，请检查视频音轨与转写配置')
+      } else {
+        ElMessage.info('没有生成建议标签，请手动补充标签')
+      }
+    }
   } finally {
     suggestionLoading.value = false
   }
