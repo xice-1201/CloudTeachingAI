@@ -5,10 +5,12 @@ import com.cloudteachingai.user.dto.CreateTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.user.dto.CreateUserRequest;
 import com.cloudteachingai.user.dto.PageResponse;
 import com.cloudteachingai.user.dto.ReviewTeacherRegistrationApplicationRequest;
+import com.cloudteachingai.user.dto.ServiceHealthResponse;
 import com.cloudteachingai.user.dto.TeacherRegistrationApplicationResponse;
 import com.cloudteachingai.user.dto.UpdateProfileRequest;
 import com.cloudteachingai.user.dto.UserResponse;
 import com.cloudteachingai.user.entity.User;
+import com.cloudteachingai.user.service.SystemHealthService;
 import com.cloudteachingai.user.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +35,7 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
+    private final SystemHealthService systemHealthService;
 
     @PostMapping("/admin/users")
     public ApiResponse<UserResponse> createUser(@Valid @RequestBody CreateUserRequest request) {
@@ -43,6 +46,11 @@ public class UserController {
     @GetMapping("/admin/teacher-registration-applications")
     public ApiResponse<List<TeacherRegistrationApplicationResponse>> listPendingTeacherRegistrationApplications() {
         return ApiResponse.success(userService.listPendingTeacherRegistrationApplications());
+    }
+
+    @GetMapping("/admin/system-health")
+    public ApiResponse<List<ServiceHealthResponse>> listSystemHealth() {
+        return ApiResponse.success(systemHealthService.listServiceHealth());
     }
 
     @PostMapping("/admin/teacher-registration-applications/{id}/approve")

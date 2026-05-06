@@ -33,6 +33,34 @@ management:
       exposure:
         include: health,info
 
+system-health:
+  timeout-seconds: ${SYSTEM_HEALTH_TIMEOUT_SECONDS:5}
+  targets:
+    - key: auth-service
+      name: 认证服务
+      url: ${SYSTEM_HEALTH_AUTH_URL:http://localhost:8001/actuator/health}
+    - key: user-service
+      name: 用户服务
+      url: ${SYSTEM_HEALTH_USER_URL:http://localhost:8002/actuator/health}
+    - key: course-service
+      name: 课程服务
+      url: ${SYSTEM_HEALTH_COURSE_URL:http://localhost:8003/actuator/health}
+    - key: learn-service
+      name: 学习服务
+      url: ${SYSTEM_HEALTH_LEARN_URL:http://localhost:8004/actuator/health}
+    - key: assign-service
+      name: 作业服务
+      url: ${SYSTEM_HEALTH_ASSIGN_URL:http://localhost:8005/actuator/health}
+    - key: notify-service
+      name: 通知服务
+      url: ${SYSTEM_HEALTH_NOTIFY_URL:http://localhost:8006/actuator/health}
+    - key: tag-agent
+      name: AI 标注服务
+      url: ${SYSTEM_HEALTH_TAG_AGENT_URL:http://localhost:8101/health}
+    - key: chat-agent
+      name: AI 聊天服务
+      url: ${SYSTEM_HEALTH_CHAT_AGENT_URL:http://localhost:8104/health}
+
 logging:
   level:
     com.cloudteachingai: DEBUG
