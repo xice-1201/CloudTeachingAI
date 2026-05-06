@@ -78,6 +78,8 @@ jobs:
               - 'frontend/**'
             infra:
               - 'docker-compose.yml'
+              - '.github/workflows/deploy.yml'
+              - 'deploy/**'
 
       - name: Prepare deploy flags
         id: flags
@@ -536,6 +538,45 @@ jobs:
               return 1
             }
 
+            wait_for_aggregate_system_health() {
+              local retries="$1"
+              local url="http://localhost:8002/api/v1/admin/system-health"
+              local response_file
+              response_file=$(mktemp)
+
+              for i in $(seq 1 "$retries"); do
+                if curl -sf "$url" -o "$response_file"; then
+                  echo "Aggregated system health response received"
+                  if command -v python3 > /dev/null 2>&1; then
+                    python3 -c 'import json,sys; payload=json.load(open(sys.argv[1], encoding="utf-8")); items=payload.get("data") or []; valid=isinstance(items, list); print("Invalid system health payload: data is not a list") if not valid else None; sys.exit(1) if not valid else None; [print("- {} ({}): {}, http={}, latency={}ms, message={}".format(item.get("name") or item.get("key") or "unknown", item.get("key") or item.get("name") or "unknown", item.get("status") or "UNKNOWN", item.get("httpStatus") or "-", item.get("responseTimeMs") or "-", item.get("message") or "healthy")) for item in items]; failed=[item for item in items if item.get("status") != "UP"]; print("") if failed else None; print("Unhealthy services:") if failed else None; [print("  * {}: {}".format(item.get("name") or item.get("key") or "unknown", item.get("message") or "DOWN")) for item in failed]; sys.exit(1 if failed else 0)' "$response_file"
+                    parse_status=$?
+                  else
+                    echo "python3 not found on server, using raw health payload fallback"
+                    cat "$response_file"
+                    if grep -q '"status"[[:space:]]*:[[:space:]]*"DOWN"' "$response_file"; then
+                      parse_status=1
+                    else
+                      parse_status=0
+                    fi
+                  fi
+
+                  rm -f "$response_file"
+                  if [ "$parse_status" -eq 0 ]; then
+                    echo "Aggregated system health check passed"
+                    return 0
+                  fi
+                  echo "Aggregated system health check found unhealthy services"
+                  return 1
+                fi
+                echo "Waiting for aggregated system health endpoint... ($i/$retries)"
+                sleep 15
+              done
+
+              rm -f "$response_file"
+              echo "Aggregated system health endpoint is unavailable"
+              return 2
+            }
+
             pull_image_if_needed "$AUTH_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/auth-service"
             pull_image_if_needed "$USER_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/user-service"
             pull_image_if_needed "$NOTIFY_CHANGED" "${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/notify-service"
@@ -593,29 +634,40 @@ jobs:
             docker compose ps
 
             echo "=== Health Checks ==="
-            if [ "$DEPLOY_ALL" = "true" ] || [ "$AUTH_CHANGED" = "true" ]; then
-              wait_for_service auth-service http://localhost:8001/actuator/health 3
+            aggregate_status=0
+            wait_for_aggregate_system_health 6 || aggregate_status=$?
+            if [ "$aggregate_status" -eq 1 ]; then
+              echo "Aggregated system health check failed"
+              docker compose ps || true
+              exit 1
             fi
-            if [ "$DEPLOY_ALL" = "true" ] || [ "$USER_CHANGED" = "true" ]; then
-              wait_for_service user-service http://localhost:8002/actuator/health 3
-            fi
-            if [ "$DEPLOY_ALL" = "true" ] || [ "$NOTIFY_CHANGED" = "true" ]; then
-              wait_for_service notify-service http://localhost:8006/actuator/health 3
-            fi
-            if [ "$DEPLOY_ALL" = "true" ] || [ "$COURSE_CHANGED" = "true" ]; then
-              wait_for_service course-service http://localhost:8003/actuator/health 3
-            fi
-            if [ "$DEPLOY_ALL" = "true" ] || [ "$LEARN_CHANGED" = "true" ]; then
-              wait_for_service learn-service http://localhost:8004/actuator/health 3
-            fi
-            if [ "$DEPLOY_ALL" = "true" ] || [ "$ASSIGN_CHANGED" = "true" ]; then
-              wait_for_service assign-service http://localhost:8005/actuator/health 3
-            fi
-            if [ "$DEPLOY_ALL" = "true" ] || [ "$TAG_CHANGED" = "true" ]; then
-              wait_for_service tag-agent http://localhost:8101/health 3
-            fi
-            if [ "$DEPLOY_ALL" = "true" ] || [ "$CHAT_CHANGED" = "true" ]; then
-              wait_for_service chat-agent http://localhost:8104/health 3
+
+            if [ "$aggregate_status" -eq 2 ]; then
+              echo "Falling back to targeted service health checks"
+              if [ "$DEPLOY_ALL" = "true" ] || [ "$AUTH_CHANGED" = "true" ]; then
+                wait_for_service auth-service http://localhost:8001/actuator/health 3
+              fi
+              if [ "$DEPLOY_ALL" = "true" ] || [ "$USER_CHANGED" = "true" ]; then
+                wait_for_service user-service http://localhost:8002/actuator/health 3
+              fi
+              if [ "$DEPLOY_ALL" = "true" ] || [ "$NOTIFY_CHANGED" = "true" ]; then
+                wait_for_service notify-service http://localhost:8006/actuator/health 3
+              fi
+              if [ "$DEPLOY_ALL" = "true" ] || [ "$COURSE_CHANGED" = "true" ]; then
+                wait_for_service course-service http://localhost:8003/actuator/health 3
+              fi
+              if [ "$DEPLOY_ALL" = "true" ] || [ "$LEARN_CHANGED" = "true" ]; then
+                wait_for_service learn-service http://localhost:8004/actuator/health 3
+              fi
+              if [ "$DEPLOY_ALL" = "true" ] || [ "$ASSIGN_CHANGED" = "true" ]; then
+                wait_for_service assign-service http://localhost:8005/actuator/health 3
+              fi
+              if [ "$DEPLOY_ALL" = "true" ] || [ "$TAG_CHANGED" = "true" ]; then
+                wait_for_service tag-agent http://localhost:8101/health 3
+              fi
+              if [ "$DEPLOY_ALL" = "true" ] || [ "$CHAT_CHANGED" = "true" ]; then
+                wait_for_service chat-agent http://localhost:8104/health 3
+              fi
             fi
 
             if [ "$DEPLOY_ALL" = "true" ] || [ "$FRONTEND_CHANGED" = "true" ]; then
