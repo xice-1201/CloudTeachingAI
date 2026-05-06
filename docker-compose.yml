@@ -234,6 +234,8 @@
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      AI_TAG_AGENT_ENABLED: ${AI_TAG_AGENT_ENABLED:-true}
+      AI_TAG_AGENT_BASE_URL: http://tag-agent:8101
       AI_TAG_PREVIEW_VIDEO_TRANSCRIPTION_API_KEY: ${AI_TAG_PREVIEW_VIDEO_TRANSCRIPTION_API_KEY:-}
       AI_TAG_PREVIEW_VIDEO_TRANSCRIPTION_BASE_URL: ${AI_TAG_PREVIEW_VIDEO_TRANSCRIPTION_BASE_URL:-https://api.openai.com/v1}
       AI_TAG_PREVIEW_VIDEO_TRANSCRIPTION_MODEL: ${AI_TAG_PREVIEW_VIDEO_TRANSCRIPTION_MODEL:-gpt-4o-mini-transcribe}
@@ -306,6 +308,32 @@
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  tag-agent:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/tag-agent:latest
+    container_name: tag-agent
+    restart: unless-stopped
+    depends_on:
+      course-service:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      TAG_AGENT_KAFKA_ENABLED: ${TAG_AGENT_KAFKA_ENABLED:-false}
+      COURSE_SERVICE_BASE_URL: http://course-service:8003
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      TAG_LIMIT: ${TAG_LIMIT:-8}
+    ports:
+      - "8101:8101"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8101/health', timeout=5).read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   chat-agent:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/chat-agent:latest

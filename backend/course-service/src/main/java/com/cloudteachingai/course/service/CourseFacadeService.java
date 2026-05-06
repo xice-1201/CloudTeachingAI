@@ -2,6 +2,7 @@ package com.cloudteachingai.course.service;
 
 import com.cloudteachingai.course.client.UserServiceClient;
 import com.cloudteachingai.course.client.UserServiceResponse;
+import com.cloudteachingai.course.client.ResourceTagAgentClient;
 import com.cloudteachingai.course.controller.CourseController.UserContext;
 import com.cloudteachingai.course.dto.ChapterResponse;
 import com.cloudteachingai.course.dto.ChapterUpsertRequest;
@@ -95,6 +96,7 @@ public class CourseFacadeService {
     private final CourseCoverStorageService courseCoverStorageService;
     private final ResourceStorageService resourceStorageService;
     private final ResourceTagSuggestionService resourceTagSuggestionService;
+    private final ResourceTagAgentClient resourceTagAgentClient;
     private final OutboxService outboxService;
 
     public PageResponse<CourseResponse> listCourses(UserContext userContext, int page, int pageSize, String keyword, String status) {
@@ -1062,7 +1064,7 @@ public class CourseFacadeService {
                 || (manualTagLabels != null && !manualTagLabels.isEmpty())) {
             return;
         }
-        outboxService.enqueue(EventTopics.RESOURCE_UPLOADED, ResourceUploadedEvent.builder()
+        ResourceUploadedEvent event = ResourceUploadedEvent.builder()
                 .resourceId(resource.getId())
                 .chapterId(resource.getChapterId())
                 .courseId(course.getId())
@@ -1071,7 +1073,12 @@ public class CourseFacadeService {
                 .description(resource.getDescription())
                 .type(resource.getType().name())
                 .storageKey(resource.getStorageKey())
-                .build());
+                .build();
+
+        resourceTagAgentClient.requestTagging(event).ifPresentOrElse(
+                this::applyAiTaggedResource,
+                () -> outboxService.enqueue(EventTopics.RESOURCE_UPLOADED, event)
+        );
     }
 
     private Map<Long, String> resolveTeacherNames(List<CourseEntity> courses) {

@@ -1,25 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from datetime import datetime, timezone
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from .config import Settings
-from .course_client import CourseServiceClient
-from .models import ResourceTaggedEvent, ResourceUploadedEvent
-from .tagging_service import TaggingService
+from .models import ResourceUploadedEvent
+from .tagging_job_service import TaggingJobService
 
 logger = logging.getLogger(__name__)
 
 
 class TagAgentWorker:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, tagging_job_service: TaggingJobService) -> None:
         self._settings = settings
-        self._course_client = CourseServiceClient(settings.course_service_base_url)
-        self._tagging_service = TaggingService(settings)
+        self._tagging_job_service = tagging_job_service
         self._consumer = AIOKafkaConsumer(
             "resource.uploaded",
             bootstrap_servers=settings.kafka_bootstrap_servers,
@@ -43,7 +39,6 @@ class TagAgentWorker:
                 pass
         await self._consumer.stop()
         await self._producer.stop()
-        await self._course_client.close()
 
     async def _consume_loop(self) -> None:
         async for message in self._consumer:
@@ -55,23 +50,9 @@ class TagAgentWorker:
                 logger.exception("Failed to process resource.uploaded payload=%s", payload)
 
     async def _handle_uploaded_event(self, event: ResourceUploadedEvent) -> None:
-        context = await self._course_client.get_resource_tagging_context(event.resourceId)
-        knowledge_points = await self._course_client.list_leaf_knowledge_points()
-        suggestions = await self._tagging_service.suggest_tags(context, knowledge_points)
-
-        tagged_event = ResourceTaggedEvent(
-            resourceId=context.resourceId,
-            chapterId=context.chapterId,
-            courseId=context.courseId,
-            teacherId=context.teacherId,
-            title=context.title,
-            storageKey=context.storageKey,
-            taggingStatus="SUGGESTED" if suggestions else "UNTAGGED",
-            taggingUpdatedAt=datetime.now(timezone.utc).isoformat(),
-            knowledgePoints=suggestions,
-        )
+        tagged_event = await self._tagging_job_service.build_tagged_event(event)
         await self._producer.send_and_wait(
             "resource.tagged",
-            key=str(context.resourceId).encode("utf-8"),
+            key=str(tagged_event.resourceId).encode("utf-8"),
             value=tagged_event.model_dump_json(exclude_none=True).encode("utf-8"),
         )

@@ -66,6 +66,10 @@ app:
     enabled: ${APP_KAFKA_ENABLED:false}
 
 ai:
+  tag-agent:
+    enabled: ${AI_TAG_AGENT_ENABLED:true}
+    base-url: ${AI_TAG_AGENT_BASE_URL:http://localhost:8101}
+    timeout-seconds: ${AI_TAG_AGENT_TIMEOUT_SECONDS:30}
   tag-preview:
     enabled: ${AI_TAG_PREVIEW_ENABLED:true}
     provider-enabled: ${AI_TAG_PREVIEW_PROVIDER_ENABLED:true}

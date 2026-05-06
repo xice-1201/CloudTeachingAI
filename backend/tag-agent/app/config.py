@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class Settings:
+    kafka_enabled: bool = os.getenv("TAG_AGENT_KAFKA_ENABLED", "false").lower() == "true"
     kafka_bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_group_id: str = os.getenv("KAFKA_GROUP_ID", "tag-agent")
     course_service_base_url: str = os.getenv("COURSE_SERVICE_BASE_URL", "http://localhost:8003")
