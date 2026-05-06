@@ -118,8 +118,8 @@
                       <el-link :href="resource.url" target="_blank" type="primary">打开资源</el-link>
                     </div>
                     <div v-if="resource.tags?.length || resource.knowledgePoints?.length" class="resource-tags">
-                      <el-tag v-for="tag in (resource.tags?.length ? resource.tags : resource.knowledgePoints)" :key="`${resource.id}-${tag.label ?? tag.id}`" size="small" effect="plain">
-                        {{ tag.label ?? tag.name }}
+                      <el-tag v-for="tag in (resource.tags?.length ? resource.tags : resource.knowledgePoints)" :key="`${resource.id}-${resourceTagKey(tag)}`" size="small" effect="plain">
+                        {{ resourceTagLabel(tag) }}
                       </el-tag>
                     </div>
                   </div>
@@ -222,14 +222,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { courseApi } from '@/api/course'
 import { userApi } from '@/api/user'
-import type { Chapter, Course, KnowledgePointNode, Resource, ResourceTagSuggestion, User } from '@/types'
+import type { Chapter, Course, Resource, ResourceKnowledgePoint, ResourceTag, ResourceTagSuggestion, User } from '@/types'
 
 type RequestLikeError = Error & {
   code?: number
@@ -249,7 +249,6 @@ const router = useRouter()
 const formRef = ref<FormInstance>()
 const chapterFormRef = ref<FormInstance>()
 const resourceFormRef = ref<FormInstance>()
-const knowledgePointTreeRef = ref<any>()
 
 const pageLoading = ref(false)
 const savingCourse = ref(false)
@@ -266,11 +265,8 @@ const courseStatus = ref<Course['status'] | ''>('')
 const coverPreviewUrl = ref('')
 const selectedCoverFile = ref<File | null>(null)
 const studentOptions = ref<User[]>([])
-const knowledgePointTree = ref<KnowledgePointNode[]>([])
-const knowledgePointMap = ref<Record<number, KnowledgePointNode>>({})
 const leafKnowledgePointCount = ref(0)
 const suggestions = ref<ResourceTagSuggestion[]>([])
-const knowledgePointKeyword = ref('')
 let temporaryCoverUrl = ''
 
 const isEdit = computed(() => Boolean(route.params.id))
@@ -324,21 +320,6 @@ const resourceRules: FormRules = {
     },
     trigger: 'change',
   }],
-}
-
-function flattenKnowledgePoints(nodes: KnowledgePointNode[]) {
-  const nextMap: Record<number, KnowledgePointNode> = {}
-  let leafCount = 0
-  const walk = (items: KnowledgePointNode[]) => {
-    items.forEach((item) => {
-      nextMap[item.id] = item
-      if (item.nodeType === 'POINT' && item.active) leafCount += 1
-      if (item.children?.length) walk(item.children)
-    })
-  }
-  walk(nodes)
-  knowledgePointMap.value = nextMap
-  leafKnowledgePointCount.value = leafCount
 }
 
 function setCoverPreview(url: string) {
@@ -403,16 +384,8 @@ function resourceTaggingLabel(status?: Resource['taggingStatus']) { return { CON
 function resourceTaggingType(status?: Resource['taggingStatus']) { return { CONFIRMED: 'success', SUGGESTED: 'warning', UNTAGGED: 'info' }[status ?? 'UNTAGGED'] ?? 'info' }
 function formatDuration(seconds: number) { const minutes = Math.floor(seconds / 60); const remainingSeconds = seconds % 60; return `${minutes}:${String(remainingSeconds).padStart(2, '0')}` }
 function formatFileSize(size: number) { if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`; if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`; return `${size} B` }
-function knowledgePointLabel(id: number) { return knowledgePointMap.value[id]?.path ?? `#${id}` }
-
-function applyKnowledgePointSelection(ids: number[]) {
-  const nextIds = Array.from(new Set(ids.filter((id) => knowledgePointMap.value[id]?.nodeType === 'POINT')))
-  resourceDialog.form.knowledgePointIds = nextIds
-  nextTick(() => knowledgePointTreeRef.value?.setCheckedKeys(nextIds))
-}
-
-function removeSelectedKnowledgePoint(id: number) { applyKnowledgePointSelection(resourceDialog.form.knowledgePointIds.filter((item) => item !== id)) }
-function applySuggestedKnowledgePoints(ids: number[]) { applyKnowledgePointSelection([...resourceDialog.form.knowledgePointIds, ...ids]) }
+function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.label : tag.name }
+function resourceTagKey(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.label : tag.id }
 function normalizeTagLabels(labels: string[]) {
   const normalized = new Map<string, string>()
   labels.forEach((label) => {
@@ -423,23 +396,12 @@ function normalizeTagLabels(labels: string[]) {
   return Array.from(normalized.values())
 }
 function applySuggestedTags(labels: string[]) { resourceDialog.form.tagLabels = normalizeTagLabels([...resourceDialog.form.tagLabels, ...labels]) }
-function clearKnowledgePointSelection() { applyKnowledgePointSelection([]) }
-function filterKnowledgePointNode(keyword: string, data: KnowledgePointNode) { if (!keyword) return true; const normalized = keyword.trim().toLowerCase(); return data.name.toLowerCase().includes(normalized) || data.path.toLowerCase().includes(normalized) }
 function extractFileName(value?: string) {
   if (!value) return ''
   const withoutQuery = value.split('?')[0] ?? value
   const parts = withoutQuery.split('/')
   return parts[parts.length - 1] ?? withoutQuery
 }
-function handleKnowledgePointCheck(data: KnowledgePointNode, checkedInfo: { checkedKeys: Array<string | number> }) {
-  const checkedIds = checkedInfo.checkedKeys.map((item) => Number(item))
-  if (data.nodeType !== 'POINT' && checkedIds.includes(data.id)) {
-    knowledgePointTreeRef.value?.setChecked(data.id, false, false)
-    ElMessage.warning('只能选择叶子知识点')
-  }
-  applyKnowledgePointSelection(checkedIds)
-}
-
 function mergeStudentOptions(students: User[]) {
   const merged = new Map<number, User>()
   for (const student of [...studentOptions.value, ...students]) merged.set(student.id, student)
@@ -482,17 +444,6 @@ async function ensureSelectedStudentsLoaded(studentIds: number[]) {
       }
     })
     ElMessage.warning(`部分指定学生信息加载失败，已忽略 ${failedIds.length} 条失效学生记录`)
-  }
-}
-
-async function loadKnowledgePointTree() {
-  try {
-    const tree = await courseApi.listKnowledgePointTree({ activeOnly: true })
-    knowledgePointTree.value = tree
-    flattenKnowledgePoints(tree)
-  } catch (error) {
-    logCourseEditError('loadKnowledgePointTree', error)
-    throw error
   }
 }
 
@@ -774,18 +725,10 @@ async function handleDeleteResource(resource: Resource) {
 onMounted(async () => {
   pageLoading.value = true
   try {
-    const bootstrapResults = await Promise.allSettled([loadStudentOptions()])
-    const studentResult = bootstrapResults[0]
-    const knowledgePointResult = { status: 'fulfilled' as const }
+    const [studentResult] = await Promise.allSettled([loadStudentOptions()])
 
     if (studentResult.status === 'rejected') {
       ElMessage.warning('学生列表加载失败，编辑页已继续加载。请查看浏览器控制台定位原因。')
-    }
-    if (knowledgePointResult.status === 'rejected') {
-      knowledgePointTree.value = []
-      knowledgePointMap.value = {}
-      leafKnowledgePointCount.value = 0
-      ElMessage.warning('知识点树加载失败，编辑页已继续加载。请查看浏览器控制台定位原因。')
     }
 
     await loadCourse()

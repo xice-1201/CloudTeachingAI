@@ -227,7 +227,15 @@ async function handleSubmitKnowledgePoint() {
 }
 
 async function toggleKnowledgePoint(node: KnowledgePointNode) {
-  await courseApi.updateKnowledgePoint(String(node.id), { ...node, active: !node.active })
+  await courseApi.updateKnowledgePoint(String(node.id), {
+    parentId: node.parentId ?? null,
+    name: node.name,
+    description: node.description ?? undefined,
+    keywords: node.keywords ?? undefined,
+    nodeType: node.nodeType,
+    active: !node.active,
+    orderIndex: node.orderIndex,
+  })
   ElMessage.success(node.active ? '知识点已停用' : '知识点已启用')
   await fetchKnowledgePoints()
 }

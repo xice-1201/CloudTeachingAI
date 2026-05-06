@@ -61,7 +61,7 @@ export function isLoggedIn(): boolean {
  * @param resourceOwnerId 资源所有者 ID
  * @param allowRoles 允许访问的角色
  */
-export function canAccess(resourceOwnerId?: string, allowRoles?: string[]): boolean {
+export function canAccess(resourceOwnerId?: string | number, allowRoles?: string[]): boolean {
   const userStore = useUserStore()
 
   // 管理员可以访问所有资源
@@ -71,7 +71,7 @@ export function canAccess(resourceOwnerId?: string, allowRoles?: string[]): bool
   if (allowRoles && !hasRole(allowRoles)) return false
 
   // 检查资源所有权
-  if (resourceOwnerId && userStore.user?.id !== resourceOwnerId) return false
+  if (resourceOwnerId && String(userStore.user?.id) !== String(resourceOwnerId)) return false
 
   return true
 }

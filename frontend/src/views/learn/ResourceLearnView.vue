@@ -35,11 +35,11 @@
           <div v-if="resource?.tags?.length || resource?.knowledgePoints?.length" class="resource-tags">
             <el-tag
               v-for="tag in (resource?.tags?.length ? resource.tags : resource?.knowledgePoints)"
-              :key="`${resource?.id}-${tag.label ?? tag.id}`"
+              :key="`${resource?.id}-${resourceTagKey(tag)}`"
               size="small"
               effect="plain"
             >
-              {{ tag.label ?? tag.name }}
+              {{ resourceTagLabel(tag) }}
             </el-tag>
           </div>
           <div v-else class="progress-text">当前资源还没有确认的知识点标签。</div>
@@ -127,7 +127,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
 import { useUserStore } from '@/store/user'
-import type { Chapter, DiscussionPost, LearningProgress, Resource } from '@/types'
+import type { Chapter, DiscussionPost, LearningProgress, Resource, ResourceKnowledgePoint, ResourceTag } from '@/types'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -183,6 +183,14 @@ function getCourseId() {
 
 function formatDate(value: string) {
   return new Date(value).toLocaleString('zh-CN')
+}
+
+function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) {
+  return 'label' in tag ? tag.label : tag.name
+}
+
+function resourceTagKey(tag: ResourceTag | ResourceKnowledgePoint) {
+  return 'label' in tag ? tag.label : tag.id
 }
 
 function canDeleteDiscussion(post: DiscussionPost) {

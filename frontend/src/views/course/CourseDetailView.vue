@@ -85,11 +85,11 @@
                     <div v-if="resource.tags?.length || resource.knowledgePoints?.length" class="resource-tags">
                       <el-tag
                         v-for="tag in (resource.tags?.length ? resource.tags : resource.knowledgePoints)"
-                        :key="`${resource.id}-${tag.label ?? tag.id}`"
+                        :key="`${resource.id}-${resourceTagKey(tag)}`"
                         size="small"
                         effect="plain"
                       >
-                        {{ tag.label ?? tag.name }}
+                        {{ resourceTagLabel(tag) }}
                       </el-tag>
                     </div>
                   </div>
@@ -218,7 +218,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document, Paperclip, VideoPlay } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
 import { useUserStore } from '@/store/user'
-import type { Announcement, Chapter, Course, DiscussionPost, Resource } from '@/types'
+import type { Announcement, Chapter, Course, DiscussionPost, Resource, ResourceKnowledgePoint, ResourceTag } from '@/types'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -285,6 +285,14 @@ function formatDuration(seconds: number) {
 
 function resourceIcon(type: string) {
   return { VIDEO: VideoPlay, DOCUMENT: Document, SLIDE: Paperclip }[type] ?? Document
+}
+
+function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) {
+  return 'label' in tag ? tag.label : tag.name
+}
+
+function resourceTagKey(tag: ResourceTag | ResourceKnowledgePoint) {
+  return 'label' in tag ? tag.label : tag.id
 }
 
 function openAnnouncementDialog(item?: Announcement) {

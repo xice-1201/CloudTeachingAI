@@ -71,7 +71,7 @@ async function searchTeachers() {
   }
 }
 
-async function applyMentor(mentorId: string) {
+async function applyMentor(mentorId: number) {
   await userApi.applyMentor(mentorId)
   ElMessage.success('申请已发送')
 }

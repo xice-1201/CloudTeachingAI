@@ -34,7 +34,7 @@ export const userApi = {
   rejectTeacherRegistrationApplication: (id: number, data: { reviewerId: number; reviewNote?: string }): Promise<TeacherRegistrationApplication> =>
     request.post(`/admin/teacher-registration-applications/${id}/reject`, data),
 
-  applyMentor: (mentorId: string): Promise<void> =>
+  applyMentor: (mentorId: string | number): Promise<void> =>
     request.post(`/users/mentor-relations`, { mentorId }),
 
   getMentorRelations: (): Promise<{ mentor?: User; students: User[] }> =>

@@ -146,7 +146,7 @@ request.interceptors.response.use(
     const silentError = isSilentError(response.config)
 
     if (payload.code === 0 || payload.code === 200) {
-      return response.data.data
+      return response.data.data as AxiosResponse<WrappedResponse>
     }
 
     const businessError = createApiError(

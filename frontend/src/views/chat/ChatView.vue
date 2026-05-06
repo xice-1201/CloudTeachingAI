@@ -82,7 +82,7 @@ import { chatApi } from '@/api/chat'
 import type { ChatSession, ChatMessage } from '@/types'
 
 const sessions = ref<ChatSession[]>([])
-const currentSessionId = ref('')
+const currentSessionId = ref<number | null>(null)
 const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
 const streaming = ref(false)
@@ -99,28 +99,28 @@ async function createSession() {
   selectSession(session.id)
 }
 
-async function selectSession(id: string) {
+async function selectSession(id: number) {
   currentSessionId.value = id
   const session = await chatApi.getSession(id)
   messages.value = session.messages
   await scrollToBottom()
 }
 
-async function deleteSession(id: string) {
+async function deleteSession(id: number) {
   await chatApi.deleteSession(id)
   sessions.value = sessions.value.filter((s) => s.id !== id)
   if (currentSessionId.value === id) {
-    currentSessionId.value = ''
+    currentSessionId.value = null
     messages.value = []
   }
 }
 
 async function sendMessage() {
   const text = inputText.value.trim()
-  if (!text || streaming.value) return
+  if (!text || streaming.value || currentSessionId.value === null) return
 
   const userMsg: ChatMessage = {
-    id: Date.now().toString(),
+    id: Date.now(),
     role: 'user',
     content: text,
     timestamp: new Date().toISOString(),
@@ -139,7 +139,7 @@ async function sendMessage() {
     if (event.data === '[DONE]') {
       es.close()
       messages.value.push({
-        id: Date.now().toString(),
+        id: Date.now(),
         role: 'assistant',
         content: streamingText.value,
         timestamp: new Date().toISOString(),

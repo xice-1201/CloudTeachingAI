@@ -123,7 +123,14 @@ const sendingCode = ref(false)
 const countdown = ref(0)
 let timer: ReturnType<typeof setInterval> | null = null
 
-const form = reactive({
+const form = reactive<{
+  username: string
+  role: 'STUDENT' | 'TEACHER'
+  email: string
+  code: string
+  password: string
+  confirmPassword: string
+}>({
   username: '',
   role: 'STUDENT',
   email: '',
