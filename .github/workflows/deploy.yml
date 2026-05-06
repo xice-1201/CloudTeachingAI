@@ -48,14 +48,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Detect changed paths
         id: changes
         if: github.event_name != 'workflow_dispatch'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             auth:
@@ -267,15 +267,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         if: needs.detect-changes.outputs.image_changed == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Aliyun Container Registry
         if: needs.detect-changes.outputs.image_changed == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.ALIYUN_USERNAME }}
@@ -283,10 +283,10 @@ jobs:
 
       - name: Build and push auth-service
         if: needs.detect-changes.outputs.auth_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/auth-service
-          dockerfile: ./backend/auth-service/Dockerfile
+          file: ./backend/auth-service/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -296,10 +296,10 @@ jobs:
 
       - name: Build and push user-service
         if: needs.detect-changes.outputs.user_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/user-service
-          dockerfile: ./backend/user-service/Dockerfile
+          file: ./backend/user-service/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -309,10 +309,10 @@ jobs:
 
       - name: Build and push notify-service
         if: needs.detect-changes.outputs.notify_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/notify-service
-          dockerfile: ./backend/notify-service/Dockerfile
+          file: ./backend/notify-service/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -322,10 +322,10 @@ jobs:
 
       - name: Build and push course-service
         if: needs.detect-changes.outputs.course_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/course-service
-          dockerfile: ./backend/course-service/Dockerfile
+          file: ./backend/course-service/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -335,10 +335,10 @@ jobs:
 
       - name: Build and push learn-service
         if: needs.detect-changes.outputs.learn_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/learn-service
-          dockerfile: ./backend/learn-service/Dockerfile
+          file: ./backend/learn-service/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -348,10 +348,10 @@ jobs:
 
       - name: Build and push assign-service
         if: needs.detect-changes.outputs.assign_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/assign-service
-          dockerfile: ./backend/assign-service/Dockerfile
+          file: ./backend/assign-service/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -361,10 +361,10 @@ jobs:
 
       - name: Build and push tag-agent
         if: needs.detect-changes.outputs.tag_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/tag-agent
-          dockerfile: ./backend/tag-agent/Dockerfile
+          file: ./backend/tag-agent/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -374,10 +374,10 @@ jobs:
 
       - name: Build and push chat-agent
         if: needs.detect-changes.outputs.chat_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backend/chat-agent
-          dockerfile: ./backend/chat-agent/Dockerfile
+          file: ./backend/chat-agent/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -387,10 +387,10 @@ jobs:
 
       - name: Build and push frontend
         if: needs.detect-changes.outputs.frontend_changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
-          dockerfile: ./frontend/Dockerfile
+          file: ./frontend/Dockerfile
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -407,7 +407,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.0
