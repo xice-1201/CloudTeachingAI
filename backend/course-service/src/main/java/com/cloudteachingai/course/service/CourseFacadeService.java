@@ -62,6 +62,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -102,6 +106,7 @@ public class CourseFacadeService {
     private final ResourceTagSuggestionService resourceTagSuggestionService;
     private final ResourceTagAgentClient resourceTagAgentClient;
     private final OutboxService outboxService;
+    private final PlatformTransactionManager transactionManager;
 
     public PageResponse<CourseResponse> listCourses(UserContext userContext, int page, int pageSize, String keyword, String status) {
         Pageable pageable = PageRequest.of(toPageIndex(page), toPageSize(pageSize), Sort.by(Sort.Direction.DESC, "updatedAt"));
@@ -1087,10 +1092,28 @@ public class CourseFacadeService {
                 .storageKey(resource.getStorageKey())
                 .build();
 
+        runAfterCurrentCommit(() -> requestAiTagging(event));
+    }
+
+    private void requestAiTagging(ResourceUploadedEvent event) {
         resourceTagAgentClient.requestTagging(event).ifPresentOrElse(
-                this::applyAiTaggedResource,
+                taggedEvent -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> applyAiTaggedResource(taggedEvent)),
                 () -> outboxService.enqueue(EventTopics.RESOURCE_UPLOADED, event)
         );
+    }
+
+    private void runAfterCurrentCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                action.run();
+            }
+        });
     }
 
     private Map<Long, String> resolveTeacherNames(List<CourseEntity> courses) {

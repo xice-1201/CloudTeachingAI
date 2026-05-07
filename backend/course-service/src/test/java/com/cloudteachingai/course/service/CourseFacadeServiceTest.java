@@ -5,6 +5,7 @@ import com.cloudteachingai.course.client.UserServiceClient;
 import com.cloudteachingai.course.controller.CourseController.UserContext;
 import com.cloudteachingai.course.dto.ResourceResponse;
 import com.cloudteachingai.course.dto.ResourceTagConfirmRequest;
+import com.cloudteachingai.course.dto.ResourceUpsertRequest;
 import com.cloudteachingai.course.entity.ChapterEntity;
 import com.cloudteachingai.course.entity.CourseEntity;
 import com.cloudteachingai.course.entity.KnowledgePointEntity;
@@ -32,6 +33,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -43,6 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -76,6 +81,8 @@ class CourseFacadeServiceTest {
     private ResourceTagAgentClient resourceTagAgentClient;
     @Mock
     private OutboxService outboxService;
+    @Mock
+    private PlatformTransactionManager transactionManager;
 
     @InjectMocks
     private CourseFacadeService courseFacadeService;
@@ -151,6 +158,62 @@ class CourseFacadeServiceTest {
         assertThat(resource.getTaggingStatus()).isEqualTo(ResourceTaggingStatus.CONFIRMED);
         assertThat(resource.getTaggingUpdatedAt()).isNotNull();
         assertThat(response.getTaggingStatus()).isEqualTo("CONFIRMED");
+    }
+
+    @Test
+    void createResourceDefersTagAgentRequestUntilAfterCommit() {
+        ChapterEntity chapter = ChapterEntity.builder()
+                .id(201L)
+                .courseId(301L)
+                .title("函数极限")
+                .orderIndex(1)
+                .build();
+        CourseEntity course = CourseEntity.builder()
+                .id(301L)
+                .teacherId(401L)
+                .title("高等数学")
+                .description("微积分基础")
+                .status(CourseStatus.DRAFT)
+                .visibilityType(CourseVisibilityType.PUBLIC)
+                .build();
+        ResourceUpsertRequest request = new ResourceUpsertRequest();
+        request.setTitle("函数极限讲义");
+        request.setType(ResourceType.DOCUMENT.name());
+        request.setUrl("resources/1001.pdf");
+        request.setDescription("包含函数极限的定义和例题");
+        request.setOrderIndex(1);
+
+        when(chapterRepository.findById(201L)).thenReturn(Optional.of(chapter));
+        when(courseRepository.findById(301L)).thenReturn(Optional.of(course));
+        when(resourceRepository.save(any(ResourceEntity.class))).thenAnswer(invocation -> {
+            ResourceEntity resource = invocation.getArgument(0);
+            resource.setId(1001L);
+            resource.setCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            resource.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+            if (resource.getTaggingStatus() == null) {
+                resource.setTaggingStatus(ResourceTaggingStatus.UNTAGGED);
+            }
+            return resource;
+        });
+        when(resourceStorageService.isManagedStorageKey("resources/1001.pdf")).thenReturn(false);
+        when(resourceKnowledgePointRepository.findByResourceIdIn(anyCollection())).thenReturn(List.of());
+        when(resourceTagRepository.findByResourceIdIn(anyCollection())).thenReturn(List.of());
+        when(resourceTagAgentClient.requestTagging(any())).thenReturn(Optional.empty());
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            courseFacadeService.createResource(201L, request, new UserContext(401L, "TEACHER"));
+
+            verify(resourceTagAgentClient, never()).requestTagging(any());
+            List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
+            assertThat(synchronizations).hasSize(1);
+
+            synchronizations.getFirst().afterCommit();
+
+            verify(resourceTagAgentClient).requestTagging(any());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     private ResourceEntity resource() {
