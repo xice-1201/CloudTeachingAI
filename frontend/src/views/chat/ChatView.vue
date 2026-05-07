@@ -3,27 +3,29 @@
     <div class="chat-sidebar">
       <div class="sidebar-header">
         <span>对话列表</span>
-        <el-button :icon="Plus" circle size="small" @click="createSession" />
+        <el-button :icon="Plus" circle size="small" :loading="creating" @click="createSession" />
       </div>
-      <div
-        v-for="s in sessions"
-        :key="s.id"
-        class="session-item"
-        :class="{ active: currentSessionId === s.id }"
-        @click="selectSession(s.id)"
-      >
-        <el-icon><ChatDotRound /></el-icon>
-        <span class="session-date">{{ formatDate(s.createdAt) }}</span>
-        <el-button
-          class="delete-btn"
-          :icon="Delete"
-          circle
-          size="small"
-          text
-          @click.stop="deleteSession(s.id)"
-        />
+      <div v-loading="loadingSessions" class="session-list">
+        <div
+          v-for="s in sessions"
+          :key="s.id"
+          class="session-item"
+          :class="{ active: currentSessionId === s.id }"
+          @click="selectSession(s.id)"
+        >
+          <el-icon><ChatDotRound /></el-icon>
+          <span class="session-date">{{ formatDate(s.updatedAt || s.createdAt) }}</span>
+          <el-button
+            class="delete-btn"
+            :icon="Delete"
+            circle
+            size="small"
+            text
+            @click.stop="deleteSession(s.id)"
+          />
+        </div>
+        <div v-if="sessions.length === 0 && !loadingSessions" class="empty-tip">暂无对话</div>
       </div>
-      <div v-if="sessions.length === 0" class="empty-tip">暂无对话</div>
     </div>
 
     <div class="chat-main">
@@ -34,7 +36,7 @@
       </div>
 
       <template v-else>
-        <div class="messages" ref="messagesEl">
+        <div v-loading="loadingMessages" class="messages" ref="messagesEl">
           <div
             v-for="msg in messages"
             :key="msg.id"
@@ -45,7 +47,7 @@
             <div class="message-bubble">{{ msg.content }}</div>
             <el-avatar v-if="msg.role === 'user'" :size="32" style="background: #67c23a; flex-shrink: 0">我</el-avatar>
           </div>
-          <div v-if="streaming" class="message assistant">
+          <div v-if="streaming || streamingText" class="message assistant">
             <el-avatar :size="32" style="background: #409eff; flex-shrink: 0">AI</el-avatar>
             <div class="message-bubble streaming">{{ streamingText }}<span class="cursor">|</span></div>
           </div>
@@ -75,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { Plus, Delete, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { chatApi } from '@/api/chat'
@@ -85,33 +87,67 @@ const sessions = ref<ChatSession[]>([])
 const currentSessionId = ref<number | null>(null)
 const messages = ref<ChatMessage[]>([])
 const inputText = ref('')
+const loadingSessions = ref(false)
+const loadingMessages = ref(false)
+const creating = ref(false)
 const streaming = ref(false)
 const streamingText = ref('')
 const messagesEl = ref<HTMLElement>()
+let eventSource: EventSource | null = null
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('zh-CN')
 }
 
 async function createSession() {
-  const session = await chatApi.createSession()
-  sessions.value.unshift(session)
-  selectSession(session.id)
+  if (creating.value) return
+
+  creating.value = true
+  try {
+    const session = await chatApi.createSession()
+    sessions.value = [session, ...sessions.value.filter((item) => item.id !== session.id)]
+    await selectSession(session.id)
+  } catch {
+    ElMessage.error('创建对话失败，请稍后重试')
+  } finally {
+    creating.value = false
+  }
 }
 
 async function selectSession(id: number) {
+  if (streaming.value) {
+    ElMessage.warning('当前回复仍在生成，请稍后切换对话')
+    return
+  }
+
   currentSessionId.value = id
-  const session = await chatApi.getSession(id)
-  messages.value = session.messages
-  await scrollToBottom()
+  loadingMessages.value = true
+  try {
+    const session = await chatApi.getSession(id)
+    messages.value = session.messages
+    await scrollToBottom()
+  } catch {
+    ElMessage.error('加载对话失败，请稍后重试')
+  } finally {
+    loadingMessages.value = false
+  }
 }
 
 async function deleteSession(id: number) {
-  await chatApi.deleteSession(id)
-  sessions.value = sessions.value.filter((s) => s.id !== id)
-  if (currentSessionId.value === id) {
-    currentSessionId.value = null
-    messages.value = []
+  if (streaming.value && currentSessionId.value === id) {
+    ElMessage.warning('当前回复仍在生成，请稍后删除对话')
+    return
+  }
+
+  try {
+    await chatApi.deleteSession(id)
+    sessions.value = sessions.value.filter((s) => s.id !== id)
+    if (currentSessionId.value === id) {
+      currentSessionId.value = null
+      messages.value = []
+    }
+  } catch {
+    ElMessage.error('删除对话失败，请稍后重试')
   }
 }
 
@@ -131,22 +167,19 @@ async function sendMessage() {
   streamingText.value = ''
   await scrollToBottom()
 
-  const token = localStorage.getItem('token')
-  const url = chatApi.sendMessage(currentSessionId.value, text)
-  const authQuery = token ? `&Authorization=${encodeURIComponent(`Bearer ${token}`)}` : ''
-  const es = new EventSource(`${url}${authQuery}`)
+  const sessionId = currentSessionId.value
+  const es = new EventSource(chatApi.buildMessageStreamUrl(sessionId, text))
+  eventSource = es
 
   es.onmessage = async (event) => {
     if (event.data === '[DONE]') {
       es.close()
-      messages.value.push({
-        id: Date.now(),
-        role: 'assistant',
-        content: streamingText.value,
-        timestamp: new Date().toISOString(),
-      })
+      eventSource = null
+      const completedText = streamingText.value
       streaming.value = false
       streamingText.value = ''
+      messages.value.push(createLocalMessage('assistant', completedText))
+      await syncSession(sessionId)
       await scrollToBottom()
       return
     }
@@ -156,8 +189,32 @@ async function sendMessage() {
 
   es.onerror = () => {
     es.close()
+    eventSource = null
     streaming.value = false
-    ElMessage.error('连接中断，请重试')
+    if (streamingText.value) {
+      messages.value.push(createLocalMessage('assistant', streamingText.value))
+      streamingText.value = ''
+    }
+    ElMessage.error('连接中断，请稍后重试')
+  }
+}
+
+function createLocalMessage(role: ChatMessage['role'], content: string): ChatMessage {
+  return {
+    id: Date.now() + Math.floor(Math.random() * 1000),
+    role,
+    content,
+    timestamp: new Date().toISOString(),
+  }
+}
+
+async function syncSession(sessionId: number) {
+  try {
+    const session = await chatApi.getSession(sessionId)
+    messages.value = session.messages
+    sessions.value = [session, ...sessions.value.filter((item) => item.id !== session.id)]
+  } catch {
+    // The optimistic messages are already visible, so keep the UI usable.
   }
 }
 
@@ -169,7 +226,21 @@ async function scrollToBottom() {
 }
 
 onMounted(async () => {
-  sessions.value = await chatApi.listSessions().catch(() => [])
+  loadingSessions.value = true
+  try {
+    sessions.value = await chatApi.listSessions()
+    if (sessions.value.length > 0) {
+      await selectSession(sessions.value[0].id)
+    }
+  } catch {
+    sessions.value = []
+  } finally {
+    loadingSessions.value = false
+  }
+})
+
+onUnmounted(() => {
+  eventSource?.close()
 })
 </script>
 
@@ -186,6 +257,12 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.session-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .sidebar-header {

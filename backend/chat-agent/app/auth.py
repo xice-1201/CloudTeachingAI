@@ -33,9 +33,14 @@ def _read_bearer(value: str | None) -> str | None:
 def resolve_user_id(
     authorization_header: Annotated[str | None, Header(alias="Authorization")] = None,
     authorization_query: Annotated[str | None, Query(alias="Authorization")] = None,
+    user_id_header: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    user_id_query: Annotated[str | None, Query(alias="userId")] = None,
 ) -> int | str:
     token = _read_bearer(authorization_header) or _read_bearer(authorization_query)
     if not token:
+        fallback_user_id = user_id_header or user_id_query
+        if fallback_user_id:
+            return int(fallback_user_id) if fallback_user_id.isdigit() else fallback_user_id
         return "anonymous"
 
     payload = _decode_jwt_payload(token)
@@ -48,4 +53,3 @@ def resolve_user_id(
 
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
     return f"token:{digest}"
-

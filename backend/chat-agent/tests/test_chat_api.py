@@ -85,3 +85,45 @@ def test_chat_sessions_are_scoped_by_user():
     )
 
     assert response.status_code == 404
+
+
+def test_chat_stream_accepts_event_source_query_auth():
+    chat_main = load_chat_main()
+    chat_main.store = chat_main.ChatStore()
+    chat_main.responder = FakeResponder()
+
+    client = TestClient(chat_main.app)
+    token = bearer_for_user("77")
+
+    session_id = client.post(
+        "/api/v1/chat/sessions",
+        headers={"Authorization": token},
+    ).json()["data"]["id"]
+
+    with client.stream(
+        "GET",
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        params={"message": "继续讲解", "Authorization": token},
+    ) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert "data: 收到：" in body
+    assert "data: 继续讲解" in body
+
+
+def test_chat_session_can_use_user_id_query_without_token():
+    chat_main = load_chat_main()
+    chat_main.store = chat_main.ChatStore()
+    chat_main.responder = FakeResponder()
+
+    client = TestClient(chat_main.app)
+
+    session_id = client.post(
+        "/api/v1/chat/sessions",
+        params={"userId": "99"},
+    ).json()["data"]["id"]
+
+    listed = client.get("/api/v1/chat/sessions", params={"userId": "99"}).json()
+
+    assert [session["id"] for session in listed["data"]] == [session_id]

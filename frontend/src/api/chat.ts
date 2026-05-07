@@ -14,7 +14,26 @@ export const chatApi = {
   deleteSession: (id: number): Promise<void> =>
     request.delete(`/chat/sessions/${id}`),
 
-  // SSE 流式响应
-  sendMessage: (sessionId: number, message: string): string =>
-    `/api/v1/chat/sessions/${sessionId}/messages?message=${encodeURIComponent(message)}`,
+  buildMessageStreamUrl: (sessionId: number, message: string): string => {
+    const params = new URLSearchParams({ message })
+    const token = localStorage.getItem('token')
+    const rawUser = localStorage.getItem('userInfo')
+
+    if (token) {
+      params.set('Authorization', `Bearer ${token}`)
+    }
+
+    if (rawUser) {
+      try {
+        const user = JSON.parse(rawUser) as { id?: number | string }
+        if (user.id != null) {
+          params.set('userId', String(user.id))
+        }
+      } catch {
+        // Ignore malformed local storage; normal request auth still applies.
+      }
+    }
+
+    return `/api/v1/chat/sessions/${sessionId}/messages?${params.toString()}`
+  },
 }
