@@ -5,7 +5,10 @@
         <el-button text :icon="ArrowLeft" @click="$router.back()">返回课程</el-button>
         <span class="resource-title">{{ resource?.title }}</span>
       </div>
-      <el-button v-if="resourceUrl" text @click="downloadResource">下载资源</el-button>
+      <div class="learn-header-actions">
+        <el-button text @click="scrollToDiscussions">讨论 {{ resourceDiscussions.length }}</el-button>
+        <el-button v-if="resourceUrl" text @click="downloadResource">下载资源</el-button>
+      </div>
     </div>
 
     <div class="learn-body">
@@ -45,7 +48,7 @@
           <div v-else class="progress-text">当前资源还没有确认的知识点标签。</div>
         </el-card>
 
-        <el-card shadow="never" header="资源讨论">
+        <el-card id="discussions" shadow="never" header="资源讨论">
           <div class="discussion-editor">
             <el-input
               v-model="resourceDiscussionForm.title"
@@ -190,6 +193,10 @@ function getCourseId() {
 
 function formatDate(value: string) {
   return new Date(value).toLocaleString('zh-CN')
+}
+
+function scrollToDiscussions() {
+  document.getElementById('discussions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) {
@@ -400,6 +407,9 @@ onMounted(async () => {
     await loadCurriculum()
     await loadResourcePage()
     await loadResourceDiscussions()
+    if (route.hash === '#discussions') {
+      setTimeout(scrollToDiscussions, 100)
+    }
     if (canTrackProgress.value) {
       saveTimer = setInterval(() => { saveProgress().catch(() => undefined) }, 10000)
     }
@@ -416,6 +426,9 @@ watch(() => `${route.params.courseId}:${route.params.resourceId}`, async () => {
     await loadCurriculum()
     await loadResourcePage()
     await loadResourceDiscussions()
+    if (route.hash === '#discussions') {
+      setTimeout(scrollToDiscussions, 100)
+    }
   } finally {
     loading.value = false
   }
@@ -453,6 +466,12 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 16px;
   min-width: 0;
+}
+
+.learn-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .resource-title {

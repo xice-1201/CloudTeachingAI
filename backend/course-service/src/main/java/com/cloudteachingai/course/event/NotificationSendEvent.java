@@ -7,6 +7,9 @@ public record NotificationSendEvent(
         Long userId,
         String type,
         String title,
-        String content
+        String content,
+        String targetType,
+        Long targetId,
+        String targetUrl
 ) {
 }

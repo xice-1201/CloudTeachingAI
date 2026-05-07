@@ -99,7 +99,7 @@
             </el-collapse>
           </el-card>
 
-          <el-card shadow="never" header="课程讨论">
+          <el-card id="discussions" shadow="never" header="课程讨论">
             <template #header>
               <div class="section-header">
                 <span>课程讨论</span>
@@ -183,6 +183,27 @@
               <p class="desc-text">{{ course.description }}</p>
             </div>
           </el-card>
+          <el-card shadow="never" class="section-gap">
+            <template #header>
+              <div class="section-header">
+                <span>最近讨论</span>
+                <el-button link type="primary" @click="scrollToDiscussions">查看全部</el-button>
+              </div>
+            </template>
+            <div v-if="recentDiscussions.length === 0" class="empty-tip">暂无讨论动态。</div>
+            <div v-else class="recent-discussion-list">
+              <button
+                v-for="post in recentDiscussions"
+                :key="post.id"
+                class="recent-discussion-item"
+                type="button"
+                @click="scrollToDiscussions"
+              >
+                <span class="recent-discussion-title">{{ post.title }}</span>
+                <span class="recent-discussion-meta">{{ post.replies.length }} 条回复</span>
+              </button>
+            </div>
+          </el-card>
         </el-col>
       </el-row>
     </template>
@@ -255,6 +276,7 @@ const canRestore = computed(() => canEdit.value && course.value?.status === 'ARC
 const canEnroll = computed(() => userStore.isStudent && course.value?.status === 'PUBLISHED' && !contentAccessGranted.value)
 const showEnrollHint = computed(() => userStore.isStudent && !contentAccessGranted.value && course.value?.status === 'PUBLISHED')
 const canParticipateDiscussion = computed(() => contentAccessGranted.value || canEdit.value)
+const recentDiscussions = computed(() => generalDiscussions.value.slice(0, 3))
 
 function statusTagType(status: string) {
   return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info'
@@ -277,6 +299,10 @@ function resourceTypeLabel(type: string) {
 
 function formatDate(value: string) {
   return new Date(value).toLocaleString('zh-CN')
+}
+
+function scrollToDiscussions() {
+  document.getElementById('discussions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function formatDuration(seconds: number) {
@@ -461,6 +487,9 @@ onMounted(async () => {
     await loadCourseSummary()
     await loadCurriculum()
     await loadInteractions()
+    if (route.hash === '#discussions') {
+      setTimeout(scrollToDiscussions, 100)
+    }
   } finally {
     loading.value = false
   }
@@ -614,6 +643,40 @@ onMounted(async () => {
   padding: 12px;
   border-radius: 10px;
   background: #f8fafc;
+}
+
+.recent-discussion-list {
+  display: grid;
+  gap: 10px;
+}
+
+.recent-discussion-item {
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid #f0f2f5;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-discussion-item:last-child {
+  border-bottom: 0;
+}
+
+.recent-discussion-title {
+  display: block;
+  color: #303133;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.recent-discussion-meta {
+  display: block;
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
 }
 
 @media (max-width: 768px) {

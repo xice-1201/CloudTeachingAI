@@ -147,6 +147,9 @@ public class CourseInteractionService {
                 .title(title)
                 .content(request.getContent().trim())
                 .build());
+        if (parent != null) {
+            notifyDiscussionReplied(parent, discussion);
+        }
         return toDiscussionResponses(List.of(discussion)).getFirst();
     }
 
@@ -362,7 +365,40 @@ public class CourseInteractionService {
                     .type("COURSE")
                     .title("课程新公告")
                     .content("课程《" + course.getTitle() + "》发布了新公告：" + announcement.getTitle())
+                    .targetType("COURSE")
+                    .targetId(course.getId())
+                    .targetUrl("/courses/" + course.getId() + "#discussions")
                     .build());
+        }
+    }
+
+    private void notifyDiscussionReplied(CourseDiscussionPostEntity parent, CourseDiscussionPostEntity reply) {
+        if (Objects.equals(parent.getAuthorId(), reply.getAuthorId())) {
+            return;
+        }
+        CourseEntity course = requireCourse(parent.getCourseId());
+        String targetUrl = parent.getResourceId() == null
+                ? "/courses/" + parent.getCourseId() + "#discussions"
+                : "/courses/" + parent.getCourseId() + "/learn/" + parent.getResourceId() + "#discussions";
+        String targetType = parent.getResourceId() == null ? "COURSE_DISCUSSION" : "RESOURCE_DISCUSSION";
+        Long targetId = parent.getResourceId() == null ? parent.getId() : parent.getResourceId();
+        String title = parent.getResourceId() == null ? "课程讨论有新回复" : "资源讨论有新回复";
+        String topic = StringUtils.hasText(parent.getTitle()) ? parent.getTitle() : course.getTitle();
+
+        try {
+            notifyServiceClient.createNotification(CreateNotificationRequest.builder()
+                    .userId(parent.getAuthorId())
+                    .type("COURSE")
+                    .title(title)
+                    .content("你在课程《" + course.getTitle() + "》中的讨论「" + topic + "」收到了新回复")
+                    .targetType(targetType)
+                    .targetId(targetId)
+                    .targetUrl(targetUrl)
+                    .build());
+        } catch (FeignException ignored) {
+            // Discussion replies should remain available even if notifications fail.
+        } catch (Exception ignored) {
+            // Ignore transient notification issues.
         }
     }
 
@@ -381,7 +417,7 @@ public class CourseInteractionService {
                         .content("课程《" + course.getTitle() + "》发布了新公告：" + announcement.getTitle())
                         .targetType("COURSE")
                         .targetId(course.getId())
-                        .targetUrl("/courses/" + course.getId())
+                        .targetUrl("/courses/" + course.getId() + "#discussions")
                         .build());
             } catch (FeignException ignored) {
                 // keep course announcement available even if notification service is unavailable
