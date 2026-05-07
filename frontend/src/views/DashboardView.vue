@@ -58,7 +58,36 @@
         </el-col>
 
         <el-col :xs="24" :lg="8">
-          <el-card shadow="never" header="学生健康度" class="health-card">
+          <el-card shadow="never" header="待处理事项" class="todo-card" v-loading="teacherTodoLoading">
+            <div v-if="!teacherTodoLoading && teacherTodos.length === 0" class="empty-tip">
+              暂无待处理事项，课堂运行状态良好。
+            </div>
+            <div v-else class="todo-list">
+              <button
+                v-for="item in teacherTodos"
+                :key="item.id"
+                class="todo-item"
+                type="button"
+                @click="openTeacherTodo(item)"
+              >
+                <div class="todo-icon">
+                  <el-icon><component :is="todoIcon(item.kind)" /></el-icon>
+                </div>
+                <div class="todo-main">
+                  <div class="todo-head">
+                    <span class="todo-title">{{ item.title }}</span>
+                    <el-tag :type="todoTagType(item.priority)" size="small">{{ item.count }}</el-tag>
+                  </div>
+                  <div class="todo-desc">{{ item.description }}</div>
+                  <div class="todo-meta">{{ item.courseTitle }}</div>
+                </div>
+              </button>
+            </div>
+            <div v-if="teacherTodos.length > 0" class="todo-summary">
+              共 {{ teacherTodoSummary.total }} 项待处理，优先关注 {{ teacherTodoSummary.urgent }} 项高优先级事项
+            </div>
+          </el-card>
+          <el-card id="student-health" shadow="never" header="学生健康度" class="health-card">
             <div v-if="!teacherDashboard || teacherDashboard.studentRisks.length === 0" class="empty-tip">
               暂无可分析的学习风险数据。
             </div>
@@ -171,12 +200,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Reading, EditPen, TrendCharts, ChatDotRound, Collection, Promotion, Document, DataAnalysis } from '@element-plus/icons-vue'
+import { Reading, EditPen, TrendCharts, ChatDotRound, Collection, Promotion, Document, DataAnalysis, Bell, Warning } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
 import { assignApi } from '@/api/assign'
 import { useUserStore } from '@/store/user'
-import type { Assignment, Course, TeacherDashboard } from '@/types'
+import type { Assignment, Course, DiscussionPost, Submission, TeacherDashboard } from '@/types'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -188,7 +217,23 @@ const recentCourses = ref<Array<Course & { progress: number }>>([])
 const pendingAssignments = ref<Assignment[]>([])
 const studentLoading = ref(false)
 const teacherLoading = ref(false)
+const teacherTodoLoading = ref(false)
 const teacherDashboard = ref<TeacherDashboard | null>(null)
+
+type TeacherTodoKind = 'AI_REVIEW' | 'NEW_SUBMISSION' | 'DISCUSSION' | 'STUDENT_RISK'
+type TeacherTodoPriority = 'HIGH' | 'MEDIUM' | 'LOW'
+
+interface TeacherTodoItem {
+  id: string
+  kind: TeacherTodoKind
+  priority: TeacherTodoPriority
+  title: string
+  description: string
+  courseTitle: string
+  count: number
+  target: string
+  sortWeight: number
+}
 
 const studentStats = ref([
   { label: '已选课程', value: 0, icon: Reading, color: '#409eff' },
@@ -206,6 +251,13 @@ const teacherStats = computed(() => {
     { label: '平均进度', value: `${Math.round((dashboard?.averageProgress ?? 0) * 100)}%`, icon: DataAnalysis, color: '#909399' },
   ]
 })
+
+const teacherTodos = ref<TeacherTodoItem[]>([])
+
+const teacherTodoSummary = computed(() => ({
+  total: teacherTodos.value.reduce((sum, item) => sum + item.count, 0),
+  urgent: teacherTodos.value.filter((item) => item.priority === 'HIGH').reduce((sum, item) => sum + item.count, 0),
+}))
 
 function formatDate(date: string) {
   return new Date(date).toLocaleDateString('zh-CN')
@@ -229,6 +281,150 @@ function riskLabel(level: string) {
 
 function riskTagType(level: string) {
   return { HIGH: 'danger', MEDIUM: 'warning', LOW: 'success', NO_DATA: 'info' }[level] ?? 'info'
+}
+
+function todoTagType(priority: TeacherTodoPriority) {
+  return { HIGH: 'danger', MEDIUM: 'warning', LOW: 'info' }[priority] ?? 'info'
+}
+
+function todoIcon(kind: TeacherTodoKind) {
+  return {
+    AI_REVIEW: DataAnalysis,
+    NEW_SUBMISSION: EditPen,
+    DISCUSSION: ChatDotRound,
+    STUDENT_RISK: Warning,
+  }[kind] ?? Bell
+}
+
+function openTeacherTodo(item: TeacherTodoItem) {
+  router.push(item.target)
+  if (item.kind === 'STUDENT_RISK') {
+    setTimeout(() => document.querySelector('.health-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+  }
+}
+
+function countSubmissions(submissions: Submission[], statuses: Submission['status'][]) {
+  return submissions.filter((submission) => statuses.includes(submission.status)).length
+}
+
+function buildDiscussionTodos(courseId: number, courseTitle: string, discussions: DiscussionPost[]) {
+  const unanswered = discussions.filter((post) => !post.parentId && (post.replies?.length ?? 0) === 0)
+  const replied = discussions.filter((post) => !post.parentId && (post.replies?.length ?? 0) > 0)
+  const todos: TeacherTodoItem[] = []
+
+  if (unanswered.length > 0) {
+    todos.push({
+      id: `discussion-unanswered-${courseId}`,
+      kind: 'DISCUSSION',
+      priority: 'MEDIUM',
+      title: '待回应的课程讨论',
+      description: `${unanswered.length} 个讨论主题还没有回复`,
+      courseTitle,
+      count: unanswered.length,
+      target: `/courses/${courseId}#discussions`,
+      sortWeight: 65,
+    })
+  }
+
+  if (replied.length > 0) {
+    todos.push({
+      id: `discussion-replied-${courseId}`,
+      kind: 'DISCUSSION',
+      priority: 'LOW',
+      title: '课程讨论有新互动',
+      description: `${replied.reduce((sum, post) => sum + (post.replies?.length ?? 0), 0)} 条讨论回复可查看`,
+      courseTitle,
+      count: replied.length,
+      target: `/courses/${courseId}#discussions`,
+      sortWeight: 30,
+    })
+  }
+
+  return todos
+}
+
+async function buildAssignmentTodos(courseId: number, courseTitle: string) {
+  const assignmentResponse = await assignApi.listAssignments(String(courseId), { page: 1, pageSize: 20 }).catch(() => null)
+  if (!assignmentResponse?.items.length) return []
+
+  const submissionsByAssignment = await Promise.all(
+    assignmentResponse.items.map(async (assignment) => {
+      const response = await assignApi.listSubmissions(String(assignment.id), { page: 1, pageSize: 100 }).catch(() => null)
+      return { assignment, submissions: response?.items ?? [] }
+    }),
+  )
+
+  return submissionsByAssignment.flatMap(({ assignment, submissions }) => {
+    const aiReviewCount = countSubmissions(submissions, ['AI_GRADED'])
+    const manualCount = countSubmissions(submissions, ['SUBMITTED', 'PENDING_MANUAL', 'GRADING_FAILED'])
+    const todos: TeacherTodoItem[] = []
+
+    if (aiReviewCount > 0) {
+      todos.push({
+        id: `assignment-ai-${assignment.id}`,
+        kind: 'AI_REVIEW',
+        priority: 'HIGH',
+        title: '待复核的 AI 批改',
+        description: `${assignment.title} 有 ${aiReviewCount} 份 AI 批改结果待确认`,
+        courseTitle,
+        count: aiReviewCount,
+        target: `/assignments/${assignment.id}/submissions`,
+        sortWeight: 100,
+      })
+    }
+
+    if (manualCount > 0) {
+      todos.push({
+        id: `assignment-new-${assignment.id}`,
+        kind: 'NEW_SUBMISSION',
+        priority: 'MEDIUM',
+        title: '有新提交的作业',
+        description: `${assignment.title} 有 ${manualCount} 份提交需要处理`,
+        courseTitle,
+        count: manualCount,
+        target: `/assignments/${assignment.id}/submissions`,
+        sortWeight: 75,
+      })
+    }
+
+    return todos
+  })
+}
+
+async function loadTeacherTodos(dashboard: TeacherDashboard) {
+  teacherTodoLoading.value = true
+  try {
+    const riskTodos = dashboard.studentRisks
+      .filter((risk) => risk.riskLevel === 'HIGH' || risk.riskLevel === 'MEDIUM')
+      .map<TeacherTodoItem>((risk) => ({
+        id: `student-risk-${risk.courseId}`,
+        kind: 'STUDENT_RISK',
+        priority: risk.riskLevel === 'HIGH' ? 'HIGH' : 'MEDIUM',
+        title: '高风险学生课程提醒',
+        description: risk.insight,
+        courseTitle: risk.courseTitle,
+        count: risk.lowProgressStudents + risk.inactiveStudents,
+        target: '/dashboard#student-health',
+        sortWeight: risk.riskLevel === 'HIGH' ? 90 : 60,
+      }))
+
+    const courseTodos = await Promise.all(
+      dashboard.courses.slice(0, 8).map(async (course) => {
+        const [assignmentTodos, discussions] = await Promise.all([
+          buildAssignmentTodos(course.courseId, course.courseTitle),
+          courseApi.listDiscussions(String(course.courseId)).catch(() => []),
+        ])
+        return [...assignmentTodos, ...buildDiscussionTodos(course.courseId, course.courseTitle, discussions)]
+      }),
+    )
+
+    teacherTodos.value = [...riskTodos, ...courseTodos.flat()]
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.sortWeight - a.sortWeight || b.count - a.count)
+      .slice(0, 10)
+  } finally {
+    teacherTodoLoading.value = false
+  }
 }
 
 async function loadStudentDashboard() {
@@ -283,6 +479,7 @@ async function loadTeacherDashboard() {
   teacherLoading.value = true
   try {
     teacherDashboard.value = await learnApi.getTeacherDashboard()
+    await loadTeacherTodos(teacherDashboard.value)
   } finally {
     teacherLoading.value = false
   }
@@ -306,6 +503,7 @@ onMounted(async () => {
   margin-top: 20px;
 }
 
+.todo-card,
 .health-card {
   margin-bottom: 20px;
 }
@@ -365,6 +563,81 @@ onMounted(async () => {
 .risk-list {
   display: flex;
   flex-direction: column;
+}
+
+.todo-list {
+  display: grid;
+  gap: 10px;
+}
+
+.todo-item {
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.todo-item:hover {
+  background: #f5f7fa;
+}
+
+.todo-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.todo-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.todo-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.todo-title {
+  min-width: 0;
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.todo-desc {
+  margin-top: 5px;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.todo-meta,
+.todo-summary {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.todo-summary {
+  padding-top: 10px;
+  border-top: 1px solid #f0f2f5;
 }
 
 .risk-item + .risk-item {
