@@ -48,7 +48,7 @@ user-service:
   url: ${USER_SERVICE_URL:http://localhost:8002}
 
 notify-service:
-  url: ${NOTIFY_SERVICE_URL:http://localhost:8005}
+  url: ${NOTIFY_SERVICE_URL:http://localhost:8006}
 
 management:
   endpoints:

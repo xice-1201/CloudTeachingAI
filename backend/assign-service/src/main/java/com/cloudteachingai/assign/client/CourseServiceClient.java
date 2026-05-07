@@ -6,6 +6,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import java.util.List;
+
 @FeignClient(name = "course-service-client", url = "${course-service.url}")
 public interface CourseServiceClient {
 
@@ -19,4 +21,7 @@ public interface CourseServiceClient {
             @RequestHeader("Authorization") String authorization,
             @RequestParam("page") int page,
             @RequestParam("pageSize") int pageSize);
+
+    @GetMapping("/api/v1/internal/courses/{id}/student-ids")
+    CourseApiResponse<List<Long>> listCourseStudentIds(@PathVariable("id") Long courseId);
 }

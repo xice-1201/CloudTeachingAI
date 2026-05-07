@@ -470,6 +470,11 @@ public class CourseController {
         return ApiResponse.success(courseFacadeService.listLeafKnowledgePointsForTagging());
     }
 
+    @GetMapping("/internal/courses/{courseId}/student-ids")
+    public ApiResponse<List<Long>> listCourseStudentIds(@PathVariable Long courseId) {
+        return ApiResponse.success(courseFacadeService.listCourseStudentIds(courseId));
+    }
+
     private UserContext extractUserContext(String authorization) {
         if (authorization == null || authorization.isBlank() || !authorization.startsWith("Bearer ")) {
             throw BusinessException.unauthorized("Missing or invalid Authorization header");

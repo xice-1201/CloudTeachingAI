@@ -429,6 +429,14 @@ public class CourseFacadeService {
                 .toList();
     }
 
+    public List<Long> listCourseStudentIds(Long courseId) {
+        requireCourse(courseId);
+        return enrollmentRepository.findByCourseId(courseId).stream()
+                .map(EnrollmentEntity::getStudentId)
+                .distinct()
+                .toList();
+    }
+
     @Transactional
     public ResourceResponse createResource(Long chapterId, ResourceUpsertRequest request, UserContext userContext) {
         ChapterEntity chapter = requireChapter(chapterId);

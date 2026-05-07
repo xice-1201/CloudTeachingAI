@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.List;
 
 public interface EnrollmentRepository extends JpaRepository<EnrollmentEntity, Long> {
 
@@ -17,6 +18,8 @@ public interface EnrollmentRepository extends JpaRepository<EnrollmentEntity, Lo
     Optional<EnrollmentEntity> findByStudentIdAndCourseId(Long studentId, Long courseId);
 
     Page<EnrollmentEntity> findByStudentId(Long studentId, Pageable pageable);
+
+    List<EnrollmentEntity> findByCourseId(Long courseId);
 
     @Query(
             value = """

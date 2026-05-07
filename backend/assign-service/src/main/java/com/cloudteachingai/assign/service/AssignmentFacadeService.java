@@ -4,6 +4,8 @@ import com.cloudteachingai.assign.client.CourseApiResponse;
 import com.cloudteachingai.assign.client.CoursePageResponse;
 import com.cloudteachingai.assign.client.CourseServiceClient;
 import com.cloudteachingai.assign.client.CourseSummaryResponse;
+import com.cloudteachingai.assign.client.CreateNotificationRequest;
+import com.cloudteachingai.assign.client.NotifyServiceClient;
 import com.cloudteachingai.assign.controller.AssignmentController.UserContext;
 import com.cloudteachingai.assign.dto.AssignmentResponse;
 import com.cloudteachingai.assign.dto.AssignmentUpsertRequest;
@@ -48,6 +50,7 @@ public class AssignmentFacadeService {
     private final AssignmentRepository assignmentRepository;
     private final SubmissionRepository submissionRepository;
     private final CourseServiceClient courseServiceClient;
+    private final NotifyServiceClient notifyServiceClient;
     private final ObjectMapper objectMapper;
 
     private static final Pattern SPLIT_PATTERN = Pattern.compile("[\\s,，。；;：:、.!！?？\\n\\r\\t]+");
@@ -95,7 +98,9 @@ public class AssignmentFacadeService {
                 .maxScore(request.getMaxScore())
                 .deadline(request.getDueDate())
                 .build();
-        return toAssignmentResponse(assignmentRepository.save(assignment));
+        AssignmentEntity saved = assignmentRepository.save(assignment);
+        notifyAssignmentPublished(saved);
+        return toAssignmentResponse(saved);
     }
 
     @Transactional
@@ -150,7 +155,10 @@ public class AssignmentFacadeService {
                 .submittedAt(OffsetDateTime.now(ZoneOffset.UTC))
                 .build();
         applyAiReview(assignment, submission);
-        return toSubmissionResponse(submissionRepository.save(submission));
+        SubmissionEntity saved = submissionRepository.save(submission);
+        notifyAssignmentSubmitted(assignment, saved);
+        notifyGradingCompleted(assignment, saved);
+        return toSubmissionResponse(saved);
     }
 
     public SubmissionResponse getMySubmission(Long assignmentId, String authorization, UserContext userContext) {
@@ -199,7 +207,9 @@ public class AssignmentFacadeService {
         submission.setFinalFeedback(request.getFeedback().trim());
         submission.setStatus(SubmissionStatus.REVIEWED);
         submission.setGradedAt(OffsetDateTime.now(ZoneOffset.UTC));
-        return toSubmissionResponse(submissionRepository.save(submission));
+        SubmissionEntity saved = submissionRepository.save(submission);
+        notifyReviewCompleted(assignment, saved);
+        return toSubmissionResponse(saved);
     }
 
     public List<AssignmentResponse> listPendingAssignments(
@@ -262,6 +272,79 @@ public class AssignmentFacadeService {
         }
 
         return courseIds;
+    }
+
+    private List<Long> resolveCourseStudentIds(Long courseId) {
+        try {
+            CourseApiResponse<List<Long>> response = courseServiceClient.listCourseStudentIds(courseId);
+            if (response == null || response.getData() == null) {
+                return Collections.emptyList();
+            }
+            return response.getData();
+        } catch (FeignException ex) {
+            return Collections.emptyList();
+        }
+    }
+
+    private void notifyAssignmentPublished(AssignmentEntity assignment) {
+        List<Long> studentIds = resolveCourseStudentIds(assignment.getCourseId());
+        for (Long studentId : studentIds) {
+            sendNotification(
+                    studentId,
+                    "ASSIGNMENT",
+                    "新作业已发布",
+                    "课程《" + assignment.getCourseTitle() + "》发布了新作业：" + assignment.getTitle()
+            );
+        }
+    }
+
+    private void notifyAssignmentSubmitted(AssignmentEntity assignment, SubmissionEntity submission) {
+        sendNotification(
+                assignment.getTeacherId(),
+                "ASSIGNMENT",
+                "收到新的作业提交",
+                "课程《" + assignment.getCourseTitle() + "》的作业《" + assignment.getTitle()
+                        + "》有学生提交，学生 ID：" + submission.getStudentId()
+        );
+    }
+
+    private void notifyGradingCompleted(AssignmentEntity assignment, SubmissionEntity submission) {
+        if (submission.getStatus() != SubmissionStatus.AI_GRADED) {
+            return;
+        }
+        sendNotification(
+                submission.getStudentId(),
+                "GRADE",
+                "AI 批改已完成",
+                "作业《" + assignment.getTitle() + "》已完成 AI 批改，可查看评分和评语"
+        );
+    }
+
+    private void notifyReviewCompleted(AssignmentEntity assignment, SubmissionEntity submission) {
+        sendNotification(
+                submission.getStudentId(),
+                "GRADE",
+                "作业成绩已更新",
+                "教师已复核作业《" + assignment.getTitle() + "》的成绩和评语"
+        );
+    }
+
+    private void sendNotification(Long userId, String type, String title, String content) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            notifyServiceClient.createNotification(CreateNotificationRequest.builder()
+                    .userId(userId)
+                    .type(type)
+                    .title(title)
+                    .content(content)
+                    .build());
+        } catch (FeignException ignored) {
+            // Notification delivery must not block assignment workflows.
+        } catch (Exception ignored) {
+            // Ignore transient notification issues.
+        }
     }
 
     private CourseSummaryResponse ensureCourseAccessible(Long courseId, String authorization) {
