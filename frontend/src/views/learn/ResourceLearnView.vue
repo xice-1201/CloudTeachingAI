@@ -177,6 +177,13 @@ function isInternalResourceUrl(url: string) {
   return url.startsWith('/api/')
 }
 
+function buildDownloadUrl(url: string) {
+  const resolvedUrl = resolveResourceUrl(url)
+  if (!isInternalResourceUrl(resolvedUrl)) return resolvedUrl
+  const separator = resolvedUrl.includes('?') ? '&' : '?'
+  return `${resolvedUrl}${separator}download=true`
+}
+
 function getCourseId() {
   return Number(route.params.courseId)
 }
@@ -284,10 +291,30 @@ function handleBeforeUnload() {
   if (canTrackProgress.value) saveProgress().catch(() => undefined)
 }
 
-function downloadResource() {
+async function downloadResource() {
   if (!resourceUrl.value || !resource.value) return
+  const downloadUrl = buildDownloadUrl(resource.value.url)
+  if (isInternalResourceUrl(resolveResourceUrl(resource.value.url))) {
+    const token = localStorage.getItem('token')
+    const response = await fetch(downloadUrl, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) {
+      ElMessage.error('资源下载失败，请稍后重试')
+      return
+    }
+    const blob = await response.blob()
+    const temporaryDownloadUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = temporaryDownloadUrl
+    link.download = resource.value.title
+    link.click()
+    URL.revokeObjectURL(temporaryDownloadUrl)
+    return
+  }
+
   const link = document.createElement('a')
-  link.href = resourceUrl.value
+  link.href = downloadUrl
   link.download = resource.value.title
   link.target = '_blank'
   link.rel = 'noopener'

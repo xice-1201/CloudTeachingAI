@@ -115,7 +115,9 @@
                     <div class="resource-meta">
                       <span v-if="resource.duration">时长 {{ formatDuration(resource.duration) }}</span>
                       <span v-if="resource.size">大小 {{ formatFileSize(resource.size) }}</span>
-                      <el-link :href="resource.url" target="_blank" type="primary">打开资源</el-link>
+                      <el-button link type="primary" @click="previewResource(resource)">预览资源</el-button>
+                      <el-button link type="primary" @click="downloadManagedResource(resource)">下载资源</el-button>
+                      <span class="resource-source">{{ resource.managedFile ? '平台托管' : '外部链接' }}</span>
                     </div>
                     <div v-if="resource.tags?.length || resource.knowledgePoints?.length" class="resource-tags">
                       <el-tag v-for="tag in (resource.tags?.length ? resource.tags : resource.knowledgePoints)" :key="`${resource.id}-${resourceTagKey(tag)}`" size="small" effect="plain">
@@ -465,6 +467,7 @@ function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) { return 'l
 function resourceTagKey(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.label : tag.id }
 function resourceTagPath(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.knowledgePointPath : tag.path }
 function resourceTagKnowledgePointId(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.knowledgePointId : tag.id }
+function resolveResourceUrl(url: string) { if (/^https?:\/\//i.test(url) || url.startsWith('/')) return url; return `/${url}` }
 function normalizeTagLabels(labels: string[]) {
   const normalized = new Map<string, string>()
   labels.forEach((label) => {
@@ -523,6 +526,33 @@ function mergeStudentOptions(students: User[]) {
   const merged = new Map<number, User>()
   for (const student of [...studentOptions.value, ...students]) merged.set(student.id, student)
   studentOptions.value = Array.from(merged.values())
+}
+
+function previewResource(resource: Resource) {
+  window.open(resolveResourceUrl(resource.url), '_blank', 'noopener')
+}
+
+async function downloadManagedResource(resource: Resource) {
+  if (!resource.managedFile) {
+    window.open(resolveResourceUrl(resource.url), '_blank', 'noopener')
+    return
+  }
+
+  const token = localStorage.getItem('token')
+  const response = await fetch(resolveResourceUrl(`${resource.url}?download=true`), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!response.ok) {
+    ElMessage.error('资源下载失败，请稍后重试')
+    return
+  }
+  const blob = await response.blob()
+  const downloadUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = downloadUrl
+  link.download = resource.title
+  link.click()
+  URL.revokeObjectURL(downloadUrl)
 }
 
 async function loadStudentOptions(keyword = '') {
@@ -929,6 +959,7 @@ onBeforeUnmount(() => {
 .resource-title { color: #303133; font-size: 15px; font-weight: 600; }
 .resource-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; color: #909399; font-size: 13px; }
 .resource-actions { display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0; }
+.resource-source { color: #c0c4cc; }
 .upload-file-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; color: #606266; font-size: 13px; }
 .upload-progress { width: 100%; margin-top: 10px; }
 .upload-progress-meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; color: #606266; font-size: 12px; }
