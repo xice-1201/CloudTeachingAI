@@ -162,6 +162,9 @@ export const courseApi = {
   confirmResourceTags: (resourceId: string, data: { knowledgePointIds?: number[]; tagLabels?: string[] }): Promise<Resource> =>
     request.patch(`/resources/${resourceId}/tags`, data),
 
+  retryResourceTagging: (resourceId: string): Promise<Resource> =>
+    request.post(`/resources/${resourceId}/tagging/retry`),
+
   createResource: (chapterId: string, data: Partial<Resource>): Promise<Resource> =>
     request.post(`/chapters/${chapterId}/resources`, data),
 

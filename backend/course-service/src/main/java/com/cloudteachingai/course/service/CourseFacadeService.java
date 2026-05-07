@@ -624,6 +624,32 @@ public class CourseFacadeService {
     }
 
     @Transactional
+    public ResourceResponse retryResourceTagging(Long resourceId, UserContext userContext) {
+        ResourceEntity resource = requireResource(resourceId);
+        ChapterEntity chapter = requireChapter(resource.getChapterId());
+        CourseEntity course = requireManageableCourse(chapter.getCourseId(), userContext);
+        resourceKnowledgePointRepository.deleteByResourceId(resource.getId());
+        resourceTagRepository.deleteByResourceId(resource.getId());
+        resource.setTaggingStatus(ResourceTaggingStatus.UNTAGGED);
+        resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        ResourceEntity saved = resourceRepository.save(resource);
+
+        ResourceUploadedEvent event = ResourceUploadedEvent.builder()
+                .resourceId(saved.getId())
+                .chapterId(saved.getChapterId())
+                .courseId(course.getId())
+                .teacherId(course.getTeacherId())
+                .title(saved.getTitle())
+                .description(saved.getDescription())
+                .type(saved.getType().name())
+                .storageKey(saved.getStorageKey())
+                .build();
+        runAfterCurrentCommit(() -> requestAiTagging(event));
+
+        return toResourceResponse(saved, List.of(), List.of());
+    }
+
+    @Transactional
     public void applyAiTaggedResource(ResourceTaggedEvent event) {
         ResourceEntity resource = requireResource(event.resourceId());
         ChapterEntity chapter = requireChapter(resource.getChapterId());

@@ -82,6 +82,34 @@
             </div>
           </template>
 
+          <section v-if="allResources.length" class="tag-workbench">
+            <div class="tag-workbench-main">
+              <div class="tag-workbench-title">AI 标注工作台</div>
+              <div class="tag-workbench-stats">
+                <span>待确认 {{ tagWorkbenchStats.suggested }}</span>
+                <span>待标注 {{ tagWorkbenchStats.untagged }}</span>
+                <span>已确认 {{ tagWorkbenchStats.confirmed }}</span>
+              </div>
+            </div>
+            <div class="tag-workbench-actions">
+              <el-button
+                :disabled="!suggestedResources.length"
+                type="primary"
+                plain
+                @click="openFirstSuggestedResource"
+              >
+                处理待确认
+              </el-button>
+              <el-button
+                :disabled="!retryableResources.length"
+                :loading="batchRetryingTags"
+                @click="retryAllUntaggedResources"
+              >
+                批量重新生成
+              </el-button>
+            </div>
+          </section>
+
           <el-empty v-if="!chapters.length" description="还没有章节，先新增一个章节开始排课。" />
 
           <el-collapse v-else v-model="activeChapterKeys">
@@ -128,6 +156,15 @@
                   <div class="resource-actions">
                     <el-button v-if="resource.tags?.length || resource.knowledgePoints?.length" link type="primary" @click="openResourceTagReviewDialog(resource)">
                       {{ resource.taggingStatus === 'SUGGESTED' ? '审核AI标注' : '调整标签' }}
+                    </el-button>
+                    <el-button
+                      v-if="canRetryResourceTagging(resource)"
+                      link
+                      type="primary"
+                      :loading="retryingResourceIds.has(resource.id)"
+                      @click="retryResourceTagging(resource)"
+                    >
+                      重新生成标签
                     </el-button>
                     <el-button link type="primary" @click="openEditResourceDialog(chapter, resource)">编辑</el-button>
                     <el-button link type="danger" @click="handleDeleteResource(resource)">删除</el-button>
@@ -314,6 +351,8 @@ const resourceSubmitting = ref(false)
 const studentLoading = ref(false)
 const suggestionLoading = ref(false)
 const tagReviewSubmitting = ref(false)
+const batchRetryingTags = ref(false)
+const retryingResourceIds = ref(new Set<number>())
 const selectedResourceFile = ref<File | null>(null)
 const resourceUploadProgress = reactive({
   visible: false,
@@ -335,6 +374,14 @@ let temporaryCoverUrl = ''
 const isEdit = computed(() => Boolean(route.params.id))
 const courseId = computed(() => String(route.params.id ?? ''))
 const hasLeafKnowledgePoints = computed(() => leafKnowledgePointCount.value > 0)
+const allResources = computed(() => Object.values(resourceMap.value).flat())
+const suggestedResources = computed(() => allResources.value.filter((resource) => resource.taggingStatus === 'SUGGESTED'))
+const retryableResources = computed(() => allResources.value.filter(canRetryResourceTagging))
+const tagWorkbenchStats = computed(() => ({
+  suggested: suggestedResources.value.length,
+  untagged: allResources.value.filter((resource) => resource.taggingStatus === 'UNTAGGED' || !resource.taggingStatus).length,
+  confirmed: allResources.value.filter((resource) => resource.taggingStatus === 'CONFIRMED').length,
+}))
 
 const form = reactive({ title: '', description: '', coverImage: '', visibilityType: 'PUBLIC' as Course['visibilityType'], visibleStudentIds: [] as number[] })
 const chapterDialog = reactive({ visible: false, isEdit: false, chapterId: '', form: { title: '', description: '', orderIndex: 1 } })
@@ -459,8 +506,8 @@ function logCourseEditError(step: string, error: unknown, extra?: Record<string,
 function courseStatusTag(status: Course['status']) { return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info' }
 function courseStatusLabel(status: Course['status']) { return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status] ?? status }
 function resourceTypeLabel(type: Resource['type']) { return { VIDEO: '视频', DOCUMENT: '文档', SLIDE: '课件' }[type] ?? type }
-function resourceTaggingLabel(status?: Resource['taggingStatus']) { return { CONFIRMED: '已确认', SUGGESTED: '待确认', UNTAGGED: '待标注' }[status ?? 'UNTAGGED'] ?? '待标注' }
-function resourceTaggingType(status?: Resource['taggingStatus']) { return { CONFIRMED: 'success', SUGGESTED: 'warning', UNTAGGED: 'info' }[status ?? 'UNTAGGED'] ?? 'info' }
+function resourceTaggingLabel(status?: Resource['taggingStatus']) { return { CONFIRMED: '已确认', SUGGESTED: '待确认', UNTAGGED: '待标注', PROCESSING: '生成中', FAILED: '生成失败' }[status ?? 'UNTAGGED'] ?? '待标注' }
+function resourceTaggingType(status?: Resource['taggingStatus']) { return { CONFIRMED: 'success', SUGGESTED: 'warning', UNTAGGED: 'info', PROCESSING: 'primary', FAILED: 'danger' }[status ?? 'UNTAGGED'] ?? 'info' }
 function formatDuration(seconds: number) { const minutes = Math.floor(seconds / 60); const remainingSeconds = seconds % 60; return `${minutes}:${String(remainingSeconds).padStart(2, '0')}` }
 function formatFileSize(size: number) { if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`; if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`; return `${size} B` }
 function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.label : tag.name }
@@ -508,6 +555,13 @@ function replaceResourceInMap(updatedResource: Resource) {
     resource.id === updatedResource.id ? updatedResource : resource
   ))
   resourceMap.value = nextResourceMap
+}
+function canRetryResourceTagging(resource: Resource) {
+  return resource.taggingStatus === 'UNTAGGED' || resource.taggingStatus === 'FAILED' || (!resource.tags?.length && !resource.knowledgePoints?.length)
+}
+function openFirstSuggestedResource() {
+  const firstResource = suggestedResources.value[0]
+  if (firstResource) openResourceTagReviewDialog(firstResource)
 }
 function openResourceTagReviewDialog(resource: Resource) {
   const options = buildTagReviewOptions(resource)
@@ -892,6 +946,46 @@ async function handleDeleteResource(resource: Resource) {
   await loadCurriculum()
 }
 
+function setResourceRetrying(resourceId: number, retrying: boolean) {
+  const nextIds = new Set(retryingResourceIds.value)
+  if (retrying) {
+    nextIds.add(resourceId)
+  } else {
+    nextIds.delete(resourceId)
+  }
+  retryingResourceIds.value = nextIds
+}
+
+async function retryResourceTagging(resource: Resource, silent = false) {
+  setResourceRetrying(resource.id, true)
+  try {
+    const updatedResource = await courseApi.retryResourceTagging(String(resource.id))
+    replaceResourceInMap(updatedResource)
+    if (!silent) {
+      ElMessage.success('已重新提交 AI 标注任务')
+    }
+  } finally {
+    setResourceRetrying(resource.id, false)
+  }
+}
+
+async function retryAllUntaggedResources() {
+  const resources = retryableResources.value
+  if (!resources.length) return
+  batchRetryingTags.value = true
+  try {
+    const results = await Promise.allSettled(resources.map((resource) => retryResourceTagging(resource, true)))
+    const failedCount = results.filter((result) => result.status === 'rejected').length
+    if (failedCount > 0) {
+      ElMessage.warning(`有 ${failedCount} 个资源重新生成失败，请稍后重试`)
+    } else {
+      ElMessage.success(`已提交 ${resources.length} 个资源的 AI 标注任务`)
+    }
+  } finally {
+    batchRetryingTags.value = false
+  }
+}
+
 async function confirmReviewedResourceTags() {
   if (!tagReviewDialog.resource) return
   const selectedOptions = tagReviewDialog.options.filter((option) => tagReviewDialog.selectedKeys.includes(option.key))
@@ -971,4 +1065,9 @@ onBeforeUnmount(() => {
 .tag-review-option { display: block; padding: 12px; border: 1px solid #ebeef5; border-radius: 8px; background: #fafafa; cursor: pointer; }
 .tag-review-option-main { display: grid; gap: 4px; min-width: 0; }
 .tag-review-option-title { justify-content: flex-start; color: #303133; font-weight: 500; }
+.tag-workbench { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; margin-bottom: 16px; border: 1px solid #ebeef5; border-radius: 8px; background: #f8fafc; }
+.tag-workbench-main { min-width: 0; }
+.tag-workbench-title { color: #303133; font-size: 14px; font-weight: 600; }
+.tag-workbench-stats,.tag-workbench-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.tag-workbench-stats { margin-top: 6px; color: #909399; font-size: 12px; }
 </style>

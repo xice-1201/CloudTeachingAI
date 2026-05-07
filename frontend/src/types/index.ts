@@ -54,7 +54,7 @@ export interface Resource {
   sourceUrl?: string | null
   description?: string
   managedFile?: boolean
-  taggingStatus?: 'UNTAGGED' | 'SUGGESTED' | 'CONFIRMED'
+  taggingStatus?: 'UNTAGGED' | 'SUGGESTED' | 'CONFIRMED' | 'PROCESSING' | 'FAILED'
   taggingUpdatedAt?: string | null
   knowledgePoints?: ResourceKnowledgePoint[]
   tags?: ResourceTag[]

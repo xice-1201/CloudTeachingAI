@@ -460,6 +460,14 @@ public class CourseController {
         return ApiResponse.success(courseFacadeService.confirmResourceTags(resourceId, request, userContext));
     }
 
+    @PostMapping("/resources/{resourceId}/tagging/retry")
+    public ApiResponse<ResourceResponse> retryResourceTagging(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long resourceId) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.retryResourceTagging(resourceId, userContext));
+    }
+
     @GetMapping("/internal/resources/{resourceId}/tagging-context")
     public ApiResponse<InternalResourceTaggingContextResponse> getResourceTaggingContext(@PathVariable Long resourceId) {
         return ApiResponse.success(courseFacadeService.getResourceTaggingContext(resourceId));
