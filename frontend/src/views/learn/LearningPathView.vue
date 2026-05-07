@@ -125,7 +125,13 @@ function formatTime(value?: string) {
 }
 
 function openResource(item: PathResource) {
-  router.push(`/courses/${item.courseId}/learn/${item.resourceId}`)
+  router.push({
+    path: `/courses/${item.courseId}/learn/${item.resourceId}`,
+    query: {
+      fromPath: '1',
+      returnUrl: '/learning/path',
+    },
+  })
 }
 
 function pathStatusLabel(item: PathResource) {

@@ -68,6 +68,7 @@ public class LearnFacadeService {
     private static final String STATUS_COMPLETED = "COMPLETED";
     private static final String PATH_STATUS_NOT_STARTED = "NOT_STARTED";
     private static final String PATH_STATUS_IN_PROGRESS = "IN_PROGRESS";
+    private static final String PATH_STATUS_COMPLETED = "COMPLETED";
     private static final int DEFAULT_QUESTION_LIMIT = 6;
     private static final int MAX_RADAR_POINTS = 8;
     private static final int MAX_PATH_RESOURCES = 6;
@@ -1024,14 +1025,23 @@ public class LearnFacadeService {
     }
 
     private String resolvePathStatus(double currentProgress) {
+        if (currentProgress >= 0.999D) {
+            return PATH_STATUS_COMPLETED;
+        }
         return currentProgress > 0D ? PATH_STATUS_IN_PROGRESS : PATH_STATUS_NOT_STARTED;
     }
 
     private String resolvePathStatusLabel(double currentProgress) {
+        if (currentProgress >= 0.999D) {
+            return "已完成";
+        }
         return currentProgress > 0D ? "学习中" : "未开始";
     }
 
     private String resolvePathActionLabel(double currentProgress) {
+        if (currentProgress >= 0.999D) {
+            return "复习资源";
+        }
         return currentProgress > 0D ? "继续学习" : "开始学习";
     }
 

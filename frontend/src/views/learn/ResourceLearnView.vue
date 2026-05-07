@@ -2,10 +2,11 @@
   <div class="learn-page" v-loading="loading">
     <div class="learn-header">
       <div class="learn-header-main">
-        <el-button text :icon="ArrowLeft" @click="$router.back()">返回课程</el-button>
+        <el-button text :icon="ArrowLeft" @click="goBack">{{ backLabel }}</el-button>
         <span class="resource-title">{{ resource?.title }}</span>
       </div>
       <div class="learn-header-actions">
+        <el-button v-if="fromLearningPath" text @click="returnToLearningPath">返回路线</el-button>
         <el-button v-if="resource" text :icon="ChatDotRound" @click="askAiForResource">问 AI</el-button>
         <el-button text @click="scrollToDiscussions">讨论 {{ resourceDiscussions.length }}</el-button>
         <el-button v-if="resourceUrl" text @click="downloadResource">下载资源</el-button>
@@ -154,6 +155,8 @@ const resourceDiscussionForm = ref({
 })
 
 const canTrackProgress = computed(() => userStore.isStudent)
+const fromLearningPath = computed(() => route.query.fromPath === '1')
+const backLabel = computed(() => (fromLearningPath.value ? '返回路线' : '返回课程'))
 const progressPct = computed(() => Math.min(100, Math.max(0, Math.round((progress.value?.progress ?? 0) * 100))))
 const sidebarTitle = computed(() => (canTrackProgress.value ? '学习进度' : '资源预览'))
 const sidebarText = computed(() => (
@@ -164,6 +167,7 @@ const sidebarText = computed(() => (
 
 let saveTimer: ReturnType<typeof setInterval> | null = null
 let temporaryResourceUrl = ''
+let completionMessageShown = false
 
 function resolveResourceUrl(url: string) {
   if (/^https?:\/\//i.test(url)) return url
@@ -191,6 +195,24 @@ function buildDownloadUrl(url: string) {
 
 function getCourseId() {
   return Number(route.params.courseId)
+}
+
+function goBack() {
+  if (fromLearningPath.value) {
+    returnToLearningPath()
+    return
+  }
+  router.back()
+}
+
+function returnToLearningPath() {
+  router.push('/learning/path')
+}
+
+function notifyPathProgress(savedProgress: LearningProgress | null) {
+  if (!fromLearningPath.value || !savedProgress?.completed || completionMessageShown) return
+  completionMessageShown = true
+  ElMessage.success('该路线资源已完成，返回路线后将刷新推荐清单')
 }
 
 function askAiForResource() {
@@ -256,6 +278,7 @@ async function handleEnded() {
     progress: 1,
     lastPosition: videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined,
   })
+  notifyPathProgress(progress.value)
 }
 
 async function saveProgress() {
@@ -267,6 +290,7 @@ async function saveProgress() {
     progress: percent,
     lastPosition: isVideo && videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined,
   })
+  notifyPathProgress(progress.value)
 }
 
 async function loadCurriculum() {
@@ -305,6 +329,7 @@ async function loadResourcePage() {
       courseId: getCourseId(),
       progress: 1,
     })
+    notifyPathProgress(progress.value)
   }
 }
 
@@ -442,6 +467,7 @@ onMounted(async () => {
 watch(() => `${route.params.courseId}:${route.params.resourceId}`, async () => {
   loading.value = true
   try {
+    completionMessageShown = false
     if (canTrackProgress.value) await saveProgress().catch(() => undefined)
     await loadCurriculum()
     await loadResourcePage()
