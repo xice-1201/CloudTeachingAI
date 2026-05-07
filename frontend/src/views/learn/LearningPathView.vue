@@ -19,7 +19,10 @@
 
     <div v-if="hasPath" class="focus-points">
       <div v-for="item in path?.focusKnowledgePoints" :key="item.knowledgePointId" class="focus-item">
-        <div class="focus-name">{{ item.knowledgePointName }}</div>
+        <div class="focus-head">
+          <div class="focus-name">{{ item.knowledgePointName }}</div>
+          <el-button link type="primary" :icon="ChatDotRound" @click="askAiForFocus(item)">问 AI</el-button>
+        </div>
         <div class="focus-path">{{ item.knowledgePointPath || item.knowledgePointName }}</div>
         <el-progress
           :percentage="Math.round(item.masteryLevel * 100)"
@@ -83,6 +86,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ChatDotRound } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { learnApi } from '@/api/learn'
 import type { LearningPath, PathResource } from '@/types'
@@ -110,6 +114,16 @@ function formatTime(value?: string) {
 
 function openResource(item: PathResource) {
   router.push(`/courses/${item.courseId}/learn/${item.resourceId}`)
+}
+
+function askAiForFocus(item: LearningPath['focusKnowledgePoints'][number]) {
+  router.push({
+    name: 'Chat',
+    query: {
+      knowledgePointId: item.knowledgePointId,
+      knowledgePointName: item.knowledgePointName,
+    },
+  })
 }
 
 async function loadPath() {
@@ -191,6 +205,13 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 600;
   color: #303133;
+}
+
+.focus-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .focus-path {

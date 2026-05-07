@@ -26,3 +26,24 @@ class ChatSession(BaseModel):
     createdAt: datetime
     updatedAt: datetime
 
+
+class ChatContext(BaseModel):
+    courseId: int | None = None
+    courseTitle: str | None = None
+    resourceId: int | None = None
+    resourceTitle: str | None = None
+    knowledgePointId: int | None = None
+    knowledgePointName: str | None = None
+
+    def has_value(self) -> bool:
+        return any(
+            value is not None and value != ""
+            for value in (
+                self.courseId,
+                self.courseTitle,
+                self.resourceId,
+                self.resourceTitle,
+                self.knowledgePointId,
+                self.knowledgePointName,
+            )
+        )

@@ -6,6 +6,7 @@
         <span class="resource-title">{{ resource?.title }}</span>
       </div>
       <div class="learn-header-actions">
+        <el-button v-if="resource" text :icon="ChatDotRound" @click="askAiForResource">问 AI</el-button>
         <el-button text @click="scrollToDiscussions">讨论 {{ resourceDiscussions.length }}</el-button>
         <el-button v-if="resourceUrl" text @click="downloadResource">下载资源</el-button>
       </div>
@@ -124,8 +125,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
@@ -133,6 +134,7 @@ import { useUserStore } from '@/store/user'
 import type { Chapter, DiscussionPost, LearningProgress, Resource, ResourceKnowledgePoint, ResourceTag } from '@/types'
 
 const route = useRoute()
+const router = useRouter()
 const userStore = useUserStore()
 const videoEl = ref<HTMLVideoElement>()
 const loading = ref(false)
@@ -189,6 +191,22 @@ function buildDownloadUrl(url: string) {
 
 function getCourseId() {
   return Number(route.params.courseId)
+}
+
+function askAiForResource() {
+  if (!resource.value) return
+  const knowledgePoint = resource.value.knowledgePoints?.[0]
+  const tag = resource.value.tags?.[0]
+  router.push({
+    name: 'Chat',
+    query: {
+      courseId: route.params.courseId,
+      resourceId: resource.value.id,
+      resourceTitle: resource.value.title,
+      knowledgePointId: knowledgePoint?.id ?? tag?.knowledgePointId ?? undefined,
+      knowledgePointName: knowledgePoint?.name ?? tag?.label ?? undefined,
+    },
+  })
 }
 
 function formatDate(value: string) {

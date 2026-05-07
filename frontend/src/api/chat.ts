@@ -1,6 +1,15 @@
 import request from '@/utils/request'
 import type { ChatSession } from '@/types'
 
+export interface ChatContextParams {
+  courseId?: number | string | null
+  courseTitle?: string | null
+  resourceId?: number | string | null
+  resourceTitle?: string | null
+  knowledgePointId?: number | string | null
+  knowledgePointName?: string | null
+}
+
 export const chatApi = {
   listSessions: (): Promise<ChatSession[]> =>
     request.get('/chat/sessions'),
@@ -14,7 +23,7 @@ export const chatApi = {
   deleteSession: (id: number): Promise<void> =>
     request.delete(`/chat/sessions/${id}`),
 
-  buildMessageStreamUrl: (sessionId: number, message: string): string => {
+  buildMessageStreamUrl: (sessionId: number, message: string, context?: ChatContextParams): string => {
     const params = new URLSearchParams({ message })
     const token = localStorage.getItem('token')
     const rawUser = localStorage.getItem('userInfo')
@@ -33,6 +42,12 @@ export const chatApi = {
         // Ignore malformed local storage; normal request auth still applies.
       }
     }
+
+    Object.entries(context ?? {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && String(value).trim()) {
+        params.set(key, String(value))
+      }
+    })
 
     return `/api/v1/chat/sessions/${sessionId}/messages?${params.toString()}`
   },

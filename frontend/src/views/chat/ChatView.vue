@@ -36,6 +36,14 @@
       </div>
 
       <template v-else>
+        <div v-if="activeContextLabel" class="context-bar">
+          <div>
+            <div class="context-title">当前围绕：{{ activeContextLabel }}</div>
+            <div class="context-subtitle">AI 会优先结合该教学上下文回答。</div>
+          </div>
+          <el-button link type="primary" @click="clearContext">切换为通用问答</el-button>
+        </div>
+
         <div v-loading="loadingMessages" class="messages" ref="messagesEl">
           <div
             v-for="msg in messages"
@@ -77,12 +85,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Plus, Delete, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { chatApi } from '@/api/chat'
+import { chatApi, type ChatContextParams } from '@/api/chat'
 import type { ChatSession, ChatMessage } from '@/types'
 
+const route = useRoute()
+const router = useRouter()
 const sessions = ref<ChatSession[]>([])
 const currentSessionId = ref<number | null>(null)
 const messages = ref<ChatMessage[]>([])
@@ -94,6 +105,25 @@ const streaming = ref(false)
 const streamingText = ref('')
 const messagesEl = ref<HTMLElement>()
 let eventSource: EventSource | null = null
+
+function readQueryValue(key: string) {
+  const value = route.query[key]
+  return Array.isArray(value) ? value[0] : value
+}
+
+const activeContext = computed<ChatContextParams>(() => ({
+  courseId: readQueryValue('courseId'),
+  courseTitle: readQueryValue('courseTitle'),
+  resourceId: readQueryValue('resourceId'),
+  resourceTitle: readQueryValue('resourceTitle'),
+  knowledgePointId: readQueryValue('knowledgePointId'),
+  knowledgePointName: readQueryValue('knowledgePointName'),
+}))
+
+const activeContextLabel = computed(() => {
+  const context = activeContext.value
+  return context.resourceTitle || context.knowledgePointName || context.courseTitle || ''
+})
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('zh-CN')
@@ -168,7 +198,7 @@ async function sendMessage() {
   await scrollToBottom()
 
   const sessionId = currentSessionId.value
-  const es = new EventSource(chatApi.buildMessageStreamUrl(sessionId, text))
+  const es = new EventSource(chatApi.buildMessageStreamUrl(sessionId, text, activeContext.value))
   eventSource = es
 
   es.onmessage = async (event) => {
@@ -216,6 +246,10 @@ async function syncSession(sessionId: number) {
   } catch {
     // The optimistic messages are already visible, so keep the UI usable.
   }
+}
+
+function clearContext() {
+  router.replace({ name: 'Chat' })
 }
 
 async function scrollToBottom() {
@@ -310,6 +344,30 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.context-bar {
+  min-height: 56px;
+  padding: 10px 20px;
+  border-bottom: 1px solid #e4e7ed;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #f8fafc;
+}
+
+.context-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  overflow-wrap: anywhere;
+}
+
+.context-subtitle {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #909399;
 }
 
 .chat-welcome {

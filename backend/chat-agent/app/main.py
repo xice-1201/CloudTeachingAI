@@ -11,8 +11,9 @@ from fastapi.responses import StreamingResponse
 from .auth import resolve_user_id
 from .chat_store import ChatStore
 from .config import settings
+from .course_context import CourseContextClient
 from .llm import ChatResponder
-from .models import ApiResponse, ChatSession
+from .models import ApiResponse, ChatContext, ChatSession
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ app.add_middleware(
 
 store = ChatStore()
 responder = ChatResponder(settings)
+context_client = CourseContextClient(settings)
 
 
 @app.get("/health")
@@ -67,10 +69,25 @@ async def send_message(
     session_id: int,
     user_id: Annotated[int | str, Depends(resolve_user_id)],
     message: Annotated[str, Query(min_length=1)],
+    authorization_query: Annotated[str | None, Query(alias="Authorization")] = None,
+    course_id: Annotated[int | None, Query(alias="courseId")] = None,
+    course_title: Annotated[str | None, Query(alias="courseTitle")] = None,
+    resource_id: Annotated[int | None, Query(alias="resourceId")] = None,
+    resource_title: Annotated[str | None, Query(alias="resourceTitle")] = None,
+    knowledge_point_id: Annotated[int | None, Query(alias="knowledgePointId")] = None,
+    knowledge_point_name: Annotated[str | None, Query(alias="knowledgePointName")] = None,
 ) -> StreamingResponse:
     session = require_session(user_id, session_id)
+    context = ChatContext(
+        courseId=course_id,
+        courseTitle=course_title,
+        resourceId=resource_id,
+        resourceTitle=resource_title,
+        knowledgePointId=knowledge_point_id,
+        knowledgePointName=knowledge_point_name,
+    )
     return StreamingResponse(
-        stream_message(session, message),
+        stream_message(session, message, context, authorization_query),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -80,11 +97,17 @@ async def send_message(
     )
 
 
-async def stream_message(session: ChatSession, message: str) -> AsyncIterator[str]:
+async def stream_message(
+    session: ChatSession,
+    message: str,
+    context: ChatContext | None = None,
+    authorization: str | None = None,
+) -> AsyncIterator[str]:
     user_message = store.add_message(session, "user", message)
     chunks: list[str] = []
     try:
-        async for chunk in responder.stream_reply(session.messages[:-1], message):
+        context_prompt = await context_client.build_context_prompt(context or ChatContext(), authorization)
+        async for chunk in responder.stream_reply(session.messages[:-1], message, context_prompt):
             chunks.append(chunk)
             yield sse_data(chunk)
         store.add_message(session, "assistant", "".join(chunks))

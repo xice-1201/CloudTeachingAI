@@ -10,9 +10,18 @@ from fastapi.testclient import TestClient
 
 
 class FakeResponder:
-    async def stream_reply(self, history, message):
+    async def stream_reply(self, history, message, context_prompt=""):
         yield "收到："
+        if context_prompt:
+            yield context_prompt
         yield message
+
+
+class FakeContextClient:
+    async def build_context_prompt(self, context, authorization):
+        if context.courseTitle:
+            return f"课程：{context.courseTitle}"
+        return ""
 
 
 def bearer_for_user(user_id: str) -> str:
@@ -110,6 +119,30 @@ def test_chat_stream_accepts_event_source_query_auth():
     assert response.status_code == 200
     assert "data: 收到：" in body
     assert "data: 继续讲解" in body
+
+
+def test_chat_stream_injects_course_context():
+    chat_main = load_chat_main()
+    chat_main.store = chat_main.ChatStore()
+    chat_main.responder = FakeResponder()
+    chat_main.context_client = FakeContextClient()
+
+    client = TestClient(chat_main.app)
+    token = bearer_for_user("88")
+    session_id = client.post(
+        "/api/v1/chat/sessions",
+        headers={"Authorization": token},
+    ).json()["data"]["id"]
+
+    with client.stream(
+        "GET",
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        params={"message": "讲一下重点", "Authorization": token, "courseTitle": "线性代数"},
+    ) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert "data: 课程：线性代数" in body
 
 
 def test_chat_session_can_use_user_id_query_without_token():

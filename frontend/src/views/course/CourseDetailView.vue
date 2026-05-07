@@ -7,6 +7,7 @@
           <el-tag :type="statusTagType(course.status)">{{ statusLabel(course.status) }}</el-tag>
         </div>
         <div class="header-actions">
+          <el-button v-if="course" :icon="ChatDotRound" @click="askAiForCourse">问 AI</el-button>
           <el-button v-if="canEdit" @click="$router.push(`/courses/${course.id}/edit`)">编辑课程</el-button>
           <el-button v-if="canPublish" type="primary" @click="handleLifecycle('publish')">发布课程</el-button>
           <el-button v-if="canUnpublish" @click="handleLifecycle('unpublish')">撤回发布</el-button>
@@ -234,14 +235,15 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Paperclip, VideoPlay } from '@element-plus/icons-vue'
+import { ChatDotRound, Document, Paperclip, VideoPlay } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
 import { useUserStore } from '@/store/user'
 import type { Announcement, Chapter, Course, DiscussionPost, Resource, ResourceKnowledgePoint, ResourceTag } from '@/types'
 
 const route = useRoute()
+const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
 const announcementSubmitting = ref(false)
@@ -303,6 +305,17 @@ function formatDate(value: string) {
 
 function scrollToDiscussions() {
   document.getElementById('discussions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function askAiForCourse() {
+  if (!course.value) return
+  router.push({
+    name: 'Chat',
+    query: {
+      courseId: course.value.id,
+      courseTitle: course.value.title,
+    },
+  })
 }
 
 function formatDuration(seconds: number) {
