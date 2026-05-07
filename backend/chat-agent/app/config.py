@@ -10,6 +10,7 @@ class Settings:
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     fallback_enabled: bool = os.getenv("CHAT_FALLBACK_ENABLED", "true").lower() == "true"
+    chat_database_url: str | None = os.getenv("CHAT_DATABASE_URL")
     course_service_base_url: str = os.getenv("COURSE_SERVICE_BASE_URL", "http://course-service:8003")
     course_context_timeout_seconds: float = float(os.getenv("COURSE_CONTEXT_TIMEOUT_SECONDS", "3"))
 

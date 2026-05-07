@@ -40,7 +40,7 @@ def load_chat_main():
 
 def test_chat_session_lifecycle_and_streaming_reply():
     chat_main = load_chat_main()
-    chat_main.store = chat_main.ChatStore()
+    chat_main.store = chat_main.MemoryChatStore()
     chat_main.responder = FakeResponder()
 
     client = TestClient(chat_main.app)
@@ -80,7 +80,7 @@ def test_chat_session_lifecycle_and_streaming_reply():
 
 def test_chat_sessions_are_scoped_by_user():
     chat_main = load_chat_main()
-    chat_main.store = chat_main.ChatStore()
+    chat_main.store = chat_main.MemoryChatStore()
     chat_main.responder = FakeResponder()
 
     client = TestClient(chat_main.app)
@@ -99,7 +99,7 @@ def test_chat_sessions_are_scoped_by_user():
 
 def test_chat_stream_accepts_event_source_query_auth():
     chat_main = load_chat_main()
-    chat_main.store = chat_main.ChatStore()
+    chat_main.store = chat_main.MemoryChatStore()
     chat_main.responder = FakeResponder()
 
     client = TestClient(chat_main.app)
@@ -124,7 +124,7 @@ def test_chat_stream_accepts_event_source_query_auth():
 
 def test_chat_stream_injects_course_context():
     chat_main = load_chat_main()
-    chat_main.store = chat_main.ChatStore()
+    chat_main.store = chat_main.MemoryChatStore()
     chat_main.responder = FakeResponder()
     chat_main.context_client = FakeContextClient()
 
@@ -155,7 +155,7 @@ def test_chat_stream_injects_course_context():
 
 def test_chat_session_persists_context_on_create():
     chat_main = load_chat_main()
-    chat_main.store = chat_main.ChatStore()
+    chat_main.store = chat_main.MemoryChatStore()
 
     client = TestClient(chat_main.app)
     created = client.post(
@@ -179,7 +179,7 @@ def test_chat_session_persists_context_on_create():
 
 def test_chat_session_can_use_user_id_query_without_token():
     chat_main = load_chat_main()
-    chat_main.store = chat_main.ChatStore()
+    chat_main.store = chat_main.MemoryChatStore()
     chat_main.responder = FakeResponder()
 
     client = TestClient(chat_main.app)

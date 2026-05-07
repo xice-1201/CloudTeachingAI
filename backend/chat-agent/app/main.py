@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .auth import resolve_user_id
-from .chat_store import ChatStore
+from .chat_store import MemoryChatStore, create_chat_store
 from .config import settings
 from .course_context import CourseContextClient
 from .llm import ChatResponder
@@ -26,7 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-store = ChatStore()
+store = create_chat_store(settings)
 responder = ChatResponder(settings)
 context_client = CourseContextClient(settings)
 

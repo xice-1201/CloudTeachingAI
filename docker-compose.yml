@@ -119,6 +119,26 @@
     networks:
       - backend
 
+  chat-db:
+    image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/postgres:16-alpine
+    container_name: chat-db
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+      POSTGRES_DB: chat_db
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - chat-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
   redis:
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/redis:7-alpine
     container_name: redis
@@ -347,8 +367,12 @@
     image: ${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/chat-agent:latest
     container_name: chat-agent
     restart: unless-stopped
+    depends_on:
+      chat-db:
+        condition: service_healthy
     environment:
       TZ: Asia/Shanghai
+      CHAT_DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@chat-db:5432/chat_db
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
@@ -403,6 +427,7 @@ volumes:
   notify-db-data:
   course-db-data:
   course-storage-data:
+  chat-db-data:
   learn-db-data:
   assign-db-data:
   redis-data:
