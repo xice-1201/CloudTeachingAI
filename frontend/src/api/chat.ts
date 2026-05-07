@@ -1,14 +1,5 @@
 import request from '@/utils/request'
-import type { ChatSession } from '@/types'
-
-export interface ChatContextParams {
-  courseId?: number | string | null
-  courseTitle?: string | null
-  resourceId?: number | string | null
-  resourceTitle?: string | null
-  knowledgePointId?: number | string | null
-  knowledgePointName?: string | null
-}
+import type { ChatContext, ChatSession } from '@/types'
 
 export const chatApi = {
   listSessions: (): Promise<ChatSession[]> =>
@@ -17,13 +8,13 @@ export const chatApi = {
   getSession: (id: number): Promise<ChatSession> =>
     request.get(`/chat/sessions/${id}`),
 
-  createSession: (): Promise<ChatSession> =>
-    request.post('/chat/sessions'),
+  createSession: (context?: ChatContext): Promise<ChatSession> =>
+    request.post('/chat/sessions', null, { params: compactContext(context) }),
 
   deleteSession: (id: number): Promise<void> =>
     request.delete(`/chat/sessions/${id}`),
 
-  buildMessageStreamUrl: (sessionId: number, message: string, context?: ChatContextParams): string => {
+  buildMessageStreamUrl: (sessionId: number, message: string, context?: ChatContext): string => {
     const params = new URLSearchParams({ message })
     const token = localStorage.getItem('token')
     const rawUser = localStorage.getItem('userInfo')
@@ -43,12 +34,16 @@ export const chatApi = {
       }
     }
 
-    Object.entries(context ?? {}).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && String(value).trim()) {
-        params.set(key, String(value))
-      }
-    })
+    Object.entries(compactContext(context)).forEach(([key, value]) => params.set(key, value))
 
     return `/api/v1/chat/sessions/${sessionId}/messages?${params.toString()}`
   },
+}
+
+function compactContext(context?: ChatContext) {
+  return Object.fromEntries(
+    Object.entries(context ?? {})
+      .filter(([, value]) => value !== undefined && value !== null && String(value).trim())
+      .map(([key, value]) => [key, String(value)]),
+  )
 }

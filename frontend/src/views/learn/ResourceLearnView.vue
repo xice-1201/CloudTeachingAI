@@ -205,6 +205,8 @@ function askAiForResource() {
       resourceTitle: resource.value.title,
       knowledgePointId: knowledgePoint?.id ?? tag?.knowledgePointId ?? undefined,
       knowledgePointName: knowledgePoint?.name ?? tag?.label ?? undefined,
+      returnUrl: `/courses/${route.params.courseId}/learn/${resource.value.id}`,
+      returnLabel: '返回资源',
     },
   })
 }

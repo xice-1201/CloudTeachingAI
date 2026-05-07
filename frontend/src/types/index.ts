@@ -316,9 +316,22 @@ export interface ChatMessage {
   timestamp: string
 }
 
+export interface ChatContext {
+  courseId?: number | string | null
+  courseTitle?: string | null
+  resourceId?: number | string | null
+  resourceTitle?: string | null
+  knowledgePointId?: number | string | null
+  knowledgePointName?: string | null
+  returnUrl?: string | null
+  returnLabel?: string | null
+}
+
 export interface ChatSession {
   id: number
-  userId: number
+  userId: number | string
+  title: string
+  context: ChatContext
   messages: ChatMessage[]
   createdAt: string
   updatedAt: string

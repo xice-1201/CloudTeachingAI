@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 from datetime import datetime, timezone
 
-from .models import ChatMessage, ChatSession
+from .models import ChatContext, ChatMessage, ChatSession
 
 
 class ChatStore:
@@ -19,11 +19,14 @@ class ChatStore:
             reverse=True,
         )
 
-    def create_session(self, user_id: int | str) -> ChatSession:
+    def create_session(self, user_id: int | str, context: ChatContext | None = None) -> ChatSession:
         now = datetime.now(timezone.utc)
+        session_context = context or ChatContext()
         session = ChatSession(
             id=next(self._session_ids),
             userId=user_id,
+            title=session_context.display_title(),
+            context=session_context,
             messages=[],
             createdAt=now,
             updatedAt=now,
@@ -44,6 +47,14 @@ class ChatStore:
         del self._sessions[session_id]
         return True
 
+    def update_context(self, session: ChatSession, context: ChatContext) -> ChatSession:
+        if not context.has_value():
+            return session
+        session.context = context
+        session.title = context.display_title()
+        session.updatedAt = datetime.now(timezone.utc)
+        return session
+
     def add_message(self, session: ChatSession, role: str, content: str) -> ChatMessage:
         message = ChatMessage(
             id=next(self._message_ids),
@@ -54,4 +65,3 @@ class ChatStore:
         session.messages.append(message)
         session.updatedAt = message.timestamp
         return message
-

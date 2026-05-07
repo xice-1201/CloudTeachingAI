@@ -3,7 +3,7 @@
     <div class="chat-sidebar">
       <div class="sidebar-header">
         <span>对话列表</span>
-        <el-button :icon="Plus" circle size="small" :loading="creating" @click="createSession" />
+        <el-button :icon="Plus" circle size="small" :loading="creating" @click="createSession()" />
       </div>
       <div v-loading="loadingSessions" class="session-list">
         <div
@@ -14,7 +14,10 @@
           @click="selectSession(s.id)"
         >
           <el-icon><ChatDotRound /></el-icon>
-          <span class="session-date">{{ formatDate(s.updatedAt || s.createdAt) }}</span>
+          <span class="session-summary">
+            <span class="session-title">{{ s.title || '通用问答' }}</span>
+            <span class="session-date">{{ formatDate(s.updatedAt || s.createdAt) }}</span>
+          </span>
           <el-button
             class="delete-btn"
             :icon="Delete"
@@ -32,7 +35,7 @@
       <div v-if="!currentSessionId" class="chat-welcome">
         <el-icon :size="64" color="#c0c4cc"><ChatDotRound /></el-icon>
         <p>选择或创建一个对话开始提问</p>
-        <el-button type="primary" @click="createSession">新建对话</el-button>
+        <el-button type="primary" @click="createSession()">新建对话</el-button>
       </div>
 
       <template v-else>
@@ -41,7 +44,12 @@
             <div class="context-title">当前围绕：{{ activeContextLabel }}</div>
             <div class="context-subtitle">AI 会优先结合该教学上下文回答。</div>
           </div>
-          <el-button link type="primary" @click="clearContext">切换为通用问答</el-button>
+          <div class="context-actions">
+            <el-button v-if="activeReturnUrl" link type="primary" @click="goBackToContext">
+              {{ activeContext.returnLabel || '返回来源' }}
+            </el-button>
+            <el-button link type="primary" @click="clearContext">切换为通用问答</el-button>
+          </div>
         </div>
 
         <div v-loading="loadingMessages" class="messages" ref="messagesEl">
@@ -89,8 +97,8 @@ import { computed, ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Plus, Delete, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { chatApi, type ChatContextParams } from '@/api/chat'
-import type { ChatSession, ChatMessage } from '@/types'
+import { chatApi } from '@/api/chat'
+import type { ChatContext, ChatSession, ChatMessage } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -111,30 +119,39 @@ function readQueryValue(key: string) {
   return Array.isArray(value) ? value[0] : value
 }
 
-const activeContext = computed<ChatContextParams>(() => ({
+const queryContext = computed<ChatContext>(() => ({
   courseId: readQueryValue('courseId'),
   courseTitle: readQueryValue('courseTitle'),
   resourceId: readQueryValue('resourceId'),
   resourceTitle: readQueryValue('resourceTitle'),
   knowledgePointId: readQueryValue('knowledgePointId'),
   knowledgePointName: readQueryValue('knowledgePointName'),
+  returnUrl: readQueryValue('returnUrl'),
+  returnLabel: readQueryValue('returnLabel'),
 }))
 
+const currentSession = computed(() => sessions.value.find((session) => session.id === currentSessionId.value) ?? null)
+const activeContext = computed<ChatContext>(() => (hasContext(queryContext.value) ? queryContext.value : currentSession.value?.context ?? {}))
 const activeContextLabel = computed(() => {
   const context = activeContext.value
   return context.resourceTitle || context.knowledgePointName || context.courseTitle || ''
 })
+const activeReturnUrl = computed(() => activeContext.value.returnUrl || '')
+
+function hasContext(context: ChatContext) {
+  return Boolean(context.courseId || context.courseTitle || context.resourceId || context.resourceTitle || context.knowledgePointId || context.knowledgePointName)
+}
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('zh-CN')
 }
 
-async function createSession() {
+async function createSession(context: ChatContext = activeContext.value) {
   if (creating.value) return
 
   creating.value = true
   try {
-    const session = await chatApi.createSession()
+    const session = await chatApi.createSession(context)
     sessions.value = [session, ...sessions.value.filter((item) => item.id !== session.id)]
     await selectSession(session.id)
   } catch {
@@ -155,6 +172,7 @@ async function selectSession(id: number) {
   try {
     const session = await chatApi.getSession(id)
     messages.value = session.messages
+    sessions.value = sessions.value.map((item) => (item.id === session.id ? session : item))
     await scrollToBottom()
   } catch {
     ElMessage.error('加载对话失败，请稍后重试')
@@ -250,6 +268,11 @@ async function syncSession(sessionId: number) {
 
 function clearContext() {
   router.replace({ name: 'Chat' })
+  createSession({}).catch(() => undefined)
+}
+
+function goBackToContext() {
+  if (activeReturnUrl.value) router.push(activeReturnUrl.value)
 }
 
 async function scrollToBottom() {
@@ -263,7 +286,9 @@ onMounted(async () => {
   loadingSessions.value = true
   try {
     sessions.value = await chatApi.listSessions()
-    if (sessions.value.length > 0) {
+    if (hasContext(queryContext.value)) {
+      await createSession(queryContext.value)
+    } else if (sessions.value.length > 0) {
       await selectSession(sessions.value[0].id)
     }
   } catch {
@@ -327,7 +352,24 @@ onUnmounted(() => {
   color: #409eff;
 }
 
-.session-date { flex: 1; }
+.session-summary {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.session-date {
+  font-size: 12px;
+  color: #909399;
+}
 
 .delete-btn { opacity: 0; }
 .session-item:hover .delete-btn { opacity: 1; }
@@ -355,6 +397,14 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   background: #f8fafc;
+}
+
+.context-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .context-title {

@@ -122,6 +122,8 @@ function askAiForFocus(item: LearningPath['focusKnowledgePoints'][number]) {
     query: {
       knowledgePointId: item.knowledgePointId,
       knowledgePointName: item.knowledgePointName,
+      returnUrl: '/learning/path',
+      returnLabel: '返回路线',
     },
   })
 }

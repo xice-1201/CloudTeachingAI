@@ -42,8 +42,28 @@ async def list_sessions(user_id: Annotated[int | str, Depends(resolve_user_id)])
 
 
 @app.post("/api/v1/chat/sessions")
-async def create_session(user_id: Annotated[int | str, Depends(resolve_user_id)]) -> ApiResponse:
-    return ok(serialize_session(store.create_session(user_id)))
+async def create_session(
+    user_id: Annotated[int | str, Depends(resolve_user_id)],
+    course_id: Annotated[int | None, Query(alias="courseId")] = None,
+    course_title: Annotated[str | None, Query(alias="courseTitle")] = None,
+    resource_id: Annotated[int | None, Query(alias="resourceId")] = None,
+    resource_title: Annotated[str | None, Query(alias="resourceTitle")] = None,
+    knowledge_point_id: Annotated[int | None, Query(alias="knowledgePointId")] = None,
+    knowledge_point_name: Annotated[str | None, Query(alias="knowledgePointName")] = None,
+    return_url: Annotated[str | None, Query(alias="returnUrl")] = None,
+    return_label: Annotated[str | None, Query(alias="returnLabel")] = None,
+) -> ApiResponse:
+    context = ChatContext(
+        courseId=course_id,
+        courseTitle=course_title,
+        resourceId=resource_id,
+        resourceTitle=resource_title,
+        knowledgePointId=knowledge_point_id,
+        knowledgePointName=knowledge_point_name,
+        returnUrl=return_url,
+        returnLabel=return_label,
+    )
+    return ok(serialize_session(store.create_session(user_id, context)))
 
 
 @app.get("/api/v1/chat/sessions/{session_id}")
@@ -76,6 +96,8 @@ async def send_message(
     resource_title: Annotated[str | None, Query(alias="resourceTitle")] = None,
     knowledge_point_id: Annotated[int | None, Query(alias="knowledgePointId")] = None,
     knowledge_point_name: Annotated[str | None, Query(alias="knowledgePointName")] = None,
+    return_url: Annotated[str | None, Query(alias="returnUrl")] = None,
+    return_label: Annotated[str | None, Query(alias="returnLabel")] = None,
 ) -> StreamingResponse:
     session = require_session(user_id, session_id)
     context = ChatContext(
@@ -85,9 +107,13 @@ async def send_message(
         resourceTitle=resource_title,
         knowledgePointId=knowledge_point_id,
         knowledgePointName=knowledge_point_name,
+        returnUrl=return_url,
+        returnLabel=return_label,
     )
+    if context.has_value():
+        store.update_context(session, context)
     return StreamingResponse(
-        stream_message(session, message, context, authorization_query),
+        stream_message(session, message, session.context, authorization_query),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

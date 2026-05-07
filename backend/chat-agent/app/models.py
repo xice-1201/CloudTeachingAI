@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ApiResponse(BaseModel):
@@ -19,14 +19,6 @@ class ChatMessage(BaseModel):
     timestamp: datetime
 
 
-class ChatSession(BaseModel):
-    id: int
-    userId: int | str
-    messages: list[ChatMessage]
-    createdAt: datetime
-    updatedAt: datetime
-
-
 class ChatContext(BaseModel):
     courseId: int | None = None
     courseTitle: str | None = None
@@ -34,6 +26,8 @@ class ChatContext(BaseModel):
     resourceTitle: str | None = None
     knowledgePointId: int | None = None
     knowledgePointName: str | None = None
+    returnUrl: str | None = None
+    returnLabel: str | None = None
 
     def has_value(self) -> bool:
         return any(
@@ -47,3 +41,16 @@ class ChatContext(BaseModel):
                 self.knowledgePointName,
             )
         )
+
+    def display_title(self) -> str:
+        return self.resourceTitle or self.knowledgePointName or self.courseTitle or "通用问答"
+
+
+class ChatSession(BaseModel):
+    id: int
+    userId: int | str
+    title: str
+    context: ChatContext = Field(default_factory=ChatContext)
+    messages: list[ChatMessage]
+    createdAt: datetime
+    updatedAt: datetime

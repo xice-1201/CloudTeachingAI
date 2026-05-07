@@ -50,6 +50,7 @@ def test_chat_session_lifecycle_and_streaming_reply():
     assert created["code"] == 0
     session_id = created["data"]["id"]
     assert created["data"]["userId"] == 42
+    assert created["data"]["title"] == "通用问答"
 
     listed = client.get("/api/v1/chat/sessions", headers=headers).json()
     assert [session["id"] for session in listed["data"]] == [session_id]
@@ -143,6 +144,37 @@ def test_chat_stream_injects_course_context():
 
     assert response.status_code == 200
     assert "data: 课程：线性代数" in body
+
+    session = client.get(
+        f"/api/v1/chat/sessions/{session_id}",
+        headers={"Authorization": token},
+    ).json()["data"]
+    assert session["title"] == "线性代数"
+    assert session["context"]["courseTitle"] == "线性代数"
+
+
+def test_chat_session_persists_context_on_create():
+    chat_main = load_chat_main()
+    chat_main.store = chat_main.ChatStore()
+
+    client = TestClient(chat_main.app)
+    created = client.post(
+        "/api/v1/chat/sessions",
+        params={
+            "userId": "100",
+            "courseId": "12",
+            "courseTitle": "高等数学",
+            "resourceId": "34",
+            "resourceTitle": "导数定义",
+            "returnUrl": "/courses/12/learn/34",
+            "returnLabel": "返回资源",
+        },
+    ).json()["data"]
+
+    assert created["title"] == "导数定义"
+    assert created["context"]["courseId"] == 12
+    assert created["context"]["resourceTitle"] == "导数定义"
+    assert created["context"]["returnUrl"] == "/courses/12/learn/34"
 
 
 def test_chat_session_can_use_user_id_query_without_token():

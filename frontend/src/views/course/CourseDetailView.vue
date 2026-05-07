@@ -314,6 +314,8 @@ function askAiForCourse() {
     query: {
       courseId: course.value.id,
       courseTitle: course.value.title,
+      returnUrl: `/courses/${course.value.id}`,
+      returnLabel: '返回课程',
     },
   })
 }
