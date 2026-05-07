@@ -32,7 +32,7 @@
       <el-col :xs="24" :lg="14">
         <el-card shadow="never" header="能力雷达图" class="chart-card">
           <div v-if="abilityMap.length === 0" class="empty-chart">
-            <el-empty description="还没有能力画像数据，先完成一次能力测试吧" />
+            <el-empty description="还没有能力画像数据。完成能力测试，或先学习已标注的课程资源后再回来查看。" />
           </div>
           <div v-else ref="chartEl" class="chart-view" />
         </el-card>
@@ -47,7 +47,7 @@
             </button>
             <button type="button" class="action-item" @click="$router.push('/learning/path')">
               <div class="action-title">查看学习路线</div>
-              <div class="action-desc">后续会结合能力图谱输出个性化路线</div>
+              <div class="action-desc">基于能力图谱、学习进度和课程资源生成下一步建议</div>
             </button>
           </div>
         </el-card>
@@ -237,7 +237,7 @@ function handleResize() {
 .action-item {
   padding: 16px;
   border: 1px solid #dcdfe6;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
   text-align: left;
   cursor: pointer;
