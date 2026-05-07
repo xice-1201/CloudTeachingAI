@@ -279,6 +279,9 @@ public class LearnFacadeService {
 
         List<AbilityMapResponse> responses = rebuildAbilityMap(session, allQuestions, authorization);
         publishAbilityUpdatedEvent(session, responses);
+        LearningPathResponse learningPath = buildLearningPath(session.getStudentId(), authorization, responses);
+        publishLearningPathGeneratedEvent(session.getStudentId(), learningPath);
+        publishLearningPathNotification(session.getStudentId(), learningPath);
         return AbilityTestAnswerResponse.builder()
                 .sessionId(sessionId)
                 .answeredCount(session.getAnsweredCount())
@@ -295,12 +298,12 @@ public class LearnFacadeService {
 
     public LearningPathResponse getLearningPath(String authorization, UserContext userContext) {
         assertStudent(userContext);
-        return buildLearningPath(userContext.userId(), authorization);
+        return buildLearningPath(userContext.userId(), authorization, null);
     }
 
     public LearningPathResponse generateLearningPath(String authorization, UserContext userContext) {
         assertStudent(userContext);
-        LearningPathResponse response = buildLearningPath(userContext.userId(), authorization);
+        LearningPathResponse response = buildLearningPath(userContext.userId(), authorization, null);
         publishLearningPathGeneratedEvent(userContext.userId(), response);
         publishLearningPathNotification(userContext.userId(), response);
         return response;
@@ -460,16 +463,10 @@ public class LearnFacadeService {
                 .toList();
     }
 
-    private LearningPathResponse buildLearningPath(Long studentId, String authorization) {
-        List<AbilityMapResponse> focusCandidates = buildAbilityMapResponses(studentId, authorization).stream()
-                .sorted(Comparator.comparing(AbilityMapResponse::getMasteryLevel)
-                        .thenComparing(AbilityMapResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
-                .toList();
-        if (focusCandidates.isEmpty()) {
-            return null;
-        }
-
-        List<AbilityMapResponse> focusPoints = selectFocusKnowledgePoints(focusCandidates);
+    private LearningPathResponse buildLearningPath(
+            Long studentId,
+            String authorization,
+            List<AbilityMapResponse> freshAbilityMap) {
         Map<Long, LearningProgressEntity> progressByResourceId = learningProgressRepository.findByStudentId(studentId).stream()
                 .collect(Collectors.toMap(
                         LearningProgressEntity::getResourceId,
@@ -484,9 +481,27 @@ public class LearnFacadeService {
         }
 
         Map<Long, CourseContext> courseContexts = loadCourseContexts(courseIds, authorization);
+        List<AbilityMapResponse> focusCandidates = resolveLearningPathFocusCandidates(
+                studentId,
+                authorization,
+                freshAbilityMap,
+                progressByResourceId,
+                courseContexts);
+        if (focusCandidates.isEmpty()) {
+            return null;
+        }
+
+        List<AbilityMapResponse> focusPoints = selectFocusKnowledgePoints(focusCandidates);
         List<PathCandidate> candidates = buildPathCandidates(focusPoints, progressByResourceId, courseContexts);
         if (candidates.isEmpty()) {
-            return null;
+            focusPoints = selectFocusKnowledgePoints(buildCourseTagFocusCandidates(progressByResourceId, courseContexts).stream()
+                    .sorted(Comparator.comparing(AbilityMapResponse::getMasteryLevel)
+                            .thenComparing(AbilityMapResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                    .toList());
+            candidates = buildPathCandidates(focusPoints, progressByResourceId, courseContexts);
+            if (candidates.isEmpty()) {
+                return null;
+            }
         }
 
         List<LearningPathResourceResponse> resources = new ArrayList<>();
@@ -520,6 +535,56 @@ public class LearnFacadeService {
                         .toList())
                 .resources(resources)
                 .build();
+    }
+
+    private List<AbilityMapResponse> resolveLearningPathFocusCandidates(
+            Long studentId,
+            String authorization,
+            List<AbilityMapResponse> freshAbilityMap,
+            Map<Long, LearningProgressEntity> progressByResourceId,
+            Map<Long, CourseContext> courseContexts) {
+        List<AbilityMapResponse> abilityMap = freshAbilityMap == null || freshAbilityMap.isEmpty()
+                ? buildAbilityMapResponses(studentId, authorization)
+                : freshAbilityMap;
+        if (abilityMap != null && !abilityMap.isEmpty()) {
+            return abilityMap.stream()
+                    .sorted(Comparator.comparing(AbilityMapResponse::getMasteryLevel)
+                            .thenComparing(AbilityMapResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                    .toList();
+        }
+
+        return buildCourseTagFocusCandidates(progressByResourceId, courseContexts).stream()
+                .sorted(Comparator.comparing(AbilityMapResponse::getMasteryLevel)
+                        .thenComparing(AbilityMapResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+    }
+
+    private List<AbilityMapResponse> buildCourseTagFocusCandidates(
+            Map<Long, LearningProgressEntity> progressByResourceId,
+            Map<Long, CourseContext> courseContexts) {
+        Map<Long, PathFocusAccumulator> accumulators = new LinkedHashMap<>();
+        for (CourseContext context : courseContexts.values()) {
+            for (CourseResourceResponse resource : context.resources()) {
+                if (resource.getKnowledgePoints() == null || resource.getKnowledgePoints().isEmpty()) {
+                    continue;
+                }
+                LearningProgressEntity progress = progressByResourceId.get(resource.getId());
+                double progressValue = progress == null ? 0D : clampProgress(progress.getProgress());
+                for (CourseResourceKnowledgePointResponse knowledgePoint : resource.getKnowledgePoints()) {
+                    accumulators.computeIfAbsent(
+                                    knowledgePoint.getId(),
+                                    key -> new PathFocusAccumulator(
+                                            knowledgePoint.getId(),
+                                            knowledgePoint.getName(),
+                                            knowledgePoint.getPath()))
+                            .add(progressValue, progress != null);
+                }
+            }
+        }
+
+        return accumulators.values().stream()
+                .map(PathFocusAccumulator::toAbilityMapResponse)
+                .toList();
     }
 
     private void publishAbilityUpdatedEvent(
@@ -1126,6 +1191,48 @@ public class LearnFacadeService {
         private ProgressStats toStats() {
             double average = resourceCount == 0 ? 0D : totalProgress / resourceCount;
             return new ProgressStats(knowledgePointId, knowledgePointName, knowledgePointPath, average, resourceCount);
+        }
+    }
+
+    private static final class PathFocusAccumulator {
+        private final Long knowledgePointId;
+        private final String knowledgePointName;
+        private final String knowledgePointPath;
+        private double totalProgress;
+        private int resourceCount;
+        private int trackedResourceCount;
+
+        private PathFocusAccumulator(Long knowledgePointId, String knowledgePointName, String knowledgePointPath) {
+            this.knowledgePointId = knowledgePointId;
+            this.knowledgePointName = knowledgePointName;
+            this.knowledgePointPath = knowledgePointPath;
+        }
+
+        private void add(double progress, boolean tracked) {
+            totalProgress += progress;
+            resourceCount += 1;
+            if (tracked) {
+                trackedResourceCount += 1;
+            }
+        }
+
+        private AbilityMapResponse toAbilityMapResponse() {
+            double average = resourceCount == 0 ? 0D : totalProgress / resourceCount;
+            String source = trackedResourceCount > 0 ? "LEARNING_PROGRESS" : "COURSE_TAGS";
+            double confidence = trackedResourceCount > 0 ? 0.45D : 0.3D;
+            double roundedProgress = Math.round(Math.min(1D, Math.max(0D, average)) * 100D) / 100D;
+            return AbilityMapResponse.builder()
+                    .knowledgePointId(knowledgePointId)
+                    .knowledgePointName(knowledgePointName)
+                    .knowledgePointPath(knowledgePointPath)
+                    .masteryLevel(roundedProgress)
+                    .confidence(confidence)
+                    .testScore(0D)
+                    .progressScore(roundedProgress)
+                    .resourceCount(resourceCount)
+                    .source(source)
+                    .lastTestedAt(null)
+                    .build();
         }
     }
 
