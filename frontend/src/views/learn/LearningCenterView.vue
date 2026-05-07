@@ -117,6 +117,7 @@ function sourceLabel(source: AbilityMap['source']) {
     TEST: '能力测试',
     TEST_AND_PROGRESS: '测试 + 学习进度',
     LEARNING_PROGRESS: '学习进度',
+    COURSE_TAGS: '课程资源标签',
   }[source] ?? source
 }
 

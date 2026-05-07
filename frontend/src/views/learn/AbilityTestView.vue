@@ -38,8 +38,8 @@
         </el-form-item>
         <el-form-item label="说明">
           <div class="setup-tips">
-            <p>适合在学习新课程前或阶段性复盘时使用。</p>
-            <p>测试结果会同步到学习中心，用于识别薄弱知识点。</p>
+            <p>适合在学习新课程前，或阶段性复盘时使用。</p>
+            <p>测试结果会同步到学习中心，并立即刷新个性化学习路线。</p>
             <p>当前版本以自评题为主，后续可继续接入更细的 AI 诊断题。</p>
           </div>
         </el-form-item>
@@ -99,7 +99,8 @@
     >
       <template #extra>
         <div class="result-actions">
-          <el-button type="primary" @click="$router.push('/learning')">查看学习中心</el-button>
+          <el-button type="primary" @click="router.push('/learning/path')">查看学习路线</el-button>
+          <el-button @click="router.push('/learning')">查看学习中心</el-button>
           <el-button @click="reset">再次测试</el-button>
         </div>
       </template>
@@ -110,7 +111,7 @@
         <div class="card-header">
           <div>
             <div class="card-title">本次能力画像</div>
-            <div class="card-subtitle">以下结果已同步到学习中心。</div>
+            <div class="card-subtitle">以下结果已同步到学习中心，并用于更新学习路线。</div>
           </div>
         </div>
       </template>
@@ -135,12 +136,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { courseApi } from '@/api/course'
-import { learnApi } from '@/api/learn'
 import type { AbilityMap, AbilityTestQuestion, KnowledgePointNode } from '@/types'
+import { learnApi } from '@/api/learn'
 
 type KnowledgePointOption = Pick<KnowledgePointNode, 'id' | 'nodeType' | 'path'>
 
+const router = useRouter()
 const sessionId = ref<number | null>(null)
 const selectedKnowledgePointId = ref<number | null>(null)
 const selectedAnswer = ref<'A' | 'B' | 'C' | 'D' | ''>('')
@@ -166,15 +169,15 @@ const knowledgePointOptions = computed<KnowledgePointOption[]>(() => {
 
 const completedSummary = computed(() => {
   if (completedAbilityMap.value.length === 0) {
-    return '本次测试结果已保存，你可以前往学习中心查看后续推荐。'
+    return '本次测试结果已保存，学习路线会根据最新数据更新。'
   }
   const weakest = [...completedAbilityMap.value]
     .sort((left, right) => left.masteryLevel - right.masteryLevel)
     .slice(0, 2)
     .map((item) => item.knowledgePointName)
   return weakest.length > 0
-    ? `当前更需要优先补强：${weakest.join('、')}`
-    : '本次测试结果已保存，你可以前往学习中心查看后续推荐。'
+    ? `当前建议优先补强：${weakest.join('、')}`
+    : '本次测试结果已保存，学习路线会根据最新数据更新。'
 })
 
 function knowledgeTypeLabel(type: KnowledgePointNode['nodeType']) {
@@ -215,7 +218,7 @@ async function submitAnswer() {
       completed.value = true
       currentQuestion.value = null
       completedAbilityMap.value = response.abilityMap ?? []
-      ElMessage.success('能力图谱已更新')
+      ElMessage.success('能力图谱与学习路线已更新')
       return
     }
     currentQuestion.value = response.nextQuestion ?? null
@@ -287,7 +290,7 @@ onMounted(async () => {
 
 .question-content {
   padding: 18px 20px;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #f5f7fa;
   color: #303133;
   line-height: 1.8;
@@ -307,7 +310,7 @@ onMounted(async () => {
   width: 100%;
   padding: 16px 18px;
   border: 1px solid #dcdfe6;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
   text-align: left;
   cursor: pointer;

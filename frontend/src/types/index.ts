@@ -157,7 +157,7 @@ export interface AbilityMap {
   testScore: number
   progressScore: number
   resourceCount: number
-  source: 'TEST' | 'TEST_AND_PROGRESS' | 'LEARNING_PROGRESS'
+  source: 'TEST' | 'TEST_AND_PROGRESS' | 'LEARNING_PROGRESS' | 'COURSE_TAGS'
   lastTestedAt?: string | null
 }
 
