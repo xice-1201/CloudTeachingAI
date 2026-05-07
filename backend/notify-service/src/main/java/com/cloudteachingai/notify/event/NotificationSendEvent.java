@@ -10,4 +10,7 @@ public class NotificationSendEvent {
     private Notification.NotificationType type;
     private String title;
     private String content;
+    private String targetType;
+    private Long targetId;
+    private String targetUrl;
 }

@@ -302,6 +302,9 @@ export interface Notification {
   type: 'SYSTEM' | 'COURSE' | 'ASSIGNMENT' | 'GRADE'
   title: string
   content: string
+  targetType?: string | null
+  targetId?: number | null
+  targetUrl?: string | null
   read: boolean
   createdAt: string
 }

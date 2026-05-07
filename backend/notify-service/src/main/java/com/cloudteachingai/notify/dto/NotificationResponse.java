@@ -18,6 +18,9 @@ public class NotificationResponse {
     private Notification.NotificationType type;
     private String title;
     private String content;
+    private String targetType;
+    private Long targetId;
+    private String targetUrl;
     private boolean read;
     private LocalDateTime createdAt;
 
@@ -28,6 +31,9 @@ public class NotificationResponse {
                 .type(notification.getType())
                 .title(notification.getTitle())
                 .content(notification.getContent())
+                .targetType(notification.getTargetType())
+                .targetId(notification.getTargetId())
+                .targetUrl(notification.getTargetUrl())
                 .read(notification.isRead())
                 .createdAt(notification.getCreatedAt())
                 .build();

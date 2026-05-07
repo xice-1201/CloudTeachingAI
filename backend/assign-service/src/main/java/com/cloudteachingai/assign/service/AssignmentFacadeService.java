@@ -293,7 +293,10 @@ public class AssignmentFacadeService {
                     studentId,
                     "ASSIGNMENT",
                     "新作业已发布",
-                    "课程《" + assignment.getCourseTitle() + "》发布了新作业：" + assignment.getTitle()
+                    "课程《" + assignment.getCourseTitle() + "》发布了新作业：" + assignment.getTitle(),
+                    "ASSIGNMENT",
+                    assignment.getId(),
+                    "/assignments/" + assignment.getId()
             );
         }
     }
@@ -304,7 +307,10 @@ public class AssignmentFacadeService {
                 "ASSIGNMENT",
                 "收到新的作业提交",
                 "课程《" + assignment.getCourseTitle() + "》的作业《" + assignment.getTitle()
-                        + "》有学生提交，学生 ID：" + submission.getStudentId()
+                        + "》有学生提交，学生 ID：" + submission.getStudentId(),
+                "ASSIGNMENT_SUBMISSIONS",
+                assignment.getId(),
+                "/assignments/" + assignment.getId() + "/submissions"
         );
     }
 
@@ -316,7 +322,10 @@ public class AssignmentFacadeService {
                 submission.getStudentId(),
                 "GRADE",
                 "AI 批改已完成",
-                "作业《" + assignment.getTitle() + "》已完成 AI 批改，可查看评分和评语"
+                "作业《" + assignment.getTitle() + "》已完成 AI 批改，可查看评分和评语",
+                "ASSIGNMENT",
+                assignment.getId(),
+                "/assignments/" + assignment.getId()
         );
     }
 
@@ -325,11 +334,21 @@ public class AssignmentFacadeService {
                 submission.getStudentId(),
                 "GRADE",
                 "作业成绩已更新",
-                "教师已复核作业《" + assignment.getTitle() + "》的成绩和评语"
+                "教师已复核作业《" + assignment.getTitle() + "》的成绩和评语",
+                "ASSIGNMENT",
+                assignment.getId(),
+                "/assignments/" + assignment.getId()
         );
     }
 
-    private void sendNotification(Long userId, String type, String title, String content) {
+    private void sendNotification(
+            Long userId,
+            String type,
+            String title,
+            String content,
+            String targetType,
+            Long targetId,
+            String targetUrl) {
         if (userId == null) {
             return;
         }
@@ -339,6 +358,9 @@ public class AssignmentFacadeService {
                     .type(type)
                     .title(title)
                     .content(content)
+                    .targetType(targetType)
+                    .targetId(targetId)
+                    .targetUrl(targetUrl)
                     .build());
         } catch (FeignException ignored) {
             // Notification delivery must not block assignment workflows.

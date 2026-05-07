@@ -75,6 +75,9 @@ public class NotificationService {
                 .title(request.getTitle())
                 .content(request.getContent())
                 .externalEventId(externalEventId)
+                .targetType(request.getTargetType())
+                .targetId(request.getTargetId())
+                .targetUrl(request.getTargetUrl())
                 .read(false)
                 .build();
 

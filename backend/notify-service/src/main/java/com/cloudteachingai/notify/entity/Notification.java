@@ -48,6 +48,15 @@ public class Notification {
     @Column(name = "external_event_id", length = 100)
     private String externalEventId;
 
+    @Column(name = "target_type", length = 50)
+    private String targetType;
+
+    @Column(name = "target_id")
+    private Long targetId;
+
+    @Column(name = "target_url", length = 500)
+    private String targetUrl;
+
     @Column(name = "is_read", nullable = false)
     @Builder.Default
     private boolean read = false;

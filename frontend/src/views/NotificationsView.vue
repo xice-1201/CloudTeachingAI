@@ -11,7 +11,10 @@
         <div class="notify-body">
           <div class="notify-title">{{ n.title }}</div>
           <div class="notify-content">{{ n.content }}</div>
-          <div class="notify-time">{{ formatDate(n.createdAt) }}</div>
+          <div class="notify-footer">
+            <span class="notify-time">{{ formatDate(n.createdAt) }}</span>
+            <span v-if="notifyStore.resolveNotificationUrl(n)" class="notify-action">查看详情</span>
+          </div>
         </div>
         <el-tag :type="typeTag(n.type)" size="small">{{ typeLabel(n.type) }}</el-tag>
       </div>
@@ -45,8 +48,7 @@ function typeTag(t: string) { return { SYSTEM: 'info', COURSE: 'success', ASSIGN
 function typeLabel(t: string) { return { SYSTEM: '系统', COURSE: '课程', ASSIGNMENT: '作业', GRADE: '成绩' }[t] ?? t }
 
 async function handleClick(n: Notification) {
-  if (!n.read) await notifyStore.markAsRead(n.id)
-  n.read = true
+  await notifyStore.openNotification(n)
 }
 
 async function markAll() {
@@ -91,5 +93,15 @@ onMounted(fetchData)
 .notify-body { flex: 1; }
 .notify-title { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 4px; }
 .notify-content { font-size: 13px; color: #606266; margin-bottom: 6px; line-height: 1.5; }
-.notify-time { font-size: 12px; color: #c0c4cc; }
+.notify-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.notify-time { color: #c0c4cc; }
+.notify-action {
+  color: #409eff;
+  font-weight: 600;
+}
 </style>

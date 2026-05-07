@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import type { Notification } from '@/types'
 import { notifyApi } from '@/api/notify'
 import { ElNotification } from 'element-plus'
+import router from '@/router'
 
 const POLLING_TIMER_KEY = '__notifyPollingTimer'
 
@@ -46,6 +47,34 @@ export const useNotifyStore = defineStore('notify', () => {
       item.read = true
     })
     unreadCount.value = 0
+  }
+
+  function resolveNotificationUrl(notification: Notification) {
+    if (notification.targetUrl) {
+      return notification.targetUrl
+    }
+    if (notification.type === 'ASSIGNMENT' && notification.targetId) {
+      return `/assignments/${notification.targetId}`
+    }
+    if (notification.type === 'GRADE' && notification.targetId) {
+      return `/assignments/${notification.targetId}`
+    }
+    if (notification.type === 'COURSE' && notification.targetId) {
+      return `/courses/${notification.targetId}`
+    }
+    return ''
+  }
+
+  async function openNotification(notification: Notification) {
+    if (!notification.read) {
+      await markAsRead(notification.id)
+      notification.read = true
+    }
+
+    const targetUrl = resolveNotificationUrl(notification)
+    if (targetUrl) {
+      await router.push(targetUrl)
+    }
   }
 
   function startHeartbeat() {
@@ -147,6 +176,9 @@ export const useNotifyStore = defineStore('notify', () => {
             message: notification.content,
             type: 'info',
             duration: 4500,
+            onClick: () => {
+              openNotification(notification)
+            },
           })
         } catch (error) {
           console.error('[WebSocket] Failed to parse message:', error)
@@ -192,6 +224,8 @@ export const useNotifyStore = defineStore('notify', () => {
     fetchNotifications,
     markAsRead,
     markAllAsRead,
+    openNotification,
+    resolveNotificationUrl,
     connectWebSocket,
     disconnectWebSocket,
   }

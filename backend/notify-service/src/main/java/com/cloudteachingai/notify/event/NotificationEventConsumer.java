@@ -29,6 +29,9 @@ public class NotificationEventConsumer {
             request.setType(event.getType());
             request.setTitle(event.getTitle());
             request.setContent(event.getContent());
+            request.setTargetType(event.getTargetType());
+            request.setTargetId(event.getTargetId());
+            request.setTargetUrl(event.getTargetUrl());
             notificationService.createNotification(request, eventId);
         } catch (Exception ex) {
             log.error("Failed to consume notification.send event: eventId={}", eventId, ex);

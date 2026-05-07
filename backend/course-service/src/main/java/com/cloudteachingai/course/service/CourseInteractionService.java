@@ -379,6 +379,9 @@ public class CourseInteractionService {
                         .type("COURSE")
                         .title("课程新公告")
                         .content("课程《" + course.getTitle() + "》发布了新公告：" + announcement.getTitle())
+                        .targetType("COURSE")
+                        .targetId(course.getId())
+                        .targetUrl("/courses/" + course.getId())
                         .build());
             } catch (FeignException ignored) {
                 // keep course announcement available even if notification service is unavailable
