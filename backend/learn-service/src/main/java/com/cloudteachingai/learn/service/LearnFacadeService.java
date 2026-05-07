@@ -122,6 +122,7 @@ public class LearnFacadeService {
                         .progress(0D)
                         .completed(false)
                         .build());
+        boolean wasCompleted = Boolean.TRUE.equals(progress.getCompleted());
 
         progress.setCourseId(progress.getCourseId() == null ? request.getCourseId() : progress.getCourseId());
         progress.setProgress(Math.max(progress.getProgress(), sanitizedProgress));
@@ -133,6 +134,10 @@ public class LearnFacadeService {
         }
 
         LearningProgressEntity saved = learningProgressRepository.save(progress);
+        if (!wasCompleted && Boolean.TRUE.equals(saved.getCompleted())) {
+            List<AbilityMapResponse> updatedAbilities = syncAbilityMapFromCompletedResource(saved, authorization);
+            publishAbilityUpdatedEvent(saved.getStudentId(), updatedAbilities, now);
+        }
         return toLearningProgressResponse(saved);
     }
 
@@ -617,6 +622,25 @@ public class LearnFacadeService {
                 .build());
     }
 
+    private void publishAbilityUpdatedEvent(
+            Long studentId,
+            List<AbilityMapResponse> responses,
+            OffsetDateTime updatedAt) {
+        if (responses == null || responses.isEmpty()) {
+            return;
+        }
+
+        outboxService.enqueue(EventTopics.ABILITY_UPDATED, AbilityUpdatedEvent.builder()
+                .studentId(studentId)
+                .sessionId(null)
+                .knowledgePointIds(responses.stream()
+                        .map(AbilityMapResponse::getKnowledgePointId)
+                        .filter(Objects::nonNull)
+                        .toList())
+                .updatedAt(updatedAt == null ? null : updatedAt.toString())
+                .build());
+    }
+
     private void publishLearningPathGeneratedEvent(Long studentId, LearningPathResponse response) {
         if (response == null) {
             return;
@@ -959,6 +983,85 @@ public class LearnFacadeService {
             contexts.put(courseId, new CourseContext(course, chaptersById, resources));
         }
         return contexts;
+    }
+
+    private List<AbilityMapResponse> syncAbilityMapFromCompletedResource(
+            LearningProgressEntity completedProgress,
+            String authorization) {
+        CourseResourceResponse completedResource = findCourseResource(
+                completedProgress.getCourseId(),
+                completedProgress.getResourceId(),
+                authorization);
+        if (completedResource == null
+                || completedResource.getKnowledgePoints() == null
+                || completedResource.getKnowledgePoints().isEmpty()) {
+            return List.of();
+        }
+
+        Map<Long, ProgressStats> progressStats = buildProgressStats(completedProgress.getStudentId(), authorization);
+        List<AbilityMapResponse> responses = new ArrayList<>();
+        for (CourseResourceKnowledgePointResponse knowledgePoint : completedResource.getKnowledgePoints()) {
+            if (knowledgePoint.getId() == null) {
+                continue;
+            }
+            ProgressStats stats = progressStats.get(knowledgePoint.getId());
+            double progressScore = stats == null ? clampProgress(completedProgress.getProgress()) : stats.averageProgress();
+            int resourceCount = stats == null ? 1 : stats.resourceCount();
+
+            AbilityMapEntity entity = abilityMapRepository
+                    .findByStudentIdAndKnowledgePointId(completedProgress.getStudentId(), knowledgePoint.getId())
+                    .orElseGet(() -> AbilityMapEntity.builder()
+                            .studentId(completedProgress.getStudentId())
+                            .knowledgePointId(knowledgePoint.getId())
+                            .testScore(0D)
+                            .lastTestedAt(null)
+                            .build());
+
+            double testScore = entity.getTestScore() == null ? 0D : entity.getTestScore();
+            boolean hasTestSignal = entity.getLastTestedAt() != null || testScore > 0D;
+            entity.setKnowledgePointName(resolveKnowledgePointName(knowledgePoint, stats));
+            entity.setKnowledgePointPath(resolveKnowledgePointPath(knowledgePoint, stats));
+            entity.setProgressScore(roundScore(progressScore));
+            entity.setResourceCount(resourceCount);
+            entity.setSource(hasTestSignal ? "TEST_AND_PROGRESS" : "LEARNING_PROGRESS");
+            entity.setConfidence(hasTestSignal ? 0.9D : 0.45D);
+            entity.setMasteryLevel(roundScore(hasTestSignal ? blendMastery(testScore, progressScore) : progressScore));
+
+            responses.add(toAbilityMapResponse(abilityMapRepository.save(entity)));
+        }
+        return responses;
+    }
+
+    private CourseResourceResponse findCourseResource(Long courseId, Long resourceId, String authorization) {
+        if (courseId == null || resourceId == null) {
+            return null;
+        }
+
+        for (CourseChapterResponse chapter : listCourseChapters(courseId, authorization)) {
+            for (CourseResourceResponse resource : listChapterResources(chapter.getId(), authorization)) {
+                if (resourceId.equals(resource.getId())) {
+                    return resource;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String resolveKnowledgePointName(CourseResourceKnowledgePointResponse knowledgePoint, ProgressStats stats) {
+        if (stats != null && stats.knowledgePointName() != null && !stats.knowledgePointName().isBlank()) {
+            return stats.knowledgePointName();
+        }
+        if (knowledgePoint.getName() != null && !knowledgePoint.getName().isBlank()) {
+            return knowledgePoint.getName();
+        }
+        return "知识点 " + knowledgePoint.getId();
+    }
+
+    private String resolveKnowledgePointPath(CourseResourceKnowledgePointResponse knowledgePoint, ProgressStats stats) {
+        if (stats != null && stats.knowledgePointPath() != null && !stats.knowledgePointPath().isBlank()) {
+            return stats.knowledgePointPath();
+        }
+        return knowledgePoint.getPath();
     }
 
     private List<PathCandidate> buildPathCandidates(
