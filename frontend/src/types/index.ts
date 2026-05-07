@@ -215,6 +215,17 @@ export interface TeacherKnowledgePointAnalytics {
   relatedResources: number
 }
 
+export interface TeacherStudentRisk {
+  courseId: number
+  courseTitle: string
+  activeStudents: number
+  lowProgressStudents: number
+  inactiveStudents: number
+  completedStudents: number
+  riskLevel: 'NO_DATA' | 'LOW' | 'MEDIUM' | 'HIGH'
+  insight: string
+}
+
 export interface TeacherDashboard {
   totalCourses: number
   publishedCourses: number
@@ -223,6 +234,7 @@ export interface TeacherDashboard {
   averageProgress: number
   courses: TeacherCourseAnalytics[]
   weakKnowledgePoints: TeacherKnowledgePointAnalytics[]
+  studentRisks: TeacherStudentRisk[]
 }
 
 export interface LearningPath {

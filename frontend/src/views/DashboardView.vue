@@ -58,6 +58,26 @@
         </el-col>
 
         <el-col :xs="24" :lg="8">
+          <el-card shadow="never" header="学生健康度" class="health-card">
+            <div v-if="!teacherDashboard || teacherDashboard.studentRisks.length === 0" class="empty-tip">
+              暂无可分析的学习风险数据。
+            </div>
+            <div v-else class="risk-list">
+              <div v-for="item in teacherDashboard.studentRisks" :key="item.courseId" class="risk-item">
+                <div class="risk-header">
+                  <div class="risk-title">{{ item.courseTitle }}</div>
+                  <el-tag :type="riskTagType(item.riskLevel)" size="small">{{ riskLabel(item.riskLevel) }}</el-tag>
+                </div>
+                <div class="risk-insight">{{ item.insight }}</div>
+                <div class="risk-meta">
+                  <span>活跃 {{ item.activeStudents }}</span>
+                  <span>低进度 {{ item.lowProgressStudents }}</span>
+                  <span>停滞 {{ item.inactiveStudents }}</span>
+                </div>
+              </div>
+            </div>
+          </el-card>
+
           <el-card shadow="never" header="薄弱知识点">
             <div v-if="!teacherDashboard || teacherDashboard.weakKnowledgePoints.length === 0" class="empty-tip">
               目前还没有足够的学习数据形成知识点分析。
@@ -203,6 +223,14 @@ function statusTagType(status: string) {
   return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info'
 }
 
+function riskLabel(level: string) {
+  return { HIGH: '高风险', MEDIUM: '需关注', LOW: '稳定', NO_DATA: '暂无数据' }[level] ?? level
+}
+
+function riskTagType(level: string) {
+  return { HIGH: 'danger', MEDIUM: 'warning', LOW: 'success', NO_DATA: 'info' }[level] ?? 'info'
+}
+
 async function loadStudentDashboard() {
   studentLoading.value = true
   try {
@@ -278,6 +306,10 @@ onMounted(async () => {
   margin-top: 20px;
 }
 
+.health-card {
+  margin-bottom: 20px;
+}
+
 .stat-card {
   display: flex;
   align-items: center;
@@ -329,9 +361,47 @@ onMounted(async () => {
 }
 
 .quick-actions,
-.knowledge-list {
+.knowledge-list,
+.risk-list {
   display: flex;
   flex-direction: column;
+}
+
+.risk-item + .risk-item {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #f0f2f5;
+}
+
+.risk-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.risk-title {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  overflow-wrap: anywhere;
+}
+
+.risk-insight {
+  margin-top: 8px;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.risk-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 
 .quick-card {

@@ -15,4 +15,5 @@ public class TeacherDashboardResponse {
     Double averageProgress;
     List<TeacherCourseAnalyticsResponse> courses;
     List<TeacherKnowledgePointAnalyticsResponse> weakKnowledgePoints;
+    List<TeacherStudentRiskResponse> studentRisks;
 }

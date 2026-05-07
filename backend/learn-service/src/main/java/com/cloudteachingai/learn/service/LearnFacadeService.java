@@ -24,6 +24,7 @@ import com.cloudteachingai.learn.dto.LearningProgressResponse;
 import com.cloudteachingai.learn.dto.TeacherCourseAnalyticsResponse;
 import com.cloudteachingai.learn.dto.TeacherDashboardResponse;
 import com.cloudteachingai.learn.dto.TeacherKnowledgePointAnalyticsResponse;
+import com.cloudteachingai.learn.dto.TeacherStudentRiskResponse;
 import com.cloudteachingai.learn.dto.UpdateLearningProgressRequest;
 import com.cloudteachingai.learn.event.AbilityUpdatedEvent;
 import com.cloudteachingai.learn.event.EventTopics;
@@ -322,6 +323,7 @@ public class LearnFacadeService {
                     .averageProgress(0D)
                     .courses(List.of())
                     .weakKnowledgePoints(List.of())
+                    .studentRisks(List.of())
                     .build();
         }
 
@@ -346,6 +348,12 @@ public class LearnFacadeService {
                 buildTeacherKnowledgePointAnalytics(progresses, resourceById).stream()
                         .limit(6)
                         .toList();
+        List<TeacherStudentRiskResponse> studentRisks = buildTeacherStudentRisks(
+                teacherCourses,
+                courseContexts,
+                progressesByCourse).stream()
+                .limit(8)
+                .toList();
 
         double averageProgress = progresses.isEmpty()
                 ? 0D
@@ -362,6 +370,7 @@ public class LearnFacadeService {
                 .averageProgress(averageProgress)
                 .courses(courses)
                 .weakKnowledgePoints(weakKnowledgePoints)
+                .studentRisks(studentRisks)
                 .build();
     }
 
@@ -729,6 +738,113 @@ public class LearnFacadeService {
                 .sorted(Comparator.comparing(TeacherKnowledgePointAnalyticsResponse::getAverageProgress)
                         .thenComparing(TeacherKnowledgePointAnalyticsResponse::getKnowledgePointName, Comparator.nullsLast(String::compareToIgnoreCase)))
                 .toList();
+    }
+
+    private List<TeacherStudentRiskResponse> buildTeacherStudentRisks(
+            List<CourseSummaryResponse> teacherCourses,
+            Map<Long, CourseContext> courseContexts,
+            Map<Long, List<LearningProgressEntity>> progressesByCourse) {
+        OffsetDateTime inactiveBefore = OffsetDateTime.now(ZoneOffset.UTC).minusDays(14);
+        return teacherCourses.stream()
+                .map(course -> toTeacherStudentRisk(
+                        course,
+                        courseContexts.get(course.getId()),
+                        progressesByCourse.getOrDefault(course.getId(), List.of()),
+                        inactiveBefore))
+                .sorted(Comparator.comparing(this::riskWeight).reversed()
+                        .thenComparing(TeacherStudentRiskResponse::getCourseTitle, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+    }
+
+    private TeacherStudentRiskResponse toTeacherStudentRisk(
+            CourseSummaryResponse course,
+            CourseContext context,
+            List<LearningProgressEntity> progresses,
+            OffsetDateTime inactiveBefore) {
+        int totalResources = Math.max(context == null ? 0 : context.resources().size(), 1);
+        Map<Long, List<LearningProgressEntity>> progressesByStudent = progresses.stream()
+                .collect(Collectors.groupingBy(LearningProgressEntity::getStudentId, LinkedHashMap::new, Collectors.toList()));
+
+        int lowProgressStudents = 0;
+        int inactiveStudents = 0;
+        int completedStudents = 0;
+        for (List<LearningProgressEntity> studentProgresses : progressesByStudent.values()) {
+            double totalProgress = studentProgresses.stream()
+                    .mapToDouble(item -> item.getProgress() == null ? 0D : item.getProgress())
+                    .sum();
+            double courseProgress = Math.min(1D, totalProgress / totalResources);
+            OffsetDateTime lastLearnedAt = studentProgresses.stream()
+                    .map(LearningProgressEntity::getLastAccessedAt)
+                    .filter(Objects::nonNull)
+                    .max(Comparator.naturalOrder())
+                    .orElse(null);
+
+            if (courseProgress < 0.3D) {
+                lowProgressStudents += 1;
+            }
+            if (lastLearnedAt == null || lastLearnedAt.isBefore(inactiveBefore)) {
+                inactiveStudents += 1;
+            }
+            if (courseProgress >= 0.999D) {
+                completedStudents += 1;
+            }
+        }
+
+        int activeStudents = progressesByStudent.size();
+        String riskLevel = resolveRiskLevel(activeStudents, lowProgressStudents, inactiveStudents);
+        return TeacherStudentRiskResponse.builder()
+                .courseId(course.getId())
+                .courseTitle(course.getTitle())
+                .activeStudents(activeStudents)
+                .lowProgressStudents(lowProgressStudents)
+                .inactiveStudents(inactiveStudents)
+                .completedStudents(completedStudents)
+                .riskLevel(riskLevel)
+                .insight(buildRiskInsight(activeStudents, lowProgressStudents, inactiveStudents, completedStudents))
+                .build();
+    }
+
+    private String resolveRiskLevel(int activeStudents, int lowProgressStudents, int inactiveStudents) {
+        if (activeStudents == 0) {
+            return "NO_DATA";
+        }
+        double riskRatio = (lowProgressStudents + inactiveStudents) / (double) (activeStudents * 2);
+        if (riskRatio >= 0.45D) {
+            return "HIGH";
+        }
+        if (riskRatio >= 0.2D) {
+            return "MEDIUM";
+        }
+        return "LOW";
+    }
+
+    private String buildRiskInsight(int activeStudents, int lowProgressStudents, int inactiveStudents, int completedStudents) {
+        if (activeStudents == 0) {
+            return "暂无学生学习记录，建议先发布学习资源或提醒学生进入课程。";
+        }
+        if (lowProgressStudents == 0 && inactiveStudents == 0) {
+            return "当前学习状态稳定，可继续关注知识点薄弱趋势。";
+        }
+        List<String> insights = new ArrayList<>();
+        if (lowProgressStudents > 0) {
+            insights.add(lowProgressStudents + " 名学生整体进度偏低");
+        }
+        if (inactiveStudents > 0) {
+            insights.add(inactiveStudents + " 名学生超过 14 天未学习");
+        }
+        if (completedStudents > 0) {
+            insights.add(completedStudents + " 名学生已接近完成");
+        }
+        return String.join("，", insights) + "。";
+    }
+
+    private int riskWeight(TeacherStudentRiskResponse risk) {
+        return switch (risk.getRiskLevel()) {
+            case "HIGH" -> 3;
+            case "MEDIUM" -> 2;
+            case "LOW" -> 1;
+            default -> 0;
+        };
     }
 
     private AbilityMapResponse toAbilityMapResponse(AbilityMapEntity entity) {
