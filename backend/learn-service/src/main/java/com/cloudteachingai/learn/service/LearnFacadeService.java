@@ -66,6 +66,8 @@ public class LearnFacadeService {
 
     private static final String STATUS_IN_PROGRESS = "IN_PROGRESS";
     private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final String PATH_STATUS_NOT_STARTED = "NOT_STARTED";
+    private static final String PATH_STATUS_IN_PROGRESS = "IN_PROGRESS";
     private static final int DEFAULT_QUESTION_LIMIT = 6;
     private static final int MAX_RADAR_POINTS = 8;
     private static final int MAX_PATH_RESOURCES = 6;
@@ -526,6 +528,10 @@ public class LearnFacadeService {
                     .reason(candidate.reason())
                     .orderIndex(index + 1)
                     .currentProgress(roundScore(candidate.currentProgress()))
+                    .learningStatus(resolvePathStatus(candidate.currentProgress()))
+                    .statusLabel(resolvePathStatusLabel(candidate.currentProgress()))
+                    .actionLabel(resolvePathActionLabel(candidate.currentProgress()))
+                    .recommendationScore(roundScore(candidate.score()))
                     .focusKnowledgePointId(candidate.focusKnowledgePointId())
                     .focusKnowledgePointName(candidate.focusKnowledgePointName())
                     .build());
@@ -1015,6 +1021,18 @@ public class LearnFacadeService {
         double weaknessScore = 1D - (focusPoint.getMasteryLevel() == null ? 0D : focusPoint.getMasteryLevel());
         double remainingProgress = 1D - currentProgress;
         return roundScore((weaknessScore * 0.8D) + (remainingProgress * 0.2D));
+    }
+
+    private String resolvePathStatus(double currentProgress) {
+        return currentProgress > 0D ? PATH_STATUS_IN_PROGRESS : PATH_STATUS_NOT_STARTED;
+    }
+
+    private String resolvePathStatusLabel(double currentProgress) {
+        return currentProgress > 0D ? "学习中" : "未开始";
+    }
+
+    private String resolvePathActionLabel(double currentProgress) {
+        return currentProgress > 0D ? "继续学习" : "开始学习";
     }
 
     private String buildPathReason(AbilityMapResponse focusPoint, double currentProgress, String resourceTitle) {

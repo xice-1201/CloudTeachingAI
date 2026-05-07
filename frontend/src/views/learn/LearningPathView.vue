@@ -65,16 +65,28 @@
                 <span v-if="item.chapterTitle"> / {{ item.chapterTitle }}</span>
               </div>
             </div>
-            <el-tag size="small" effect="plain">{{ item.focusKnowledgePointName }}</el-tag>
+            <div class="step-tags">
+              <el-tag size="small" effect="plain">{{ item.focusKnowledgePointName }}</el-tag>
+              <el-tag size="small" :type="pathStatusTagType(item)" effect="light">
+                {{ item.statusLabel || pathStatusLabel(item) }}
+              </el-tag>
+            </div>
           </div>
           <div class="step-reason">{{ item.reason }}</div>
           <div class="step-progress">
-            <span>当前学习进度</span>
+            <div class="step-progress-head">
+              <span>当前学习进度</span>
+              <span v-if="item.recommendationScore != null">推荐度 {{ Math.round(item.recommendationScore * 100) }}%</span>
+            </div>
             <el-progress
               :percentage="Math.round(item.currentProgress * 100)"
               :stroke-width="8"
               :color="masteryColor(item.currentProgress)"
             />
+          </div>
+          <div class="step-footer">
+            <span>{{ nextStepHint(item) }}</span>
+            <span class="step-action">{{ item.actionLabel || pathActionLabel(item) }}</span>
           </div>
         </button>
         <div v-if="item.orderIndex < (path?.resources.length ?? 0)" class="step-connector" />
@@ -114,6 +126,31 @@ function formatTime(value?: string) {
 
 function openResource(item: PathResource) {
   router.push(`/courses/${item.courseId}/learn/${item.resourceId}`)
+}
+
+function pathStatusLabel(item: PathResource) {
+  if (item.learningStatus === 'COMPLETED' || item.currentProgress >= 0.999) return '已完成'
+  if (item.learningStatus === 'IN_PROGRESS' || item.currentProgress > 0) return '学习中'
+  return '未开始'
+}
+
+function pathActionLabel(item: PathResource) {
+  if (item.learningStatus === 'COMPLETED' || item.currentProgress >= 0.999) return '复习资源'
+  if (item.learningStatus === 'IN_PROGRESS' || item.currentProgress > 0) return '继续学习'
+  return '开始学习'
+}
+
+function pathStatusTagType(item: PathResource) {
+  if (item.learningStatus === 'COMPLETED' || item.currentProgress >= 0.999) return 'success' as const
+  if (item.learningStatus === 'IN_PROGRESS' || item.currentProgress > 0) return 'warning' as const
+  return 'info' as const
+}
+
+function nextStepHint(item: PathResource) {
+  if (item.currentProgress > 0) {
+    return `已完成 ${Math.round(item.currentProgress * 100)}%，建议从上次位置继续。`
+  }
+  return '建议现在开始，完成后路线会根据学习进度继续调整。'
 }
 
 function askAiForFocus(item: LearningPath['focusKnowledgePoints'][number]) {
@@ -296,6 +333,14 @@ onMounted(async () => {
   color: #909399;
 }
 
+.step-tags {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .step-reason {
   margin-top: 14px;
   color: #606266;
@@ -309,6 +354,26 @@ onMounted(async () => {
   gap: 8px;
   color: #606266;
   font-size: 13px;
+}
+
+.step-progress-head,
+.step-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.step-footer {
+  margin-top: 14px;
+  color: #909399;
+  font-size: 13px;
+}
+
+.step-action {
+  color: #409eff;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .step-connector {
@@ -328,8 +393,14 @@ onMounted(async () => {
   }
 
   .empty-actions,
-  .step-top {
+  .step-top,
+  .step-progress-head,
+  .step-footer {
     flex-direction: column;
+  }
+
+  .step-tags {
+    justify-content: flex-start;
   }
 
   .path-step {

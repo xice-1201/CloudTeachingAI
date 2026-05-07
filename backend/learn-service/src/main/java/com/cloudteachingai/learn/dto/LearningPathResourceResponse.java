@@ -15,6 +15,10 @@ public class LearningPathResourceResponse {
     String reason;
     Integer orderIndex;
     Double currentProgress;
+    String learningStatus;
+    String statusLabel;
+    String actionLabel;
+    Double recommendationScore;
     Long focusKnowledgePointId;
     String focusKnowledgePointName;
 }

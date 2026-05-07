@@ -261,6 +261,10 @@ export interface PathResource {
   reason: string
   orderIndex: number
   currentProgress: number
+  learningStatus?: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED'
+  statusLabel?: string
+  actionLabel?: string
+  recommendationScore?: number
   focusKnowledgePointId: number
   focusKnowledgePointName: string
 }
