@@ -273,6 +273,10 @@ export interface Submission {
   studentId: number
   content: string
   attachments?: string[]
+  aiScore?: number | null
+  aiFeedback?: string | null
+  finalScore?: number | null
+  finalFeedback?: string | null
   score?: number
   feedback?: string
   status: 'SUBMITTED' | 'AI_GRADING' | 'AI_GRADED' | 'GRADING_FAILED' | 'PENDING_MANUAL' | 'REVIEWED'

@@ -17,6 +17,10 @@ public class SubmissionResponse {
     private Long studentId;
     private String content;
     private List<String> attachments;
+    private Double aiScore;
+    private String aiFeedback;
+    private Double finalScore;
+    private String finalFeedback;
     private Double score;
     private String feedback;
     private String status;

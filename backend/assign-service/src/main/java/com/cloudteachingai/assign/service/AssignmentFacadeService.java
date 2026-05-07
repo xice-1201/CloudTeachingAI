@@ -35,9 +35,11 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -47,6 +49,8 @@ public class AssignmentFacadeService {
     private final SubmissionRepository submissionRepository;
     private final CourseServiceClient courseServiceClient;
     private final ObjectMapper objectMapper;
+
+    private static final Pattern SPLIT_PATTERN = Pattern.compile("[\\s,，。；;：:、.!！?？\\n\\r\\t]+");
 
     public PageResponse<AssignmentResponse> listAssignments(
             Long courseId,
@@ -145,6 +149,7 @@ public class AssignmentFacadeService {
                 .status(SubmissionStatus.SUBMITTED)
                 .submittedAt(OffsetDateTime.now(ZoneOffset.UTC))
                 .build();
+        applyAiReview(assignment, submission);
         return toSubmissionResponse(submissionRepository.save(submission));
     }
 
@@ -344,6 +349,109 @@ public class AssignmentFacadeService {
         }
     }
 
+    private void applyAiReview(AssignmentEntity assignment, SubmissionEntity submission) {
+        AiReviewResult result = generateAiReview(assignment, submission.getContent());
+        submission.setAiScore(result.score());
+        submission.setAiFeedback(result.feedback());
+        submission.setStatus(SubmissionStatus.AI_GRADED);
+        submission.setGradedAt(OffsetDateTime.now(ZoneOffset.UTC));
+    }
+
+    private AiReviewResult generateAiReview(AssignmentEntity assignment, String content) {
+        String answer = content == null ? "" : content.trim();
+        double maxScore = assignment.getMaxScore() == null ? 100D : assignment.getMaxScore();
+        int length = answer.length();
+
+        double lengthScore = Math.min(1D, length / 500D);
+        double structureScore = scoreStructure(answer);
+        double criteriaScore = scoreCriteriaCoverage(answer, assignment);
+        double finalRatio = (lengthScore * 0.35D) + (structureScore * 0.25D) + (criteriaScore * 0.4D);
+        double score = Math.round(Math.min(maxScore, Math.max(0D, maxScore * finalRatio)) * 10D) / 10D;
+
+        List<String> strengths = new ArrayList<>();
+        List<String> suggestions = new ArrayList<>();
+        if (lengthScore >= 0.75D) {
+            strengths.add("作答内容较充分");
+        } else {
+            suggestions.add("进一步补充关键步骤、依据或示例");
+        }
+        if (structureScore >= 0.7D) {
+            strengths.add("表达结构较清晰");
+        } else {
+            suggestions.add("按“观点、过程、结论”组织答案");
+        }
+        if (criteriaScore >= 0.7D) {
+            strengths.add("较好覆盖了评分标准中的核心要求");
+        } else {
+            suggestions.add("对照评分标准补齐遗漏要点");
+        }
+
+        String feedback = "AI 批改建议：建议得分 " + score + " / " + maxScore + "。"
+                + "优点：" + (strengths.isEmpty() ? "已完成基础提交" : String.join("；", strengths)) + "。"
+                + "改进建议：" + String.join("；", suggestions) + "。"
+                + "请教师结合课程目标和学生实际情况复核后发布最终成绩。";
+        return new AiReviewResult(score, feedback);
+    }
+
+    private double scoreStructure(String content) {
+        if (!StringUtils.hasText(content)) {
+            return 0D;
+        }
+        int paragraphCount = (int) content.lines().filter(line -> StringUtils.hasText(line.trim())).count();
+        boolean hasPunctuation = content.contains("。") || content.contains(".") || content.contains("；") || content.contains(";");
+        boolean hasSequence = content.contains("首先") || content.contains("其次") || content.contains("最后")
+                || content.contains("第一") || content.contains("第二") || content.matches("(?s).*\\b(1|2|3)[.)、].*");
+        double score = 0.35D;
+        if (paragraphCount >= 2) {
+            score += 0.25D;
+        }
+        if (hasPunctuation) {
+            score += 0.2D;
+        }
+        if (hasSequence) {
+            score += 0.2D;
+        }
+        return Math.min(1D, score);
+    }
+
+    private double scoreCriteriaCoverage(String content, AssignmentEntity assignment) {
+        Set<String> keywords = extractKeywords(assignment.getGradingCriteria());
+        if (keywords.isEmpty()) {
+            keywords = extractKeywords(assignment.getDescription());
+        }
+        if (keywords.isEmpty()) {
+            return StringUtils.hasText(content) ? 0.65D : 0D;
+        }
+
+        String normalizedContent = content.toLowerCase(Locale.ROOT);
+        long matched = keywords.stream()
+                .filter(keyword -> normalizedContent.contains(keyword.toLowerCase(Locale.ROOT)))
+                .count();
+        return Math.min(1D, matched / (double) Math.min(keywords.size(), 8));
+    }
+
+    private Set<String> extractKeywords(String text) {
+        if (!StringUtils.hasText(text)) {
+            return Collections.emptySet();
+        }
+        Set<String> keywords = new LinkedHashSet<>();
+        for (String token : SPLIT_PATTERN.split(text.trim())) {
+            String value = token.trim();
+            if (value.length() >= 2 && value.length() <= 20 && !isCommonWord(value)) {
+                keywords.add(value);
+            }
+            if (keywords.size() >= 12) {
+                break;
+            }
+        }
+        return keywords;
+    }
+
+    private boolean isCommonWord(String value) {
+        String normalized = value.toLowerCase(Locale.ROOT);
+        return Set.of("要求", "说明", "作业", "完成", "提交", "内容", "需要", "进行", "the", "and", "with").contains(normalized);
+    }
+
     private AssignmentResponse toAssignmentResponse(AssignmentEntity entity) {
         return AssignmentResponse.builder()
                 .id(entity.getId())
@@ -369,11 +477,18 @@ public class AssignmentFacadeService {
                 .studentId(entity.getStudentId())
                 .content(entity.getContent())
                 .attachments(readAttachments(entity.getAttachmentsJson()))
+                .aiScore(entity.getAiScore())
+                .aiFeedback(entity.getAiFeedback())
+                .finalScore(entity.getFinalScore())
+                .finalFeedback(entity.getFinalFeedback())
                 .score(score)
                 .feedback(feedback)
                 .status(entity.getStatus().name())
                 .submittedAt(entity.getSubmittedAt().toString())
                 .gradedAt(entity.getGradedAt() == null ? null : entity.getGradedAt().toString())
                 .build();
+    }
+
+    private record AiReviewResult(double score, String feedback) {
     }
 }

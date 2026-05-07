@@ -25,7 +25,7 @@
                 <el-descriptions-item label="状态">
                   <el-tag :type="submissionTagType(submission.status)">{{ submissionLabel(submission.status) }}</el-tag>
                 </el-descriptions-item>
-                <el-descriptions-item v-if="submission.score !== undefined" label="得分">
+                <el-descriptions-item v-if="submission.score !== undefined" :label="submission.status === 'REVIEWED' ? '最终得分' : 'AI 建议分'">
                   {{ submission.score }} / {{ assignment.maxScore }}
                 </el-descriptions-item>
               </el-descriptions>
@@ -33,8 +33,16 @@
                 <div class="section-label">提交内容</div>
                 <p class="description">{{ submission.content }}</p>
               </div>
-              <div v-if="submission.feedback" class="section-block">
-                <div class="section-label">教师反馈</div>
+              <div v-if="submission.aiFeedback" class="section-block">
+                <div class="section-label">AI 批改建议</div>
+                <p class="description">{{ submission.aiFeedback }}</p>
+              </div>
+              <div v-if="submission.finalFeedback" class="section-block">
+                <div class="section-label">教师最终反馈</div>
+                <p class="description">{{ submission.finalFeedback }}</p>
+              </div>
+              <div v-else-if="submission.feedback && !submission.aiFeedback" class="section-block">
+                <div class="section-label">反馈</div>
                 <p class="description">{{ submission.feedback }}</p>
               </div>
             </template>

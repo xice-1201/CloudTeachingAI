@@ -19,7 +19,12 @@
           <el-tag :type="tagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="score" label="得分" width="100" />
+      <el-table-column label="AI 建议分" width="110">
+        <template #default="{ row }">{{ row.aiScore ?? '-' }}</template>
+      </el-table-column>
+      <el-table-column label="最终得分" width="110">
+        <template #default="{ row }">{{ row.finalScore ?? '-' }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="120">
         <template #default="{ row }">
           <el-button type="primary" link @click="openReview(row)">复核</el-button>
@@ -31,6 +36,16 @@
       <template v-if="reviewing">
         <div class="section-label">学生答案</div>
         <div class="answer-box">{{ reviewing.content }}</div>
+
+        <div v-if="reviewing.aiFeedback" class="section-block">
+          <div class="section-label">AI 批改建议</div>
+          <div class="answer-box">
+            <div v-if="reviewing.aiScore !== undefined && reviewing.aiScore !== null" class="ai-score">
+              建议分：{{ reviewing.aiScore }} / {{ maxScore }}
+            </div>
+            {{ reviewing.aiFeedback }}
+          </div>
+        </div>
 
         <el-form :model="reviewForm" label-width="80px" style="margin-top: 20px">
           <el-form-item label="得分">
@@ -98,8 +113,8 @@ function statusLabel(status: string) {
 
 function openReview(submission: Submission) {
   reviewing.value = submission
-  reviewForm.score = submission.score ?? 0
-  reviewForm.feedback = submission.feedback ?? ''
+  reviewForm.score = submission.finalScore ?? submission.aiScore ?? submission.score ?? 0
+  reviewForm.feedback = submission.finalFeedback ?? submission.aiFeedback ?? submission.feedback ?? ''
   reviewVisible.value = true
 }
 
@@ -150,5 +165,15 @@ onMounted(async () => {
   font-size: 13px;
   color: #909399;
   margin-bottom: 8px;
+}
+
+.section-block {
+  margin-top: 16px;
+}
+
+.ai-score {
+  margin-bottom: 8px;
+  color: #303133;
+  font-weight: 600;
 }
 </style>
