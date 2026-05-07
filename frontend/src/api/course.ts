@@ -42,11 +42,20 @@ export const courseApi = {
     })
   },
 
-  uploadResourceFile: (file: File, type: Resource['type']): Promise<{ storageKey: string; fileName: string; size: number }> => {
+  uploadResourceFile: (
+    file: File,
+    type: Resource['type'],
+    onProgress?: (percent: number) => void,
+  ): Promise<{ storageKey: string; fileName: string; size: number }> => {
     const formData = new FormData()
     formData.append('file', file)
     return request.post('/resource-files', formData, {
       params: { type },
+      timeout: 120000,
+      onUploadProgress: (event) => {
+        if (!event.total || !onProgress) return
+        onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)))
+      },
       headers: {
         'Content-Type': 'multipart/form-data',
       },

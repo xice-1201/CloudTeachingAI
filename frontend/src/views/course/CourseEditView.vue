@@ -166,10 +166,21 @@
           <el-upload action="#" :auto-upload="false" :show-file-list="false" @change="handleResourceFileChange">
             <el-button type="primary">选择文件</el-button>
           </el-upload>
+          <div v-if="selectedResourceFile" class="upload-file-row">
+            <span>已选择文件：{{ selectedResourceFile.name }}（{{ formatFileSize(selectedResourceFile.size) }}）</span>
+            <el-button link type="danger" :disabled="resourceSubmitting" @click="clearSelectedResourceFile">移除</el-button>
+          </div>
           <div class="field-tip">
-            <template v-if="selectedResourceFile">已选择文件：{{ selectedResourceFile.name }}</template>
+            <template v-if="selectedResourceFile">保存资源时会先上传文件，上传完成后自动写入托管资源地址。</template>
             <template v-else-if="resourceDialog.form.managedFile">当前资源使用已上传文件，可重新选择替换。</template>
             <template v-else>也可以直接填写外部资源地址。</template>
+          </div>
+          <div v-if="resourceUploadProgress.visible" class="upload-progress">
+            <div class="upload-progress-meta">
+              <span>{{ resourceUploadProgress.label }}</span>
+              <span>{{ resourceUploadProgress.percent }}%</span>
+            </div>
+            <el-progress :percentage="resourceUploadProgress.percent" :stroke-width="8" />
           </div>
         </el-form-item>
         <el-form-item label="资源地址" prop="url"><el-input v-model="resourceDialog.form.url" placeholder="请输入资源 URL" /></el-form-item>
@@ -302,6 +313,11 @@ const studentLoading = ref(false)
 const suggestionLoading = ref(false)
 const tagReviewSubmitting = ref(false)
 const selectedResourceFile = ref<File | null>(null)
+const resourceUploadProgress = reactive({
+  visible: false,
+  percent: 0,
+  label: '等待上传',
+})
 
 const chapters = ref<Chapter[]>([])
 const resourceMap = ref<Record<number, Resource[]>>({})
@@ -391,6 +407,9 @@ function handleCoverChange(file: UploadFile) {
 function handleResourceFileChange(file: UploadFile) {
   if (!file.raw) return
   selectedResourceFile.value = file.raw
+  resourceUploadProgress.visible = false
+  resourceUploadProgress.percent = 0
+  resourceUploadProgress.label = '等待上传'
   resourceDialog.form.size = file.raw.size
   if (file.raw.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|mpe|mpeg|mpg|avi|wmv|mkv)$/i.test(file.raw.name)) {
     resourceDialog.form.type = 'VIDEO'
@@ -400,6 +419,13 @@ function handleResourceFileChange(file: UploadFile) {
     resourceDialog.form.type = 'DOCUMENT'
   }
   suggestions.value = []
+}
+
+function clearSelectedResourceFile() {
+  selectedResourceFile.value = null
+  resourceUploadProgress.visible = false
+  resourceUploadProgress.percent = 0
+  resourceUploadProgress.label = '等待上传'
 }
 
 function logCourseEditError(step: string, error: unknown, extra?: Record<string, unknown>) {
@@ -605,6 +631,9 @@ function resetResourceDialog(chapterId = '') {
   resourceDialog.chapterId = chapterId
   resourceDialog.resourceId = ''
   selectedResourceFile.value = null
+  resourceUploadProgress.visible = false
+  resourceUploadProgress.percent = 0
+  resourceUploadProgress.label = '等待上传'
   suggestions.value = []
   resourceDialog.form.title = ''
   resourceDialog.form.type = 'DOCUMENT'
@@ -754,6 +783,9 @@ function openEditResourceDialog(chapter: Chapter, resource: Resource) {
   resourceDialog.chapterId = String(chapter.id)
   resourceDialog.resourceId = String(resource.id)
   selectedResourceFile.value = null
+  resourceUploadProgress.visible = false
+  resourceUploadProgress.percent = 0
+  resourceUploadProgress.label = '等待上传'
   suggestions.value = []
   resourceDialog.form.title = resource.title
   resourceDialog.form.type = resource.type
@@ -777,7 +809,18 @@ async function handleSubmitResource() {
     let resourceUrl = resourceDialog.form.url?.trim() ?? ''
     let resourceSize = resourceDialog.form.size || undefined
     if (selectedResourceFile.value) {
-      const uploaded = await courseApi.uploadResourceFile(selectedResourceFile.value, resourceDialog.form.type)
+      resourceUploadProgress.visible = true
+      resourceUploadProgress.percent = 0
+      resourceUploadProgress.label = '正在上传资源文件'
+      const uploaded = await courseApi.uploadResourceFile(
+        selectedResourceFile.value,
+        resourceDialog.form.type,
+        (percent) => {
+          resourceUploadProgress.percent = percent
+        },
+      )
+      resourceUploadProgress.percent = 100
+      resourceUploadProgress.label = '上传完成，正在保存资源信息'
       resourceUrl = uploaded.storageKey
       resourceSize = uploaded.size || resourceSize
     }
@@ -800,8 +843,14 @@ async function handleSubmitResource() {
     }
     resourceDialog.visible = false
     selectedResourceFile.value = null
+    resourceUploadProgress.visible = false
+    resourceUploadProgress.percent = 0
+    resourceUploadProgress.label = '等待上传'
     await loadCurriculum()
   } finally {
+    if (selectedResourceFile.value && resourceUploadProgress.visible && resourceUploadProgress.percent < 100) {
+      resourceUploadProgress.label = '上传失败，请检查文件类型、大小或网络后重试'
+    }
     resourceSubmitting.value = false
   }
 }
@@ -880,6 +929,9 @@ onBeforeUnmount(() => {
 .resource-title { color: #303133; font-size: 15px; font-weight: 600; }
 .resource-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; color: #909399; font-size: 13px; }
 .resource-actions { display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0; }
+.upload-file-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; color: #606266; font-size: 13px; }
+.upload-progress { width: 100%; margin-top: 10px; }
+.upload-progress-meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; color: #606266; font-size: 12px; }
 .knowledge-tree { max-height: 260px; overflow: auto; border: 1px solid #ebeef5; border-radius: 8px; padding: 8px 12px; }
 .knowledge-node { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
 .tag-review { display: grid; gap: 12px; }
