@@ -1,5 +1,7 @@
 package com.cloudteachingai.learn.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.cloudteachingai.learn.client.CourseApiResponse;
 import com.cloudteachingai.learn.client.CourseChapterResponse;
 import com.cloudteachingai.learn.client.CourseKnowledgePointNodeResponse;
@@ -42,8 +44,17 @@ import com.cloudteachingai.learn.repository.LearningProgressRepository;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -62,6 +73,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class LearnFacadeService {
 
     private static final String STATUS_IN_PROGRESS = "IN_PROGRESS";
@@ -82,6 +94,26 @@ public class LearnFacadeService {
     private final AbilityMapRepository abilityMapRepository;
     private final CourseServiceClient courseServiceClient;
     private final OutboxService outboxService;
+    private final ObjectMapper objectMapper;
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
+
+    @Value("${ai.ability-test.enabled:true}")
+    private boolean abilityTestAiEnabled;
+
+    @Value("${ai.ability-test.api-key:}")
+    private String abilityTestAiApiKey;
+
+    @Value("${ai.ability-test.base-url:https://api.deepseek.com}")
+    private String abilityTestAiBaseUrl;
+
+    @Value("${ai.ability-test.model:deepseek-chat}")
+    private String abilityTestAiModel;
+
+    @Value("${ai.ability-test.timeout-seconds:45}")
+    private int abilityTestAiTimeoutSeconds;
 
     public LearningProgressResponse getResourceProgress(Long resourceId, UserContext userContext) {
         assertStudent(userContext);
@@ -185,7 +217,7 @@ public class LearnFacadeService {
                 .sorted(Comparator.comparing(CourseKnowledgePointNodeResponse::getPath, Comparator.nullsLast(String::compareToIgnoreCase))
                         .thenComparing(CourseKnowledgePointNodeResponse::getId))
                 .toList();
-        List<AbilityQuestionSpec> selectedQuestions = buildQuestionSpecs(sortedTargets, questionLimit);
+        List<AbilityQuestionSpec> selectedQuestions = buildQuestionSpecs(root, sortedTargets, questionLimit);
 
         AbilityTestSessionEntity session = abilityTestSessionRepository.save(AbilityTestSessionEntity.builder()
                 .studentId(userContext.userId())
@@ -925,14 +957,162 @@ public class LearnFacadeService {
     }
 
     private List<AbilityQuestionSpec> buildQuestionSpecs(
+            CourseKnowledgePointNodeResponse root,
             List<CourseKnowledgePointNodeResponse> targets,
             int questionLimit) {
+        List<AbilityQuestionSpec> aiQuestions = requestAiQuestionSpecs(root, targets, questionLimit);
+        if (aiQuestions.size() >= questionLimit) {
+            return aiQuestions.stream().limit(questionLimit).toList();
+        }
+
         List<AbilityQuestionSpec> specs = new ArrayList<>();
+        specs.addAll(aiQuestions);
         for (int index = 0; index < questionLimit; index++) {
+            if (specs.size() >= questionLimit) {
+                break;
+            }
             CourseKnowledgePointNodeResponse point = targets.get(index % targets.size());
             specs.add(buildQuestionSpec(point, index % 6));
         }
         return specs;
+    }
+
+    private List<AbilityQuestionSpec> requestAiQuestionSpecs(
+            CourseKnowledgePointNodeResponse root,
+            List<CourseKnowledgePointNodeResponse> targets,
+            int questionLimit) {
+        if (!abilityTestAiEnabled || normalizeBlank(abilityTestAiApiKey) == null) {
+            return List.of();
+        }
+
+        try {
+            Map<Long, CourseKnowledgePointNodeResponse> targetById = targets.stream()
+                    .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+            Map<String, Object> payload = Map.of(
+                    "model", abilityTestAiModel,
+                    "temperature", 0.35,
+                    "response_format", Map.of("type", "json_object"),
+                    "messages", List.of(
+                            Map.of(
+                                    "role", "system",
+                                    "content", """
+                                            You generate objective multiple-choice diagnostic questions for students.
+                                            Return JSON only: {"questions":[{"knowledgePointId":1,"prompt":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correctAnswer":"A","explanation":"..."}]}.
+                                            Requirements:
+                                            - Use the same language as the knowledge point content, usually Chinese.
+                                            - Questions must test knowledge, understanding, application, misconception, or transfer, not ask students to self-rate.
+                                            - Exactly one option must be correct.
+                                            - Use only A/B/C/D as option keys and correctAnswer.
+                                            - Prefer concrete, course-relevant wording based on name, path, description, and keywords.
+                                            - Do not reveal the answer in the prompt.
+                                            - Generate the requested number of questions.
+                                            """
+                            ),
+                            Map.of(
+                                    "role", "user",
+                                    "content", objectMapper.writeValueAsString(Map.of(
+                                            "requestedQuestionCount", questionLimit,
+                                            "rootKnowledgePoint", toAiKnowledgePoint(root),
+                                            "candidateKnowledgePoints", targets.stream()
+                                                    .map(this::toAiKnowledgePoint)
+                                                    .toList()
+                                    ))
+                            )
+                    )
+            );
+
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(normalizeBaseUrl(abilityTestAiBaseUrl) + "/chat/completions"))
+                    .timeout(Duration.ofSeconds(Math.max(5, abilityTestAiTimeoutSeconds)))
+                    .header("Authorization", "Bearer " + abilityTestAiApiKey)
+                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.warn("AI ability test generation failed: status={}, body={}", response.statusCode(), abbreviate(response.body(), 1000));
+                return List.of();
+            }
+
+            JsonNode rootNode = objectMapper.readTree(response.body());
+            String content = rootNode.path("choices").path(0).path("message").path("content").asText("");
+            if (normalizeBlank(content) == null) {
+                return List.of();
+            }
+            JsonNode parsed = objectMapper.readTree(content);
+            JsonNode questions = parsed.path("questions");
+            if (!questions.isArray()) {
+                return List.of();
+            }
+
+            List<AbilityQuestionSpec> specs = new ArrayList<>();
+            for (JsonNode question : questions) {
+                AbilityQuestionSpec spec = toAiQuestionSpec(question, targetById);
+                if (spec != null) {
+                    specs.add(spec);
+                }
+                if (specs.size() >= questionLimit) {
+                    break;
+                }
+            }
+            return specs;
+        } catch (Exception ex) {
+            log.warn("AI ability test generation failed, fallback to rule questions", ex);
+            return List.of();
+        }
+    }
+
+    private Map<String, Object> toAiKnowledgePoint(CourseKnowledgePointNodeResponse point) {
+        return Map.of(
+                "id", point.getId(),
+                "name", Optional.ofNullable(point.getName()).orElse(""),
+                "path", Optional.ofNullable(point.getPath()).orElse(""),
+                "description", Optional.ofNullable(point.getDescription()).orElse(""),
+                "keywords", Optional.ofNullable(point.getKeywords()).orElse(""),
+                "nodeType", Optional.ofNullable(point.getNodeType()).orElse("")
+        );
+    }
+
+    private AbilityQuestionSpec toAiQuestionSpec(
+            JsonNode question,
+            Map<Long, CourseKnowledgePointNodeResponse> targetById) {
+        Long knowledgePointId = question.path("knowledgePointId").canConvertToLong()
+                ? question.path("knowledgePointId").asLong()
+                : null;
+        CourseKnowledgePointNodeResponse point = knowledgePointId == null ? null : targetById.get(knowledgePointId);
+        if (point == null && !targetById.isEmpty()) {
+            point = targetById.values().iterator().next();
+        }
+        String prompt = normalizeBlank(question.path("prompt").asText(""));
+        JsonNode options = question.path("options");
+        String optionA = normalizeBlank(options.path("A").asText(""));
+        String optionB = normalizeBlank(options.path("B").asText(""));
+        String optionC = normalizeBlank(options.path("C").asText(""));
+        String optionD = normalizeBlank(options.path("D").asText(""));
+        String correctAnswer = normalizeBlank(question.path("correctAnswer").asText(""));
+        if (point == null
+                || prompt == null
+                || optionA == null
+                || optionB == null
+                || optionC == null
+                || optionD == null
+                || correctAnswer == null
+                || !VALID_ANSWERS.contains(correctAnswer.toUpperCase(Locale.ROOT))) {
+            return null;
+        }
+
+        return new AbilityQuestionSpec(
+                point,
+                prompt,
+                optionA,
+                optionB,
+                optionC,
+                optionD,
+                correctAnswer.toUpperCase(Locale.ROOT),
+                Optional.ofNullable(normalizeBlank(question.path("explanation").asText("")))
+                        .orElse("系统将根据正确答案自动评分。")
+        );
     }
 
     private AbilityQuestionSpec buildQuestionSpec(CourseKnowledgePointNodeResponse point, int aspectIndex) {
@@ -1041,6 +1221,17 @@ public class LearnFacadeService {
             return null;
         }
         return value.trim();
+    }
+
+    private String normalizeBaseUrl(String value) {
+        String normalized = Optional.ofNullable(value)
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .orElse("https://api.deepseek.com");
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 
     private List<AbilityMapResponse> selectFocusKnowledgePoints(List<AbilityMapResponse> abilityMap) {

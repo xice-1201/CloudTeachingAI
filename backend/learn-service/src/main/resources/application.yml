@@ -38,6 +38,14 @@ jwt:
 course-service:
   url: ${COURSE_SERVICE_URL:http://localhost:8003}
 
+ai:
+  ability-test:
+    enabled: ${AI_ABILITY_TEST_ENABLED:true}
+    api-key: ${DEEPSEEK_API_KEY:${OPENAI_API_KEY:}}
+    base-url: ${DEEPSEEK_BASE_URL:${OPENAI_BASE_URL:https://api.deepseek.com}}
+    model: ${DEEPSEEK_MODEL:${OPENAI_MODEL:deepseek-chat}}
+    timeout-seconds: ${AI_ABILITY_TEST_TIMEOUT_SECONDS:45}
+
 management:
   endpoints:
     web:
