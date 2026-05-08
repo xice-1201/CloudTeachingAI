@@ -217,7 +217,8 @@ public class LearnFacadeService {
                 .sorted(Comparator.comparing(CourseKnowledgePointNodeResponse::getPath, Comparator.nullsLast(String::compareToIgnoreCase))
                         .thenComparing(CourseKnowledgePointNodeResponse::getId))
                 .toList();
-        List<AbilityQuestionSpec> selectedQuestions = buildQuestionSpecs(root, sortedTargets, questionLimit);
+        AbilityQuestionBuildResult questionBuild = buildQuestionSpecs(root, sortedTargets, questionLimit);
+        List<AbilityQuestionSpec> selectedQuestions = questionBuild.questions();
 
         AbilityTestSessionEntity session = abilityTestSessionRepository.save(AbilityTestSessionEntity.builder()
                 .studentId(userContext.userId())
@@ -254,6 +255,8 @@ public class LearnFacadeService {
                 .rootKnowledgePointName(root.getName())
                 .totalQuestions(savedQuestions.size())
                 .question(toQuestionResponse(savedQuestions.getFirst(), savedQuestions.size()))
+                .generationMode(questionBuild.generationMode())
+                .generationMessage(questionBuild.generationMessage())
                 .build();
     }
 
@@ -956,13 +959,18 @@ public class LearnFacadeService {
         return Math.max(1, Math.min(12, requestedLimit));
     }
 
-    private List<AbilityQuestionSpec> buildQuestionSpecs(
+    private AbilityQuestionBuildResult buildQuestionSpecs(
             CourseKnowledgePointNodeResponse root,
             List<CourseKnowledgePointNodeResponse> targets,
             int questionLimit) {
-        List<AbilityQuestionSpec> aiQuestions = requestAiQuestionSpecs(root, targets, questionLimit);
+        AiQuestionGenerationResult aiResult = requestAiQuestionSpecs(root, targets, questionLimit);
+        List<AbilityQuestionSpec> aiQuestions = aiResult.questions();
         if (aiQuestions.size() >= questionLimit) {
-            return aiQuestions.stream().limit(questionLimit).toList();
+            return new AbilityQuestionBuildResult(
+                    aiQuestions.stream().limit(questionLimit).toList(),
+                    "AI",
+                    "AI generated " + questionLimit + " valid questions."
+            );
         }
 
         List<AbilityQuestionSpec> specs = new ArrayList<>();
@@ -974,15 +982,30 @@ public class LearnFacadeService {
             CourseKnowledgePointNodeResponse point = targets.get(index % targets.size());
             specs.add(buildQuestionSpec(point, index % 6));
         }
-        return specs;
+        if (aiQuestions.isEmpty()) {
+            return new AbilityQuestionBuildResult(
+                    specs,
+                    "FALLBACK_RULE",
+                    aiResult.message()
+            );
+        }
+        return new AbilityQuestionBuildResult(
+                specs,
+                "MIXED",
+                "AI generated " + aiQuestions.size() + " valid questions; rule fallback filled "
+                        + (questionLimit - aiQuestions.size()) + " remaining questions. " + aiResult.message()
+        );
     }
 
-    private List<AbilityQuestionSpec> requestAiQuestionSpecs(
+    private AiQuestionGenerationResult requestAiQuestionSpecs(
             CourseKnowledgePointNodeResponse root,
             List<CourseKnowledgePointNodeResponse> targets,
             int questionLimit) {
-        if (!abilityTestAiEnabled || normalizeBlank(abilityTestAiApiKey) == null) {
-            return List.of();
+        if (!abilityTestAiEnabled) {
+            return new AiQuestionGenerationResult(List.of(), "AI ability test generation is disabled by AI_ABILITY_TEST_ENABLED=false.");
+        }
+        if (normalizeBlank(abilityTestAiApiKey) == null) {
+            return new AiQuestionGenerationResult(List.of(), "AI ability test API key is missing. Set DEEPSEEK_API_KEY or OPENAI_API_KEY for learn-service.");
         }
 
         try {
@@ -1032,18 +1055,21 @@ public class LearnFacadeService {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 log.warn("AI ability test generation failed: status={}, body={}", response.statusCode(), abbreviate(response.body(), 1000));
-                return List.of();
+                return new AiQuestionGenerationResult(
+                        List.of(),
+                        "AI ability test request failed with HTTP " + response.statusCode() + ". Body: " + abbreviate(response.body(), 300)
+                );
             }
 
             JsonNode rootNode = objectMapper.readTree(response.body());
             String content = rootNode.path("choices").path(0).path("message").path("content").asText("");
             if (normalizeBlank(content) == null) {
-                return List.of();
+                return new AiQuestionGenerationResult(List.of(), "AI ability test response did not contain choices[0].message.content.");
             }
             JsonNode parsed = objectMapper.readTree(content);
             JsonNode questions = parsed.path("questions");
             if (!questions.isArray()) {
-                return List.of();
+                return new AiQuestionGenerationResult(List.of(), "AI ability test response JSON did not contain a questions array.");
             }
 
             List<AbilityQuestionSpec> specs = new ArrayList<>();
@@ -1056,10 +1082,16 @@ public class LearnFacadeService {
                     break;
                 }
             }
-            return specs;
+            if (specs.isEmpty()) {
+                return new AiQuestionGenerationResult(List.of(), "AI returned questions, but none passed validation.");
+            }
+            return new AiQuestionGenerationResult(specs, "AI returned " + specs.size() + " valid questions.");
         } catch (Exception ex) {
             log.warn("AI ability test generation failed, fallback to rule questions", ex);
-            return List.of();
+            return new AiQuestionGenerationResult(
+                    List.of(),
+                    "AI ability test generation threw " + ex.getClass().getSimpleName() + ": " + Optional.ofNullable(ex.getMessage()).orElse("")
+            );
         }
     }
 
@@ -1698,6 +1730,19 @@ public class LearnFacadeService {
     private record KnowledgePointCatalog(
             List<CourseKnowledgePointNodeResponse> tree,
             Map<Long, CourseKnowledgePointNodeResponse> nodesById
+    ) {
+    }
+
+    private record AbilityQuestionBuildResult(
+            List<AbilityQuestionSpec> questions,
+            String generationMode,
+            String generationMessage
+    ) {
+    }
+
+    private record AiQuestionGenerationResult(
+            List<AbilityQuestionSpec> questions,
+            String message
     ) {
     }
 

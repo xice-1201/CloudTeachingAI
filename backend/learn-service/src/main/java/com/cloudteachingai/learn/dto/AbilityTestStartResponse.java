@@ -10,4 +10,6 @@ public class AbilityTestStartResponse {
     String rootKnowledgePointName;
     Integer totalQuestions;
     AbilityTestQuestionResponse question;
+    String generationMode;
+    String generationMessage;
 }

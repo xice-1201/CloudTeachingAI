@@ -202,6 +202,7 @@ async function startTest() {
   loading.value = true
   try {
     const response = await learnApi.startAbilityTest(selectedKnowledgePointId.value)
+    logAbilityTestGeneration(response.generationMode, response.generationMessage)
     sessionId.value = response.sessionId
     currentQuestion.value = response.question
     completed.value = false
@@ -209,6 +210,22 @@ async function startTest() {
   } finally {
     loading.value = false
   }
+}
+
+function logAbilityTestGeneration(mode?: string, message?: string | null) {
+  const payload = {
+    mode: mode || 'UNKNOWN',
+    message: message || 'No generation diagnostic returned by backend.',
+  }
+  if (mode === 'AI') {
+    console.info('[AbilityTest] AI question generation succeeded.', payload)
+    return
+  }
+  if (mode === 'MIXED') {
+    console.warn('[AbilityTest] AI question generation partially succeeded; some questions used rule fallback.', payload)
+    return
+  }
+  console.warn('[AbilityTest] Rule fallback questions were used instead of AI-generated questions.', payload)
 }
 
 async function submitAnswer() {

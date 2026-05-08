@@ -181,6 +181,8 @@ export interface AbilityTestStartResponse {
   rootKnowledgePointName: string
   totalQuestions: number
   question: AbilityTestQuestion
+  generationMode?: 'AI' | 'MIXED' | 'FALLBACK_RULE' | string
+  generationMessage?: string | null
 }
 
 export interface AbilityTestAnswerResponse {
