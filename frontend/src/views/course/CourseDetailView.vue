@@ -375,7 +375,9 @@ async function loadCourseSummary() {
 async function loadCurriculum() {
   const courseId = String(route.params.id)
   try {
-    const chapterList = await courseApi.listChapters(courseId)
+    const chapterList = await courseApi.listChapters(courseId, {
+      headers: { 'X-Silent-Error': 'true' },
+    })
     chapters.value = chapterList
     const resources = await Promise.all(chapterList.map(async (chapter) => [chapter.id, await courseApi.listResources(String(chapter.id))] as const))
     resourceMap.value = Object.fromEntries(resources)
@@ -390,7 +392,13 @@ async function loadCurriculum() {
 async function loadInteractions() {
   const courseId = String(route.params.id)
   announcements.value = await courseApi.listAnnouncements(courseId).catch(() => [])
-  generalDiscussions.value = await courseApi.listDiscussions(courseId).catch(() => [])
+  if (!contentAccessGranted.value && !canEdit.value) {
+    generalDiscussions.value = []
+    return
+  }
+  generalDiscussions.value = await courseApi.listDiscussions(courseId, undefined, {
+    headers: { 'X-Silent-Error': 'true' },
+  }).catch(() => [])
 }
 
 async function handleLifecycle(action: 'publish' | 'unpublish' | 'archive' | 'restore') {

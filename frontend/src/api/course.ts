@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import type { AxiosRequestConfig } from 'axios'
 import type { Course, Chapter, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse, Announcement, DiscussionPost } from '@/types'
 
 export const courseApi = {
@@ -20,8 +21,8 @@ export const courseApi = {
   deleteAnnouncement: (announcementId: string): Promise<void> =>
     request.delete(`/announcements/${announcementId}`),
 
-  listDiscussions: (courseId: string, params?: { resourceId?: number }): Promise<DiscussionPost[]> =>
-    request.get(`/courses/${courseId}/discussions`, { params }),
+  listDiscussions: (courseId: string, params?: { resourceId?: number }, config?: AxiosRequestConfig): Promise<DiscussionPost[]> =>
+    request.get(`/courses/${courseId}/discussions`, { ...config, params }),
 
   createDiscussion: (courseId: string, data: { resourceId?: number; parentId?: number; title?: string; content: string }): Promise<DiscussionPost> =>
     request.post(`/courses/${courseId}/discussions`, data),
@@ -87,8 +88,8 @@ export const courseApi = {
     request.get('/courses/enrolled', { params }),
 
   // 章节
-  listChapters: (courseId: string): Promise<Chapter[]> =>
-    request.get(`/courses/${courseId}/chapters`),
+  listChapters: (courseId: string, config?: AxiosRequestConfig): Promise<Chapter[]> =>
+    request.get(`/courses/${courseId}/chapters`, config),
 
   createChapter: (courseId: string, data: Partial<Chapter>): Promise<Chapter> =>
     request.post(`/courses/${courseId}/chapters`, data),
