@@ -370,6 +370,7 @@ const studentOptions = ref<User[]>([])
 const leafKnowledgePointCount = ref(0)
 const suggestions = ref<ResourceTagSuggestion[]>([])
 let temporaryCoverUrl = ''
+let resourceFileSelectionSeq = 0
 
 const isEdit = computed(() => Boolean(route.params.id))
 const courseId = computed(() => String(route.params.id ?? ''))
@@ -476,8 +477,34 @@ function inferResourceTypeFromFile(file: File): Resource['type'] {
   return 'DOCUMENT'
 }
 
+function analyzeVideoDuration(file: File, selectionSeq: number) {
+  const videoUrl = URL.createObjectURL(file)
+  const video = document.createElement('video')
+  video.preload = 'metadata'
+
+  const cleanup = () => {
+    URL.revokeObjectURL(videoUrl)
+    video.removeAttribute('src')
+    video.load()
+  }
+
+  video.onloadedmetadata = () => {
+    if (selectionSeq === resourceFileSelectionSeq && selectedResourceFile.value === file && Number.isFinite(video.duration)) {
+      resourceDialog.form.duration = Math.round(video.duration)
+    }
+    cleanup()
+  }
+
+  video.onerror = () => {
+    cleanup()
+  }
+
+  video.src = videoUrl
+}
+
 function handleResourceFileChange(file: UploadFile) {
   if (!file.raw) return
+  const selectionSeq = ++resourceFileSelectionSeq
   selectedResourceFile.value = file.raw
   resourceUploadProgress.visible = false
   resourceUploadProgress.percent = 0
@@ -486,11 +513,16 @@ function handleResourceFileChange(file: UploadFile) {
   if (!resourceDialog.form.title.trim()) {
     resourceDialog.form.title = getFileBaseName(file.raw.name)
   }
-  resourceDialog.form.type = inferResourceTypeFromFile(file.raw)
+  const inferredType = inferResourceTypeFromFile(file.raw)
+  resourceDialog.form.type = inferredType
+  if (inferredType === 'VIDEO') {
+    analyzeVideoDuration(file.raw, selectionSeq)
+  }
   suggestions.value = []
 }
 
 function clearSelectedResourceFile() {
+  resourceFileSelectionSeq += 1
   selectedResourceFile.value = null
   resourceUploadProgress.visible = false
   resourceUploadProgress.percent = 0
