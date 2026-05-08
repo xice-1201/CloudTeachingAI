@@ -12,6 +12,7 @@ public class CourseResourceResponse {
     private String description;
     private String taggingStatus;
     private java.util.List<CourseResourceKnowledgePointResponse> knowledgePoints;
+    private java.util.List<CourseResourceTagResponse> tags;
     private Integer duration;
     private Long size;
     private Integer orderIndex;

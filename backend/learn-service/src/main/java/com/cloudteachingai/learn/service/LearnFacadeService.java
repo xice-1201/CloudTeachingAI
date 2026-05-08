@@ -7,6 +7,7 @@ import com.cloudteachingai.learn.client.CourseChapterResponse;
 import com.cloudteachingai.learn.client.CourseKnowledgePointNodeResponse;
 import com.cloudteachingai.learn.client.CourseResourceKnowledgePointResponse;
 import com.cloudteachingai.learn.client.CourseResourceResponse;
+import com.cloudteachingai.learn.client.CourseResourceTagResponse;
 import com.cloudteachingai.learn.client.CourseServiceClient;
 import com.cloudteachingai.learn.client.CourseSummaryResponse;
 import com.cloudteachingai.learn.client.PageResponse;
@@ -1787,13 +1788,15 @@ public class LearnFacadeService {
     }
 
     private boolean matchesFocusPoint(CourseResourceResponse resource, AbilityMapResponse focusPoint) {
-        if (resource.getKnowledgePoints() == null || resource.getKnowledgePoints().isEmpty()) {
+        boolean hasKnowledgePoints = resource.getKnowledgePoints() != null && !resource.getKnowledgePoints().isEmpty();
+        boolean hasTags = resource.getTags() != null && !resource.getTags().isEmpty();
+        if (!hasKnowledgePoints && !hasTags) {
             return false;
         }
         Long knowledgePointId = focusPoint.getKnowledgePointId();
         String focusName = normalizeBlank(focusPoint.getKnowledgePointName());
         String focusPath = normalizeKnowledgePath(focusPoint.getKnowledgePointPath());
-        return resource.getKnowledgePoints().stream()
+        boolean matchedKnowledgePoint = hasKnowledgePoints && resource.getKnowledgePoints().stream()
                 .anyMatch(knowledgePoint -> {
                     if (knowledgePointId != null && knowledgePointId.equals(knowledgePoint.getId())) {
                         return true;
@@ -1809,6 +1812,31 @@ public class LearnFacadeService {
                             || resourcePath.toLowerCase(Locale.ROOT).startsWith(focusPath.toLowerCase(Locale.ROOT) + "/")
                             || focusPath.toLowerCase(Locale.ROOT).startsWith(resourcePath.toLowerCase(Locale.ROOT) + "/"));
                 });
+        if (matchedKnowledgePoint) {
+            return true;
+        }
+        return hasTags && resource.getTags().stream()
+                .anyMatch(tag -> matchesFocusTag(tag, knowledgePointId, focusName, focusPath));
+    }
+
+    private boolean matchesFocusTag(
+            CourseResourceTagResponse tag,
+            Long knowledgePointId,
+            String focusName,
+            String focusPath) {
+        if (knowledgePointId != null && knowledgePointId.equals(tag.getKnowledgePointId())) {
+            return true;
+        }
+        String tagLabel = normalizeBlank(tag.getLabel());
+        if (focusName != null && tagLabel != null && focusName.equalsIgnoreCase(tagLabel)) {
+            return true;
+        }
+        String tagPath = normalizeKnowledgePath(tag.getKnowledgePointPath());
+        return focusPath != null
+                && tagPath != null
+                && (tagPath.equalsIgnoreCase(focusPath)
+                || tagPath.toLowerCase(Locale.ROOT).startsWith(focusPath.toLowerCase(Locale.ROOT) + "/")
+                || focusPath.toLowerCase(Locale.ROOT).startsWith(tagPath.toLowerCase(Locale.ROOT) + "/"));
     }
 
     private double scorePathCandidate(AbilityMapResponse focusPoint, double currentProgress) {
