@@ -31,8 +31,8 @@ import com.cloudteachingai.course.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -54,6 +54,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
@@ -412,13 +415,15 @@ public class CourseController {
             try {
                 List<HttpRange> ranges = HttpRange.parseRanges(rangeHeader);
                 if (!ranges.isEmpty()) {
-                    ResourceRegion region = ranges.getFirst().toResourceRegion(resource);
+                    PartialResource partialResource = buildPartialResource(resource, ranges.getFirst());
                     return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                             .contentType(mediaType)
+                            .contentLength(partialResource.contentLength())
                             .cacheControl(CacheControl.noStore())
                             .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                            .header(HttpHeaders.CONTENT_RANGE, partialResource.contentRange())
                             .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                            .body(region);
+                            .body(partialResource.resource());
                 }
             } catch (IllegalArgumentException ex) {
                 log.warn("Invalid resource range request: resourceId={}, range={}", resourceId, rangeHeader);
@@ -426,6 +431,8 @@ public class CourseController {
                         .cacheControl(CacheControl.noStore())
                         .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                         .build();
+            } catch (IOException ex) {
+                throw BusinessException.internal("Failed to stream resource file", ex);
             }
         }
 
@@ -527,6 +534,35 @@ public class CourseController {
         return sanitized.isBlank() ? "resource" : sanitized;
     }
 
+    private PartialResource buildPartialResource(Resource resource, HttpRange range) throws IOException {
+        long totalLength = resource.contentLength();
+        long start = range.getRangeStart(totalLength);
+        long end = Math.min(range.getRangeEnd(totalLength), totalLength - 1);
+        if (start >= totalLength || start > end) {
+            throw new IllegalArgumentException("Requested range is not satisfiable");
+        }
+
+        long rangeLength = end - start + 1;
+        InputStream inputStream = resource.getInputStream();
+        skipFully(inputStream, start);
+        InputStreamResource body = new InputStreamResource(new LimitedInputStream(inputStream, rangeLength));
+        return new PartialResource(body, rangeLength, "bytes " + start + "-" + end + "/" + totalLength);
+    }
+
+    private void skipFully(InputStream inputStream, long bytes) throws IOException {
+        long remaining = bytes;
+        while (remaining > 0) {
+            long skipped = inputStream.skip(remaining);
+            if (skipped <= 0) {
+                if (inputStream.read() == -1) {
+                    throw new IOException("Cannot skip to requested resource range");
+                }
+                skipped = 1;
+            }
+            remaining -= skipped;
+        }
+    }
+
     private UserContext extractUserContext(String authorization, String accessToken) {
         if ((authorization == null || authorization.isBlank()) && accessToken != null && !accessToken.isBlank()) {
             authorization = "Bearer " + accessToken.trim();
@@ -549,6 +585,43 @@ public class CourseController {
     }
 
     public record UserContext(Long userId, String role) {
+    }
+
+    private record PartialResource(InputStreamResource resource, long contentLength, String contentRange) {
+    }
+
+    private static class LimitedInputStream extends FilterInputStream {
+        private long remaining;
+
+        LimitedInputStream(InputStream inputStream, long limit) {
+            super(inputStream);
+            this.remaining = limit;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (remaining <= 0) {
+                return -1;
+            }
+            int value = super.read();
+            if (value != -1) {
+                remaining--;
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (remaining <= 0) {
+                return -1;
+            }
+            int limitedLength = (int) Math.min(length, remaining);
+            int read = super.read(buffer, offset, limitedLength);
+            if (read != -1) {
+                remaining -= read;
+            }
+            return read;
+        }
     }
 
     private ResourceType parseResourceType(String type) {
