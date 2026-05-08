@@ -860,8 +860,7 @@ public class CourseFacadeService {
             return course;
         }
         if ("STUDENT".equals(userContext.role())
-                && course.getStatus() == CourseStatus.PUBLISHED
-                && enrollmentRepository.existsByStudentIdAndCourseId(userContext.userId(), courseId)) {
+                && canStudentViewCourseSummary(course, userContext.userId())) {
             return course;
         }
         throw BusinessException.forbidden("No permission to access this course content");
