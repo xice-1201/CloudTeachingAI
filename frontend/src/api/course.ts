@@ -150,6 +150,7 @@ export const courseApi = {
           formData.append('fileName', data.fileName || data.file.name)
           formData.append('file', data.file)
           return request.post('/resource-tags/suggestions/preview', formData, {
+            timeout: 120000,
             headers: {
               'Content-Type': 'multipart/form-data',
             },

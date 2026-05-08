@@ -968,24 +968,14 @@ public class ResourceTagSuggestionService {
 
     private ExtractedContent extractFromVideoFile(Path videoPath, String fileName, String contentType) {
         VideoProbeInfo probeInfo = probeVideo(videoPath);
-        String transcript = transcribeVideo(videoPath, probeInfo.durationSeconds());
         String metadataSummary = buildVideoMetadataSummary(fileName, contentType, probeInfo);
         log.info(
-                "Video extraction completed: fileName={}, durationSeconds={}, transcriptLength={}, metadataLength={}",
+                "Video extraction completed without synchronous transcription: fileName={}, durationSeconds={}, metadataLength={}",
                 fileName,
                 probeInfo.durationSeconds(),
-                transcript.length(),
                 metadataSummary.length()
         );
-        if (!StringUtils.hasText(transcript)) {
-            log.warn(
-                    "Video preview has no transcript content. fileName={}, durationSeconds={}, metadataLength={}",
-                    fileName,
-                    probeInfo.durationSeconds(),
-                    metadataSummary.length()
-            );
-        }
-        return new ExtractedContent(transcript, metadataSummary);
+        return new ExtractedContent("", metadataSummary);
     }
 
     private VideoProbeInfo probeVideo(Path videoPath) {
