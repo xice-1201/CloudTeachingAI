@@ -80,6 +80,50 @@ public class LearnFacadeService {
             "C", 0.75D,
             "D", 1D
     );
+    private static final List<AbilityQuestionAspect> ABILITY_QUESTION_ASPECTS = List.of(
+            new AbilityQuestionAspect(
+                    "请结合最近的学习情况，判断你对「%s」核心概念的理解程度。",
+                    "我还说不清这个概念是什么。",
+                    "我知道大致含义，但容易混淆关键概念。",
+                    "我能说出主要含义，并理解常见说法。",
+                    "我能准确解释概念，并指出它和相关知识的区别。"
+            ),
+            new AbilityQuestionAspect(
+                    "遇到与「%s」相关的例子或题目时，你通常能识别出它考察的重点吗？",
+                    "我通常看不出它和这个知识点有关。",
+                    "有人提示后，我能大致判断考察方向。",
+                    "我多数情况下能识别出考察重点。",
+                    "我能快速判断重点，并说明为什么属于这个知识点。"
+            ),
+            new AbilityQuestionAspect(
+                    "需要用「%s」完成练习或学习任务时，你的独立完成程度如何？",
+                    "我基本无法独立开始。",
+                    "我能开始，但经常需要步骤提示。",
+                    "我能完成常规任务，偶尔需要检查或提示。",
+                    "我能独立完成，并能处理变化后的任务。"
+            ),
+            new AbilityQuestionAspect(
+                    "当你在「%s」相关任务中出错时，你能定位并修正问题吗？",
+                    "我很难判断错在哪里。",
+                    "我能发现明显错误，但不确定如何修正。",
+                    "我能定位常见错误并完成修正。",
+                    "我能分析错误原因，并总结避免同类问题的方法。"
+            ),
+            new AbilityQuestionAspect(
+                    "把「%s」应用到新的案例或实际场景时，你的把握如何？",
+                    "我还不知道如何迁移应用。",
+                    "我能套用熟悉例子，但换场景会卡住。",
+                    "我能在相近场景中应用这个知识点。",
+                    "我能灵活迁移到新场景，并解释应用思路。"
+            ),
+            new AbilityQuestionAspect(
+                    "如果要向同学讲解「%s」，你觉得自己能讲到什么程度？",
+                    "我目前还无法讲清楚。",
+                    "我能讲出零散要点，但不够连贯。",
+                    "我能按步骤讲清主要内容。",
+                    "我能讲清思路、例子和常见误区。"
+            )
+    );
 
     private final LearningProgressRepository learningProgressRepository;
     private final AbilityTestSessionRepository abilityTestSessionRepository;
@@ -185,38 +229,37 @@ public class LearnFacadeService {
             throw BusinessException.badRequest("Selected knowledge point has no available test targets");
         }
 
-        int questionLimit = Math.min(
-                request.getQuestionLimit() == null ? DEFAULT_QUESTION_LIMIT : request.getQuestionLimit(),
-                targets.size()
-        );
-        List<CourseKnowledgePointNodeResponse> selectedTargets = targets.stream()
+        int questionLimit = resolveQuestionLimit(request.getQuestionLimit());
+        List<CourseKnowledgePointNodeResponse> sortedTargets = targets.stream()
                 .sorted(Comparator.comparing(CourseKnowledgePointNodeResponse::getPath, Comparator.nullsLast(String::compareToIgnoreCase))
                         .thenComparing(CourseKnowledgePointNodeResponse::getId))
-                .limit(questionLimit)
                 .toList();
+        List<AbilityQuestionSpec> selectedQuestions = buildQuestionSpecs(sortedTargets, questionLimit);
 
         AbilityTestSessionEntity session = abilityTestSessionRepository.save(AbilityTestSessionEntity.builder()
                 .studentId(userContext.userId())
                 .rootKnowledgePointId(root.getId())
                 .rootKnowledgePointName(root.getName())
                 .status(STATUS_IN_PROGRESS)
-                .questionCount(selectedTargets.size())
+                .questionCount(selectedQuestions.size())
                 .answeredCount(0)
                 .startedAt(OffsetDateTime.now(ZoneOffset.UTC))
                 .build());
 
         List<AbilityTestQuestionEntity> questions = new ArrayList<>();
-        for (int index = 0; index < selectedTargets.size(); index++) {
-            CourseKnowledgePointNodeResponse point = selectedTargets.get(index);
+        for (int index = 0; index < selectedQuestions.size(); index++) {
+            AbilityQuestionSpec spec = selectedQuestions.get(index);
+            CourseKnowledgePointNodeResponse point = spec.point();
+            AbilityQuestionAspect aspect = spec.aspect();
             questions.add(AbilityTestQuestionEntity.builder()
                     .sessionId(session.getId())
                     .knowledgePointId(point.getId())
                     .knowledgePointName(point.getName())
-                    .prompt(buildQuestionPrompt(point))
-                    .optionA("我对这个知识点几乎不了解，需要从基础开始。")
-                    .optionB("我知道基本概念，但独立完成相关任务仍比较吃力。")
-                    .optionC("我能完成常规练习或学习任务，偶尔还需要提示。")
-                    .optionD("我可以独立应用这个知识点，并向别人解释清楚。")
+                    .prompt(buildQuestionPrompt(point, aspect))
+                    .optionA(aspect.optionA())
+                    .optionB(aspect.optionB())
+                    .optionC(aspect.optionC())
+                    .optionD(aspect.optionD())
                     .displayOrder(index + 1)
                     .answered(false)
                     .build());
@@ -389,24 +432,37 @@ public class LearnFacadeService {
         KnowledgePointCatalog catalog = loadKnowledgePointCatalog(authorization);
         Map<Long, ProgressStats> progressStats = buildProgressStats(session.getStudentId(), authorization);
 
+        Map<Long, List<AbilityTestQuestionEntity>> questionsByKnowledgePoint = questions.stream()
+                .collect(Collectors.groupingBy(
+                        AbilityTestQuestionEntity::getKnowledgePointId,
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
         List<AbilityMapResponse> responses = new ArrayList<>();
-        for (AbilityTestQuestionEntity question : questions) {
-            double testScore = question.getScore() == null ? 0D : question.getScore();
-            CourseKnowledgePointNodeResponse node = catalog.nodesById().get(question.getKnowledgePointId());
-            ProgressStats stats = progressStats.get(question.getKnowledgePointId());
+        for (Map.Entry<Long, List<AbilityTestQuestionEntity>> entry : questionsByKnowledgePoint.entrySet()) {
+            Long knowledgePointId = entry.getKey();
+            List<AbilityTestQuestionEntity> pointQuestions = entry.getValue();
+            AbilityTestQuestionEntity firstQuestion = pointQuestions.getFirst();
+            double testScore = pointQuestions.stream()
+                    .mapToDouble(question -> question.getScore() == null ? 0D : question.getScore())
+                    .average()
+                    .orElse(0D);
+            CourseKnowledgePointNodeResponse node = catalog.nodesById().get(knowledgePointId);
+            ProgressStats stats = progressStats.get(knowledgePointId);
             double progressScore = stats == null ? 0D : stats.averageProgress();
             int resourceCount = stats == null ? 0 : stats.resourceCount();
             double confidence = stats == null ? 0.8D : 0.9D;
             String source = stats == null ? "TEST" : "TEST_AND_PROGRESS";
-            String knowledgePointName = node == null ? question.getKnowledgePointName() : node.getName();
+            String knowledgePointName = node == null ? firstQuestion.getKnowledgePointName() : node.getName();
             String knowledgePointPath = node == null
-                    ? (stats == null ? question.getKnowledgePointName() : stats.knowledgePointPath())
+                    ? (stats == null ? firstQuestion.getKnowledgePointName() : stats.knowledgePointPath())
                     : node.getPath();
 
-            AbilityMapEntity entity = abilityMapRepository.findByStudentIdAndKnowledgePointId(session.getStudentId(), question.getKnowledgePointId())
+            AbilityMapEntity entity = abilityMapRepository.findByStudentIdAndKnowledgePointId(session.getStudentId(), knowledgePointId)
                     .orElseGet(() -> AbilityMapEntity.builder()
                             .studentId(session.getStudentId())
-                            .knowledgePointId(question.getKnowledgePointId())
+                            .knowledgePointId(knowledgePointId)
                             .build());
 
             entity.setKnowledgePointName(knowledgePointName);
@@ -910,9 +966,28 @@ public class LearnFacadeService {
                 .build();
     }
 
-    private String buildQuestionPrompt(CourseKnowledgePointNodeResponse point) {
+    private String buildQuestionPrompt(CourseKnowledgePointNodeResponse point, AbilityQuestionAspect aspect) {
         String path = point.getPath() == null || point.getPath().isBlank() ? point.getName() : point.getPath();
-        return "请结合最近的学习情况，判断你对「" + path + "」的掌握程度。";
+        return String.format(aspect.promptTemplate(), path);
+    }
+
+    private int resolveQuestionLimit(Integer requestedLimit) {
+        if (requestedLimit == null) {
+            return DEFAULT_QUESTION_LIMIT;
+        }
+        return Math.max(1, Math.min(12, requestedLimit));
+    }
+
+    private List<AbilityQuestionSpec> buildQuestionSpecs(
+            List<CourseKnowledgePointNodeResponse> targets,
+            int questionLimit) {
+        List<AbilityQuestionSpec> specs = new ArrayList<>();
+        for (int index = 0; index < questionLimit; index++) {
+            CourseKnowledgePointNodeResponse point = targets.get(index % targets.size());
+            AbilityQuestionAspect aspect = ABILITY_QUESTION_ASPECTS.get(index % ABILITY_QUESTION_ASPECTS.size());
+            specs.add(new AbilityQuestionSpec(point, aspect));
+        }
+        return specs;
     }
 
     private List<AbilityMapResponse> selectFocusKnowledgePoints(List<AbilityMapResponse> abilityMap) {
@@ -1379,6 +1454,21 @@ public class LearnFacadeService {
     private record KnowledgePointCatalog(
             List<CourseKnowledgePointNodeResponse> tree,
             Map<Long, CourseKnowledgePointNodeResponse> nodesById
+    ) {
+    }
+
+    private record AbilityQuestionAspect(
+            String promptTemplate,
+            String optionA,
+            String optionB,
+            String optionC,
+            String optionD
+    ) {
+    }
+
+    private record AbilityQuestionSpec(
+            CourseKnowledgePointNodeResponse point,
+            AbilityQuestionAspect aspect
     ) {
     }
 
