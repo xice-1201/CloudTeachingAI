@@ -37,6 +37,7 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpRange;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -53,6 +54,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
@@ -401,20 +403,29 @@ public class CourseController {
         Resource resource = resourceStorageService.loadAsResource(content.storageKey());
         MediaType mediaType = resourceStorageService.resolveMediaType(content.storageKey());
 
+        String responseFilename = sanitizeResponseFilename(content.title());
         ContentDisposition disposition = download
-                ? ContentDisposition.attachment().filename(content.title()).build()
-                : ContentDisposition.inline().filename(content.title()).build();
+                ? ContentDisposition.attachment().filename(responseFilename, StandardCharsets.UTF_8).build()
+                : ContentDisposition.inline().filename(responseFilename, StandardCharsets.UTF_8).build();
 
         if (!download && rangeHeader != null && !rangeHeader.isBlank()) {
-            List<HttpRange> ranges = HttpRange.parseRanges(rangeHeader);
-            if (!ranges.isEmpty()) {
-                ResourceRegion region = ranges.getFirst().toResourceRegion(resource);
-                return ResponseEntity.status(206)
-                        .contentType(mediaType)
+            try {
+                List<HttpRange> ranges = HttpRange.parseRanges(rangeHeader);
+                if (!ranges.isEmpty()) {
+                    ResourceRegion region = ranges.getFirst().toResourceRegion(resource);
+                    return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
+                            .contentType(mediaType)
+                            .cacheControl(CacheControl.noStore())
+                            .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                            .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                            .body(region);
+                }
+            } catch (IllegalArgumentException ex) {
+                log.warn("Invalid resource range request: resourceId={}, range={}", resourceId, rangeHeader);
+                return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
                         .cacheControl(CacheControl.noStore())
                         .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                        .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                        .body(region);
+                        .build();
             }
         }
 
@@ -506,6 +517,14 @@ public class CourseController {
 
     private UserContext extractUserContext(String authorization) {
         return extractUserContext(authorization, null);
+    }
+
+    private String sanitizeResponseFilename(String filename) {
+        if (filename == null || filename.isBlank()) {
+            return "resource";
+        }
+        String sanitized = filename.replaceAll("[\\r\\n\"]", "_").trim();
+        return sanitized.isBlank() ? "resource" : sanitized;
     }
 
     private UserContext extractUserContext(String authorization, String accessToken) {
