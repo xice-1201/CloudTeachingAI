@@ -192,15 +192,6 @@
 
     <el-dialog v-model="resourceDialog.visible" :title="resourceDialog.isEdit ? '编辑资源' : '新增资源'" width="840px">
       <el-form ref="resourceFormRef" :model="resourceDialog.form" :rules="resourceRules" label-width="95px">
-        <el-form-item label="资源名称" prop="title"><el-input v-model="resourceDialog.form.title" placeholder="请输入资源名称" /></el-form-item>
-        <el-form-item label="资源描述"><el-input v-model="resourceDialog.form.description" type="textarea" :rows="3" placeholder="请输入资源简介" /></el-form-item>
-        <el-form-item label="资源类型" prop="type">
-          <el-select v-model="resourceDialog.form.type" style="width: 100%">
-            <el-option label="视频" value="VIDEO" />
-            <el-option label="文档" value="DOCUMENT" />
-            <el-option label="课件" value="SLIDE" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="本地文件">
           <el-upload action="#" :auto-upload="false" :show-file-list="false" @change="handleResourceFileChange">
             <el-button type="primary">选择文件</el-button>
@@ -221,6 +212,15 @@
             </div>
             <el-progress :percentage="resourceUploadProgress.percent" :stroke-width="8" />
           </div>
+        </el-form-item>
+        <el-form-item label="资源名称" prop="title"><el-input v-model="resourceDialog.form.title" placeholder="请输入资源名称" /></el-form-item>
+        <el-form-item label="资源描述"><el-input v-model="resourceDialog.form.description" type="textarea" :rows="3" placeholder="请输入资源简介" /></el-form-item>
+        <el-form-item label="资源类型" prop="type">
+          <el-select v-model="resourceDialog.form.type" style="width: 100%">
+            <el-option label="视频" value="VIDEO" />
+            <el-option label="文档" value="DOCUMENT" />
+            <el-option label="课件" value="SLIDE" />
+          </el-select>
         </el-form-item>
         <el-form-item label="资源地址" prop="url"><el-input v-model="resourceDialog.form.url" placeholder="请输入资源 URL" /></el-form-item>
         <el-row :gutter="12">
@@ -453,6 +453,29 @@ function handleCoverChange(file: UploadFile) {
   coverPreviewUrl.value = temporaryCoverUrl
 }
 
+function getFileBaseName(fileName: string) {
+  const normalized = fileName.trim()
+  const lastDotIndex = normalized.lastIndexOf('.')
+  if (lastDotIndex <= 0) return normalized
+  return normalized.slice(0, lastDotIndex)
+}
+
+function inferResourceTypeFromFile(file: File): Resource['type'] {
+  const fileName = file.name.toLowerCase()
+  const mimeType = file.type.toLowerCase()
+  if (mimeType.startsWith('video/') || /\.(mp4|mov|m4v|webm|ogv|ogg|mpe|mpeg|mpg|avi|wmv|mkv|flv|3gp)$/i.test(fileName)) {
+    return 'VIDEO'
+  }
+  if (
+    mimeType.includes('presentation')
+    || mimeType.includes('powerpoint')
+    || /\.(ppt|pptx|pps|ppsx|odp|key)$/i.test(fileName)
+  ) {
+    return 'SLIDE'
+  }
+  return 'DOCUMENT'
+}
+
 function handleResourceFileChange(file: UploadFile) {
   if (!file.raw) return
   selectedResourceFile.value = file.raw
@@ -460,13 +483,10 @@ function handleResourceFileChange(file: UploadFile) {
   resourceUploadProgress.percent = 0
   resourceUploadProgress.label = '等待上传'
   resourceDialog.form.size = file.raw.size
-  if (file.raw.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|mpe|mpeg|mpg|avi|wmv|mkv)$/i.test(file.raw.name)) {
-    resourceDialog.form.type = 'VIDEO'
-  } else if (file.raw.type.includes('presentation') || /\.(ppt|pptx|odp)$/i.test(file.raw.name)) {
-    resourceDialog.form.type = 'SLIDE'
-  } else if (file.raw.type.startsWith('application/') || file.raw.type.startsWith('text/')) {
-    resourceDialog.form.type = 'DOCUMENT'
+  if (!resourceDialog.form.title.trim()) {
+    resourceDialog.form.title = getFileBaseName(file.raw.name)
   }
+  resourceDialog.form.type = inferResourceTypeFromFile(file.raw)
   suggestions.value = []
 }
 
