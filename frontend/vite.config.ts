@@ -39,6 +39,10 @@ export default defineConfig({
         target: 'http://localhost:8002',
         changeOrigin: true,
       },
+      '^/api/v1/courses/[^/]+/assignments': {
+        target: 'http://localhost:8005',
+        changeOrigin: true,
+      },
       '/api/v1/courses': {
         target: 'http://localhost:8003',
         changeOrigin: true,
