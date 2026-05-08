@@ -217,44 +217,33 @@ public class LearnFacadeService {
                 .sorted(Comparator.comparing(CourseKnowledgePointNodeResponse::getPath, Comparator.nullsLast(String::compareToIgnoreCase))
                         .thenComparing(CourseKnowledgePointNodeResponse::getId))
                 .toList();
-        AbilityQuestionBuildResult questionBuild = buildQuestionSpecs(root, sortedTargets, questionLimit);
-        List<AbilityQuestionSpec> selectedQuestions = questionBuild.questions();
+        AbilityQuestionBuildResult questionBuild = buildAdaptiveQuestionSpec(
+                root,
+                sortedTargets,
+                questionLimit,
+                1,
+                "MEDIUM",
+                List.of()
+        );
+        AbilityQuestionSpec firstQuestion = questionBuild.questions().getFirst();
 
         AbilityTestSessionEntity session = abilityTestSessionRepository.save(AbilityTestSessionEntity.builder()
                 .studentId(userContext.userId())
                 .rootKnowledgePointId(root.getId())
                 .rootKnowledgePointName(root.getName())
                 .status(STATUS_IN_PROGRESS)
-                .questionCount(selectedQuestions.size())
+                .questionCount(questionLimit)
                 .answeredCount(0)
                 .startedAt(OffsetDateTime.now(ZoneOffset.UTC))
                 .build());
 
-        List<AbilityTestQuestionEntity> questions = new ArrayList<>();
-        for (int index = 0; index < selectedQuestions.size(); index++) {
-            AbilityQuestionSpec spec = selectedQuestions.get(index);
-            questions.add(AbilityTestQuestionEntity.builder()
-                    .sessionId(session.getId())
-                    .knowledgePointId(spec.point().getId())
-                    .knowledgePointName(spec.point().getName())
-                    .prompt(spec.prompt())
-                    .optionA(spec.optionA())
-                    .optionB(spec.optionB())
-                    .optionC(spec.optionC())
-                    .optionD(spec.optionD())
-                    .correctAnswer(spec.correctAnswer())
-                    .explanation(spec.explanation())
-                    .displayOrder(index + 1)
-                    .answered(false)
-                    .build());
-        }
-        List<AbilityTestQuestionEntity> savedQuestions = abilityTestQuestionRepository.saveAll(questions);
+        AbilityTestQuestionEntity savedQuestion = abilityTestQuestionRepository.save(toQuestionEntity(session.getId(), firstQuestion, 1));
 
         return AbilityTestStartResponse.builder()
                 .sessionId(session.getId())
                 .rootKnowledgePointName(root.getName())
-                .totalQuestions(savedQuestions.size())
-                .question(toQuestionResponse(savedQuestions.getFirst(), savedQuestions.size()))
+                .totalQuestions(questionLimit)
+                .question(toQuestionResponse(savedQuestion, questionLimit))
                 .generationMode(questionBuild.generationMode())
                 .generationMessage(questionBuild.generationMessage())
                 .build();
@@ -308,6 +297,47 @@ public class LearnFacadeService {
                     .totalQuestions(session.getQuestionCount())
                     .completed(false)
                     .nextQuestion(toQuestionResponse(nextQuestion.get(), session.getQuestionCount()))
+                    .generationMode("PREGENERATED")
+                    .generationMessage("Returned an existing unanswered question from this session.")
+                    .build();
+        }
+
+        if (session.getAnsweredCount() < session.getQuestionCount()) {
+            KnowledgePointCatalog catalog = loadKnowledgePointCatalog(authorization);
+            CourseKnowledgePointNodeResponse root = catalog.nodesById().get(session.getRootKnowledgePointId());
+            if (root == null) {
+                throw BusinessException.notFound("Knowledge point not found");
+            }
+            List<CourseKnowledgePointNodeResponse> targets = collectQuestionTargets(root);
+            if (targets.isEmpty()) {
+                throw BusinessException.badRequest("Selected knowledge point has no available test targets");
+            }
+            List<CourseKnowledgePointNodeResponse> sortedTargets = targets.stream()
+                    .sorted(Comparator.comparing(CourseKnowledgePointNodeResponse::getPath, Comparator.nullsLast(String::compareToIgnoreCase))
+                            .thenComparing(CourseKnowledgePointNodeResponse::getId))
+                    .toList();
+            int nextOrder = session.getAnsweredCount() + 1;
+            String difficulty = decideAdaptiveDifficulty(allQuestions);
+            AbilityQuestionBuildResult questionBuild = buildAdaptiveQuestionSpec(
+                    root,
+                    sortedTargets,
+                    session.getQuestionCount(),
+                    nextOrder,
+                    difficulty,
+                    allQuestions
+            );
+            AbilityTestQuestionEntity generatedQuestion = abilityTestQuestionRepository.save(
+                    toQuestionEntity(sessionId, questionBuild.questions().getFirst(), nextOrder)
+            );
+            abilityTestSessionRepository.save(session);
+            return AbilityTestAnswerResponse.builder()
+                    .sessionId(sessionId)
+                    .answeredCount(session.getAnsweredCount())
+                    .totalQuestions(session.getQuestionCount())
+                    .completed(false)
+                    .nextQuestion(toQuestionResponse(generatedQuestion, session.getQuestionCount()))
+                    .generationMode(questionBuild.generationMode())
+                    .generationMessage(questionBuild.generationMessage())
                     .build();
         }
 
@@ -956,7 +986,83 @@ public class LearnFacadeService {
         if (requestedLimit == null) {
             return DEFAULT_QUESTION_LIMIT;
         }
-        return Math.max(1, Math.min(12, requestedLimit));
+        return Math.max(2, Math.min(10, requestedLimit));
+    }
+
+    private AbilityTestQuestionEntity toQuestionEntity(Long sessionId, AbilityQuestionSpec spec, int displayOrder) {
+        return AbilityTestQuestionEntity.builder()
+                .sessionId(sessionId)
+                .knowledgePointId(spec.point().getId())
+                .knowledgePointName(spec.point().getName())
+                .prompt(spec.prompt())
+                .optionA(spec.optionA())
+                .optionB(spec.optionB())
+                .optionC(spec.optionC())
+                .optionD(spec.optionD())
+                .correctAnswer(spec.correctAnswer())
+                .explanation(spec.explanation())
+                .displayOrder(displayOrder)
+                .answered(false)
+                .build();
+    }
+
+    private String decideAdaptiveDifficulty(List<AbilityTestQuestionEntity> answeredQuestions) {
+        List<AbilityTestQuestionEntity> scoredQuestions = answeredQuestions.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getAnswered()))
+                .filter(item -> item.getScore() != null)
+                .sorted(Comparator.comparing(AbilityTestQuestionEntity::getDisplayOrder))
+                .toList();
+        if (scoredQuestions.isEmpty()) {
+            return "MEDIUM";
+        }
+        double averageScore = scoredQuestions.stream()
+                .mapToDouble(AbilityTestQuestionEntity::getScore)
+                .average()
+                .orElse(0D);
+        long recentWrongCount = scoredQuestions.stream()
+                .skip(Math.max(0, scoredQuestions.size() - 2))
+                .filter(item -> item.getScore() < 0.5D)
+                .count();
+        if (recentWrongCount >= 2 || averageScore < 0.45D) {
+            return "EASY";
+        }
+        if (averageScore >= 0.75D) {
+            return "HARD";
+        }
+        return "MEDIUM";
+    }
+
+    private AbilityQuestionBuildResult buildAdaptiveQuestionSpec(
+            CourseKnowledgePointNodeResponse root,
+            List<CourseKnowledgePointNodeResponse> targets,
+            int totalQuestionCount,
+            int questionNumber,
+            String difficulty,
+            List<AbilityTestQuestionEntity> answeredQuestions) {
+        CourseKnowledgePointNodeResponse target = targets.get(Math.floorMod(questionNumber - 1, targets.size()));
+        AiQuestionGenerationResult aiResult = requestAdaptiveAiQuestionSpec(
+                root,
+                targets,
+                target,
+                totalQuestionCount,
+                questionNumber,
+                difficulty,
+                answeredQuestions
+        );
+        if (!aiResult.questions().isEmpty()) {
+            return new AbilityQuestionBuildResult(
+                    List.of(aiResult.questions().getFirst()),
+                    "AI",
+                    "Adaptive AI generated question " + questionNumber + "/" + totalQuestionCount
+                            + " with difficulty=" + difficulty + ". " + aiResult.message()
+            );
+        }
+        return new AbilityQuestionBuildResult(
+                List.of(buildAdaptiveFallbackQuestionSpec(target, difficulty, questionNumber)),
+                "FALLBACK_RULE",
+                "Adaptive rule fallback generated question " + questionNumber + "/" + totalQuestionCount
+                        + " with difficulty=" + difficulty + ". " + aiResult.message()
+        );
     }
 
     private AbilityQuestionBuildResult buildQuestionSpecs(
@@ -1095,6 +1201,140 @@ public class LearnFacadeService {
         }
     }
 
+    private AiQuestionGenerationResult requestAdaptiveAiQuestionSpec(
+            CourseKnowledgePointNodeResponse root,
+            List<CourseKnowledgePointNodeResponse> targets,
+            CourseKnowledgePointNodeResponse target,
+            int totalQuestionCount,
+            int questionNumber,
+            String difficulty,
+            List<AbilityTestQuestionEntity> answeredQuestions) {
+        if (!abilityTestAiEnabled) {
+            return new AiQuestionGenerationResult(List.of(), "AI ability test generation is disabled by AI_ABILITY_TEST_ENABLED=false.");
+        }
+        if (normalizeBlank(abilityTestAiApiKey) == null) {
+            return new AiQuestionGenerationResult(List.of(), "AI ability test API key is missing. Set DEEPSEEK_API_KEY or OPENAI_API_KEY for learn-service.");
+        }
+
+        try {
+            Map<Long, CourseKnowledgePointNodeResponse> targetById = targets.stream()
+                    .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+            Map<String, Object> payload = Map.of(
+                    "model", abilityTestAiModel,
+                    "temperature", switch (difficulty) {
+                        case "EASY" -> 0.2;
+                        case "HARD" -> 0.45;
+                        default -> 0.3;
+                    },
+                    "response_format", Map.of("type", "json_object"),
+                    "messages", List.of(
+                            Map.of(
+                                    "role", "system",
+                                    "content", """
+                                            You generate exactly one adaptive objective multiple-choice diagnostic question for a student.
+                                            Return JSON only: {"questions":[{"knowledgePointId":1,"prompt":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correctAnswer":"A","explanation":"..."}]}.
+                                            Requirements:
+                                            - Use the same language as the knowledge point content, usually Chinese.
+                                            - The requested difficulty is mandatory: EASY tests basic recognition, MEDIUM tests understanding/application, HARD tests transfer, edge cases, or misconception diagnosis.
+                                            - The first question of a session is always MEDIUM.
+                                            - Questions after the first must reflect the student's previous answers and cumulative score trend.
+                                            - Do not ask students to self-rate their mastery.
+                                            - Exactly one option must be correct.
+                                            - Use only A/B/C/D as option keys and correctAnswer.
+                                            - Do not reveal the answer in the prompt.
+                                            """
+                            ),
+                            Map.of(
+                                    "role", "user",
+                                    "content", objectMapper.writeValueAsString(Map.of(
+                                            "questionNumber", questionNumber,
+                                            "totalQuestionCount", totalQuestionCount,
+                                            "requestedDifficulty", difficulty,
+                                            "rootKnowledgePoint", toAiKnowledgePoint(root),
+                                            "targetKnowledgePoint", toAiKnowledgePoint(target),
+                                            "candidateKnowledgePoints", targets.stream()
+                                                    .map(this::toAiKnowledgePoint)
+                                                    .toList(),
+                                            "previousAnswers", toAiAnswerHistory(answeredQuestions),
+                                            "scoreSummary", toAiScoreSummary(answeredQuestions)
+                                    ))
+                            )
+                    )
+            );
+
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(normalizeBaseUrl(abilityTestAiBaseUrl) + "/chat/completions"))
+                    .timeout(Duration.ofSeconds(Math.max(5, abilityTestAiTimeoutSeconds)))
+                    .header("Authorization", "Bearer " + abilityTestAiApiKey)
+                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.warn("Adaptive AI ability test generation failed: status={}, body={}", response.statusCode(), abbreviate(response.body(), 1000));
+                return new AiQuestionGenerationResult(
+                        List.of(),
+                        "AI ability test request failed with HTTP " + response.statusCode() + ". Body: " + abbreviate(response.body(), 300)
+                );
+            }
+
+            JsonNode rootNode = objectMapper.readTree(response.body());
+            String content = rootNode.path("choices").path(0).path("message").path("content").asText("");
+            if (normalizeBlank(content) == null) {
+                return new AiQuestionGenerationResult(List.of(), "AI ability test response did not contain choices[0].message.content.");
+            }
+            JsonNode parsed = objectMapper.readTree(content);
+            JsonNode questions = parsed.path("questions");
+            if (!questions.isArray()) {
+                return new AiQuestionGenerationResult(List.of(), "AI ability test response JSON did not contain a questions array.");
+            }
+            for (JsonNode question : questions) {
+                AbilityQuestionSpec spec = toAiQuestionSpec(question, targetById);
+                if (spec != null) {
+                    return new AiQuestionGenerationResult(List.of(spec), "AI returned 1 valid adaptive question.");
+                }
+            }
+            return new AiQuestionGenerationResult(List.of(), "AI returned questions, but none passed validation.");
+        } catch (Exception ex) {
+            log.warn("Adaptive AI ability test generation failed, fallback to rule question", ex);
+            return new AiQuestionGenerationResult(
+                    List.of(),
+                    "AI ability test generation threw " + ex.getClass().getSimpleName() + ": " + Optional.ofNullable(ex.getMessage()).orElse("")
+            );
+        }
+    }
+
+    private List<Map<String, Object>> toAiAnswerHistory(List<AbilityTestQuestionEntity> answeredQuestions) {
+        return answeredQuestions.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getAnswered()))
+                .sorted(Comparator.comparing(AbilityTestQuestionEntity::getDisplayOrder))
+                .map(item -> Map.<String, Object>of(
+                        "questionNumber", item.getDisplayOrder(),
+                        "knowledgePointId", item.getKnowledgePointId(),
+                        "knowledgePointName", item.getKnowledgePointName(),
+                        "selectedAnswer", Optional.ofNullable(item.getSelectedAnswer()).orElse(""),
+                        "correctAnswer", item.getCorrectAnswer(),
+                        "score", Optional.ofNullable(item.getScore()).orElse(0D)
+                ))
+                .toList();
+    }
+
+    private Map<String, Object> toAiScoreSummary(List<AbilityTestQuestionEntity> answeredQuestions) {
+        List<AbilityTestQuestionEntity> scoredQuestions = answeredQuestions.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getAnswered()))
+                .filter(item -> item.getScore() != null)
+                .toList();
+        int answeredCount = scoredQuestions.size();
+        double correctCount = scoredQuestions.stream().mapToDouble(AbilityTestQuestionEntity::getScore).sum();
+        double accuracy = answeredCount == 0 ? 0D : correctCount / answeredCount;
+        return Map.of(
+                "answeredCount", answeredCount,
+                "correctCount", correctCount,
+                "accuracy", accuracy
+        );
+    }
+
     private Map<String, Object> toAiKnowledgePoint(CourseKnowledgePointNodeResponse point) {
         return Map.of(
                 "id", point.getId(),
@@ -1145,6 +1385,46 @@ public class LearnFacadeService {
                 Optional.ofNullable(normalizeBlank(question.path("explanation").asText("")))
                         .orElse("系统将根据正确答案自动评分。")
         );
+    }
+
+    private AbilityQuestionSpec buildAdaptiveFallbackQuestionSpec(
+            CourseKnowledgePointNodeResponse point,
+            String difficulty,
+            int questionNumber) {
+        String topic = displayKnowledgePoint(point);
+        String name = point.getName() == null || point.getName().isBlank() ? topic : point.getName();
+        return switch (difficulty) {
+            case "EASY" -> new AbilityQuestionSpec(
+                    point,
+                    "第 " + questionNumber + " 题（简单）：学习「" + topic + "」时，最应该先确认哪一项？",
+                    "这个知识点的名称和核心定义。",
+                    "页面按钮的颜色。",
+                    "与本知识点无关的术语。",
+                    "任意一个看起来熟悉的答案。",
+                    "A",
+                    "简单题主要确认基础概念是否清楚。"
+            );
+            case "HARD" -> new AbilityQuestionSpec(
+                    point,
+                    "第 " + questionNumber + " 题（困难）：如果要把「" + name + "」迁移到一个新问题中，最可靠的做法是什么？",
+                    "直接复用上一次的答案，不检查条件。",
+                    "先识别问题条件，再判断该知识点是否适用并解释原因。",
+                    "只根据题目长度选择解法。",
+                    "跳过概念分析，先猜一个选项。",
+                    "B",
+                    "困难题关注迁移应用、适用条件和原因解释。"
+            );
+            default -> new AbilityQuestionSpec(
+                    point,
+                    "第 " + questionNumber + " 题（中等）：以下哪项最准确概括「" + topic + "」的学习目标？",
+                    "只记住这个知识点的名称即可。",
+                    "能解释核心概念、适用条件，并完成典型任务。",
+                    "跳过基础定义，直接做任意练习。",
+                    "只看一遍材料，不需要复盘。",
+                    "B",
+                    "中等题关注理解核心概念并完成典型应用。"
+            );
+        };
     }
 
     private AbilityQuestionSpec buildQuestionSpec(CourseKnowledgePointNodeResponse point, int aspectIndex) {

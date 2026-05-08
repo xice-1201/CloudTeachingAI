@@ -202,7 +202,9 @@ async function startTest() {
   loading.value = true
   try {
     const response = await learnApi.startAbilityTest(selectedKnowledgePointId.value)
-    logAbilityTestGeneration(response.generationMode, response.generationMessage)
+    if (response.generationMode || response.generationMessage) {
+      logAbilityTestGeneration(response.generationMode, response.generationMessage)
+    }
     sessionId.value = response.sessionId
     currentQuestion.value = response.question
     completed.value = false
@@ -225,6 +227,10 @@ function logAbilityTestGeneration(mode?: string, message?: string | null) {
     console.warn('[AbilityTest] AI question generation partially succeeded; some questions used rule fallback.', payload)
     return
   }
+  if (mode === 'PREGENERATED') {
+    console.info('[AbilityTest] Reused an existing unanswered question.', payload)
+    return
+  }
   console.warn('[AbilityTest] Rule fallback questions were used instead of AI-generated questions.', payload)
 }
 
@@ -234,6 +240,7 @@ async function submitAnswer() {
   try {
     const response = await learnApi.submitAnswer(sessionId.value, currentQuestion.value.id, selectedAnswer.value)
     selectedAnswer.value = ''
+    logAbilityTestGeneration(response.generationMode, response.generationMessage)
     if (response.completed) {
       completed.value = true
       currentQuestion.value = null

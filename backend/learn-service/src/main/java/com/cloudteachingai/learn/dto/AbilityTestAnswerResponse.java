@@ -13,5 +13,7 @@ public class AbilityTestAnswerResponse {
     Integer totalQuestions;
     Boolean completed;
     AbilityTestQuestionResponse nextQuestion;
+    String generationMode;
+    String generationMessage;
     List<AbilityMapResponse> abilityMap;
 }

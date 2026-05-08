@@ -191,6 +191,8 @@ export interface AbilityTestAnswerResponse {
   totalQuestions: number
   completed: boolean
   nextQuestion?: AbilityTestQuestion | null
+  generationMode?: 'AI' | 'MIXED' | 'FALLBACK_RULE' | string
+  generationMessage?: string | null
   abilityMap?: AbilityMap[]
 }
 
