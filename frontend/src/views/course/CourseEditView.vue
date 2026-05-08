@@ -742,7 +742,7 @@ async function loadTagSuggestions() {
         })
     if (!suggestions.value.length) {
       if (resourceDialog.form.type === 'VIDEO') {
-        ElMessage.warning('未成功获取视频转写，暂时无法基于内容生成标签，请检查视频音轨与转写配置')
+        ElMessage.warning('暂未生成建议标签，可补充更明确的标题/简介后重试，或从知识点树手动选择')
       } else {
         ElMessage.info('没有生成建议标签，请手动补充标签')
       }

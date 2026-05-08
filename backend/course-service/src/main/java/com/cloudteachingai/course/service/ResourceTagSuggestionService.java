@@ -225,16 +225,6 @@ public class ResourceTagSuggestionService {
             List<TagCandidate> candidates,
             List<ResourceTagSuggestionResponse> ruleSuggestions
     ) {
-        if (shouldRequireVideoTranscript(request, extractedContent)) {
-            log.warn(
-                    "Skip AI tag preview because video transcript is unavailable. fileName={}, titlePresent={}, descriptionPresent={}",
-                    request.getFileName(),
-                    StringUtils.hasText(request.getTitle()),
-                    StringUtils.hasText(request.getDescription())
-            );
-            return List.of();
-        }
-
         TagProvider tagProvider = resolveTagProvider();
         if (!providerEnabled || tagProvider == null) {
             log.info("Skip AI tag preview: provider disabled or no chat provider configured");
@@ -487,14 +477,6 @@ public class ResourceTagSuggestionService {
             ExtractedContent extractedContent,
             List<TagCandidate> candidates
     ) {
-        if (shouldRequireVideoTranscript(request, extractedContent)) {
-            log.info(
-                    "Skip rule tag suggestions because video transcript is unavailable. fileName={}",
-                    request.getFileName()
-            );
-            return List.of();
-        }
-
         String normalizedTitle = normalizeSuggestionText(request.getTitle());
         String normalizedFullText = normalizeSuggestionText(buildSemanticAnalysis(request, extractedContent).text());
         if (!StringUtils.hasText(normalizedFullText)) {
@@ -596,14 +578,6 @@ public class ResourceTagSuggestionService {
             ExtractedContent extractedContent,
             List<TagCandidate> candidates
     ) {
-        if (shouldRequireVideoTranscript(request, extractedContent)) {
-            log.info(
-                    "Skip generated fallback suggestions because video transcript is unavailable. fileName={}",
-                    request.getFileName()
-            );
-            return List.of();
-        }
-
         SemanticAnalysis analysis = buildSemanticAnalysis(request, extractedContent);
         String analysisText = analysis.text();
         if (!StringUtils.hasText(analysisText)) {
@@ -769,20 +743,22 @@ public class ResourceTagSuggestionService {
         boolean descriptionUsed = StringUtils.hasText(request.getDescription());
         boolean contentUsed = extractedContent != null && StringUtils.hasText(extractedContent.text());
         boolean fileNameUsed = false;
+        boolean metadataUsed = extractedContent != null && StringUtils.hasText(extractedContent.metadataSummary());
 
         addIfText(parts, request.getTitle());
         addIfText(parts, request.getDescription());
-        if (!isVideoRequest(request)) {
-            String sanitizedFileName = sanitizeSemanticFileName(request.getFileName());
-            if (StringUtils.hasText(sanitizedFileName)) {
-                addIfText(parts, sanitizedFileName);
-                fileNameUsed = true;
-            }
+        String sanitizedFileName = sanitizeSemanticFileName(request.getFileName());
+        if (StringUtils.hasText(sanitizedFileName)) {
+            addIfText(parts, sanitizedFileName);
+            fileNameUsed = true;
+        }
+        if (metadataUsed) {
+            addIfText(parts, extractedContent.metadataSummary());
         }
         if (contentUsed) {
             addIfText(parts, truncate(extractedContent.text(), maxContentChars));
         }
-        return new SemanticAnalysis(String.join(" ", parts), titleUsed, descriptionUsed, fileNameUsed, contentUsed);
+        return new SemanticAnalysis(String.join(" ", parts), titleUsed, descriptionUsed, fileNameUsed, contentUsed, metadataUsed);
     }
 
     private String buildGeneratedFallbackReason(
@@ -805,6 +781,9 @@ public class ResourceTagSuggestionService {
         if (analysis.fileNameUsed() && containsSemanticToken(sanitizeSemanticFileName(request.getFileName()), normalizedToken)) {
             sources.add("file name");
         }
+        if (analysis.metadataUsed() && containsSemanticToken(extractedContent == null ? null : extractedContent.metadataSummary(), normalizedToken)) {
+            sources.add("metadata");
+        }
         if (sources.isEmpty()) {
             return "Fallback keyword extraction";
         }
@@ -821,11 +800,6 @@ public class ResourceTagSuggestionService {
     private boolean isVideoRequest(ResourceTagPreviewRequest request) {
         return isLikelyVideo(request.getFileName(), null, request.getType())
                 || isLikelyVideo(extractFileName(request.getSourceUrl()), null, request.getType());
-    }
-
-    private boolean shouldRequireVideoTranscript(ResourceTagPreviewRequest request, ExtractedContent extractedContent) {
-        return isVideoRequest(request)
-                && (extractedContent == null || !StringUtils.hasText(extractedContent.text()));
     }
 
     private String sanitizeSemanticFileName(String fileName) {
@@ -1451,7 +1425,8 @@ public class ResourceTagSuggestionService {
             boolean titleUsed,
             boolean descriptionUsed,
             boolean fileNameUsed,
-            boolean contentUsed
+            boolean contentUsed,
+            boolean metadataUsed
     ) {
     }
 
