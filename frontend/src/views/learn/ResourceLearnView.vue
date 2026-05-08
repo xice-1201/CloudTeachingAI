@@ -148,6 +148,7 @@ const resourceMap = ref<Record<number, Resource[]>>({})
 const resourceDiscussions = ref<DiscussionPost[]>([])
 const replyingToId = ref<number | null>(null)
 const replyContent = ref('')
+const currentCourseId = ref<number | null>(null)
 
 const resourceDiscussionForm = ref({
   title: '',
@@ -193,8 +194,44 @@ function buildDownloadUrl(url: string) {
   return `${resolvedUrl}${separator}download=true`
 }
 
-function getCourseId() {
-  return Number(route.params.courseId)
+function parsePositiveId(value: unknown) {
+  const rawValue = Array.isArray(value) ? value[0] : value
+  const id = Number(rawValue)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+function resolveCourseId() {
+  const routeCourseId = parsePositiveId(route.params.courseId)
+  if (routeCourseId) {
+    currentCourseId.value = routeCourseId
+    return routeCourseId
+  }
+  if (currentCourseId.value) return currentCourseId.value
+
+  const activeResourceId = parsePositiveId(route.params.resourceId)
+  if (!activeResourceId) return null
+  const matchedChapter = chapters.value.find((chapter) => (
+    resourceMap.value[chapter.id]?.some((item) => item.id === activeResourceId)
+  ))
+  currentCourseId.value = matchedChapter?.courseId ?? null
+  return currentCourseId.value
+}
+
+function buildProgressPayload(progressValue: number, lastPosition?: number) {
+  const courseId = resolveCourseId()
+  if (!courseId) {
+    console.warn('[ResourceLearnView] skip progress update because courseId is unavailable', {
+      routeCourseId: route.params.courseId,
+      routeResourceId: route.params.resourceId,
+      resourceId: resource.value?.id,
+    })
+    return null
+  }
+  return {
+    courseId,
+    progress: progressValue,
+    lastPosition,
+  }
 }
 
 function goBack() {
@@ -273,11 +310,9 @@ function handleTimeUpdate() {
 
 async function handleEnded() {
   if (!canTrackProgress.value || !resource.value) return
-  progress.value = await learnApi.updateProgress(String(resource.value.id), {
-    courseId: getCourseId(),
-    progress: 1,
-    lastPosition: videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined,
-  })
+  const payload = buildProgressPayload(1, videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined)
+  if (!payload) return
+  progress.value = await learnApi.updateProgress(String(resource.value.id), payload)
   notifyPathProgress(progress.value)
 }
 
@@ -285,16 +320,20 @@ async function saveProgress() {
   if (!canTrackProgress.value || !resource.value) return
   const isVideo = resource.value.type === 'VIDEO'
   const percent = isVideo && videoEl.value ? videoEl.value.currentTime / (videoEl.value.duration || 1) : 1
-  progress.value = await learnApi.updateProgress(String(resource.value.id), {
-    courseId: getCourseId(),
-    progress: percent,
-    lastPosition: isVideo && videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined,
-  })
+  const payload = buildProgressPayload(percent, isVideo && videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined)
+  if (!payload) return
+  progress.value = await learnApi.updateProgress(String(resource.value.id), payload)
   notifyPathProgress(progress.value)
 }
 
 async function loadCurriculum() {
-  const chapterList = await courseApi.listChapters(String(route.params.courseId))
+  const courseId = resolveCourseId()
+  if (!courseId) {
+    chapters.value = []
+    resourceMap.value = {}
+    return
+  }
+  const chapterList = await courseApi.listChapters(String(courseId))
   chapters.value = chapterList
   const resourceEntries = await Promise.all(chapterList.map(async (chapter) => [chapter.id, await courseApi.listResources(String(chapter.id))] as const))
   resourceMap.value = Object.fromEntries(resourceEntries)
@@ -325,11 +364,11 @@ async function loadResourcePage() {
     return
   }
   if (canTrackProgress.value && !progressData?.completed) {
-    progress.value = await learnApi.updateProgress(String(resourceData.id), {
-      courseId: getCourseId(),
-      progress: 1,
-    })
-    notifyPathProgress(progress.value)
+    const payload = buildProgressPayload(1)
+    if (payload) {
+      progress.value = await learnApi.updateProgress(String(resourceData.id), payload)
+      notifyPathProgress(progress.value)
+    }
   }
 }
 
