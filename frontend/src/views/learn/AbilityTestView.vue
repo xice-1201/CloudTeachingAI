@@ -8,8 +8,8 @@
       <template #header>
         <div class="card-header">
           <div>
-            <div class="card-title">开始一次知识点自评</div>
-            <div class="card-subtitle">先选择一个知识点范围，系统会按该范围生成 1-6 道掌握度题目。</div>
+            <div class="card-title">开始一次知识点测验</div>
+            <div class="card-subtitle">先选择一个知识点范围，系统会按该范围生成 1-6 道选择题。</div>
           </div>
           <el-tag type="info">规则版诊断</el-tag>
         </div>
@@ -40,7 +40,7 @@
           <div class="setup-tips">
             <p>适合在学习新课程前，或阶段性复盘时使用。</p>
             <p>测试结果会同步到学习中心，并立即刷新个性化学习路线。</p>
-            <p>当前版本以自评题为主，后续可继续接入更细的 AI 诊断题。</p>
+            <p>题目会根据知识点名称、描述和关键词生成，并按正确答案自动评分。</p>
           </div>
         </el-form-item>
         <el-form-item>

@@ -74,56 +74,7 @@ public class LearnFacadeService {
     private static final int MAX_PATH_RESOURCES = 6;
     private static final int MAX_PATH_FOCUS_POINTS = 3;
     private static final double WEAK_MASTERY_THRESHOLD = 0.7D;
-    private static final Map<String, Double> ANSWER_SCORES = Map.of(
-            "A", 0.25D,
-            "B", 0.5D,
-            "C", 0.75D,
-            "D", 1D
-    );
-    private static final List<AbilityQuestionAspect> ABILITY_QUESTION_ASPECTS = List.of(
-            new AbilityQuestionAspect(
-                    "请结合最近的学习情况，判断你对「%s」核心概念的理解程度。",
-                    "我还说不清这个概念是什么。",
-                    "我知道大致含义，但容易混淆关键概念。",
-                    "我能说出主要含义，并理解常见说法。",
-                    "我能准确解释概念，并指出它和相关知识的区别。"
-            ),
-            new AbilityQuestionAspect(
-                    "遇到与「%s」相关的例子或题目时，你通常能识别出它考察的重点吗？",
-                    "我通常看不出它和这个知识点有关。",
-                    "有人提示后，我能大致判断考察方向。",
-                    "我多数情况下能识别出考察重点。",
-                    "我能快速判断重点，并说明为什么属于这个知识点。"
-            ),
-            new AbilityQuestionAspect(
-                    "需要用「%s」完成练习或学习任务时，你的独立完成程度如何？",
-                    "我基本无法独立开始。",
-                    "我能开始，但经常需要步骤提示。",
-                    "我能完成常规任务，偶尔需要检查或提示。",
-                    "我能独立完成，并能处理变化后的任务。"
-            ),
-            new AbilityQuestionAspect(
-                    "当你在「%s」相关任务中出错时，你能定位并修正问题吗？",
-                    "我很难判断错在哪里。",
-                    "我能发现明显错误，但不确定如何修正。",
-                    "我能定位常见错误并完成修正。",
-                    "我能分析错误原因，并总结避免同类问题的方法。"
-            ),
-            new AbilityQuestionAspect(
-                    "把「%s」应用到新的案例或实际场景时，你的把握如何？",
-                    "我还不知道如何迁移应用。",
-                    "我能套用熟悉例子，但换场景会卡住。",
-                    "我能在相近场景中应用这个知识点。",
-                    "我能灵活迁移到新场景，并解释应用思路。"
-            ),
-            new AbilityQuestionAspect(
-                    "如果要向同学讲解「%s」，你觉得自己能讲到什么程度？",
-                    "我目前还无法讲清楚。",
-                    "我能讲出零散要点，但不够连贯。",
-                    "我能按步骤讲清主要内容。",
-                    "我能讲清思路、例子和常见误区。"
-            )
-    );
+    private static final Set<String> VALID_ANSWERS = Set.of("A", "B", "C", "D");
 
     private final LearningProgressRepository learningProgressRepository;
     private final AbilityTestSessionRepository abilityTestSessionRepository;
@@ -249,17 +200,17 @@ public class LearnFacadeService {
         List<AbilityTestQuestionEntity> questions = new ArrayList<>();
         for (int index = 0; index < selectedQuestions.size(); index++) {
             AbilityQuestionSpec spec = selectedQuestions.get(index);
-            CourseKnowledgePointNodeResponse point = spec.point();
-            AbilityQuestionAspect aspect = spec.aspect();
             questions.add(AbilityTestQuestionEntity.builder()
                     .sessionId(session.getId())
-                    .knowledgePointId(point.getId())
-                    .knowledgePointName(point.getName())
-                    .prompt(buildQuestionPrompt(point, aspect))
-                    .optionA(aspect.optionA())
-                    .optionB(aspect.optionB())
-                    .optionC(aspect.optionC())
-                    .optionD(aspect.optionD())
+                    .knowledgePointId(spec.point().getId())
+                    .knowledgePointName(spec.point().getName())
+                    .prompt(spec.prompt())
+                    .optionA(spec.optionA())
+                    .optionB(spec.optionB())
+                    .optionC(spec.optionC())
+                    .optionD(spec.optionD())
+                    .correctAnswer(spec.correctAnswer())
+                    .explanation(spec.explanation())
                     .displayOrder(index + 1)
                     .answered(false)
                     .build());
@@ -304,7 +255,7 @@ public class LearnFacadeService {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         question.setAnswered(true);
         question.setSelectedAnswer(normalizedAnswer);
-        question.setScore(ANSWER_SCORES.get(normalizedAnswer));
+        question.setScore(normalizedAnswer.equals(question.getCorrectAnswer()) ? 1D : 0D);
         question.setAnsweredAt(now);
         abilityTestQuestionRepository.save(question);
 
@@ -966,11 +917,6 @@ public class LearnFacadeService {
                 .build();
     }
 
-    private String buildQuestionPrompt(CourseKnowledgePointNodeResponse point, AbilityQuestionAspect aspect) {
-        String path = point.getPath() == null || point.getPath().isBlank() ? point.getName() : point.getPath();
-        return String.format(aspect.promptTemplate(), path);
-    }
-
     private int resolveQuestionLimit(Integer requestedLimit) {
         if (requestedLimit == null) {
             return DEFAULT_QUESTION_LIMIT;
@@ -984,10 +930,117 @@ public class LearnFacadeService {
         List<AbilityQuestionSpec> specs = new ArrayList<>();
         for (int index = 0; index < questionLimit; index++) {
             CourseKnowledgePointNodeResponse point = targets.get(index % targets.size());
-            AbilityQuestionAspect aspect = ABILITY_QUESTION_ASPECTS.get(index % ABILITY_QUESTION_ASPECTS.size());
-            specs.add(new AbilityQuestionSpec(point, aspect));
+            specs.add(buildQuestionSpec(point, index % 6));
         }
         return specs;
+    }
+
+    private AbilityQuestionSpec buildQuestionSpec(CourseKnowledgePointNodeResponse point, int aspectIndex) {
+        String topic = displayKnowledgePoint(point);
+        String name = point.getName() == null || point.getName().isBlank() ? topic : point.getName();
+        String description = normalizeBlank(point.getDescription());
+        String descriptionOption = description == null
+                ? "围绕核心概念、适用条件和典型例子建立理解"
+                : abbreviate(description, 80);
+        String keywordOption = buildKeywordOption(point);
+
+        return switch (aspectIndex) {
+            case 0 -> new AbilityQuestionSpec(
+                    point,
+                    "以下哪项最准确概括「" + topic + "」的学习目标？",
+                    "只记住这个知识点的名称即可。",
+                    "能解释核心概念、适用条件，并完成典型任务。",
+                    "跳过基础定义，直接做任意练习。",
+                    "只看一遍材料，不需要复盘。",
+                    "B",
+                    "掌握一个知识点需要理解概念、适用条件，并能完成典型任务。"
+            );
+            case 1 -> new AbilityQuestionSpec(
+                    point,
+                    "学习「" + topic + "」时，以下哪组信息最值得优先关注？",
+                    keywordOption,
+                    "页面按钮位置、系统登录入口和个人头像设置。",
+                    "课程发布时间、封面颜色和资料文件大小。",
+                    "与当前知识点无关的术语堆砌。",
+                    "A",
+                    "关键词和核心概念能帮助你抓住该知识点的学习重点。"
+            );
+            case 2 -> new AbilityQuestionSpec(
+                    point,
+                    "如果一道题或案例需要运用「" + name + "」，最合理的第一步是什么？",
+                    "先判断问题特征是否符合该知识点的适用条件。",
+                    "直接套用上一次看到的答案。",
+                    "只看题目长度来决定解法。",
+                    "先跳过所有概念分析。",
+                    "A",
+                    "解题前先识别适用条件，能避免机械套用。"
+            );
+            case 3 -> new AbilityQuestionSpec(
+                    point,
+                    "关于「" + topic + "」的理解，哪种做法最可靠？",
+                    "只背一个孤立结论。",
+                    "完全依赖猜测，不检查概念边界。",
+                    descriptionOption,
+                    "只关注和知识点无关的材料格式。",
+                    "C",
+                    "结合定义、边界和例子理解，通常比孤立记忆更可靠。"
+            );
+            case 4 -> new AbilityQuestionSpec(
+                    point,
+                    "完成「" + topic + "」相关练习后，哪种复盘最能提升掌握？",
+                    "只记录自己做完了，不检查答案。",
+                    "把错误原因、适用条件和改进方法整理出来。",
+                    "删除做错的题目，避免再次看到。",
+                    "只比较做题速度，不分析理解偏差。",
+                    "B",
+                    "有效复盘应关注错误原因、适用条件和后续改进。"
+            );
+            default -> new AbilityQuestionSpec(
+                    point,
+                    "以下哪种表现最能说明已经掌握「" + topic + "」？",
+                    "看到名称觉得熟悉。",
+                    "只会照抄材料中的一句话。",
+                    "能在相同例子中重复步骤，但无法解释原因。",
+                    "能解释概念、举出例子，并迁移到相近问题。",
+                    "D",
+                    "能解释、举例并迁移应用，说明掌握更扎实。"
+            );
+        };
+    }
+
+    private String displayKnowledgePoint(CourseKnowledgePointNodeResponse point) {
+        if (point.getPath() != null && !point.getPath().isBlank()) {
+            return point.getPath();
+        }
+        return point.getName();
+    }
+
+    private String buildKeywordOption(CourseKnowledgePointNodeResponse point) {
+        String keywords = normalizeBlank(point.getKeywords());
+        if (keywords == null) {
+            return "围绕“" + point.getName() + "”的核心概念、适用条件和典型例子。";
+        }
+        List<String> parts = List.of(keywords.split("[,，;；、\\s]+")).stream()
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .limit(4)
+                .toList();
+        if (parts.isEmpty()) {
+            return "围绕“" + point.getName() + "”的核心概念、适用条件和典型例子。";
+        }
+        return "重点关注：" + String.join("、", parts) + "。";
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        String trimmed = value.trim();
+        return trimmed.length() <= maxLength ? trimmed : trimmed.substring(0, maxLength) + "...";
+    }
+
+    private String normalizeBlank(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private List<AbilityMapResponse> selectFocusKnowledgePoints(List<AbilityMapResponse> abilityMap) {
@@ -1423,7 +1476,7 @@ public class LearnFacadeService {
 
     private String normalizeAnswer(String answer) {
         String normalized = answer == null ? "" : answer.trim().toUpperCase(Locale.ROOT);
-        if (!ANSWER_SCORES.containsKey(normalized)) {
+        if (!VALID_ANSWERS.contains(normalized)) {
             throw BusinessException.badRequest("Invalid ability test answer option");
         }
         return normalized;
@@ -1457,18 +1510,15 @@ public class LearnFacadeService {
     ) {
     }
 
-    private record AbilityQuestionAspect(
-            String promptTemplate,
+    private record AbilityQuestionSpec(
+            CourseKnowledgePointNodeResponse point,
+            String prompt,
             String optionA,
             String optionB,
             String optionC,
-            String optionD
-    ) {
-    }
-
-    private record AbilityQuestionSpec(
-            CourseKnowledgePointNodeResponse point,
-            AbilityQuestionAspect aspect
+            String optionD,
+            String correctAnswer,
+            String explanation
     ) {
     }
 

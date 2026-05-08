@@ -54,6 +54,12 @@ public class AbilityTestQuestionEntity {
     @Column(name = "option_d", nullable = false)
     private String optionD;
 
+    @Column(name = "correct_answer", nullable = false)
+    private String correctAnswer;
+
+    @Column
+    private String explanation;
+
     @Column(name = "display_order", nullable = false)
     private Integer displayOrder;
 
