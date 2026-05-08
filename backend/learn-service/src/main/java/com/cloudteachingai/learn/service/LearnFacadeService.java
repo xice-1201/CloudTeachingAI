@@ -1535,6 +1535,29 @@ public class LearnFacadeService {
         return value.trim();
     }
 
+    private String normalizeKnowledgePath(String value) {
+        String normalized = normalizeBlank(value);
+        if (normalized == null) {
+            return null;
+        }
+        normalized = normalized
+                .replace("\\", "/")
+                .replace(">", "/")
+                .replace("／", "/")
+                .replace("》", "/")
+                .replace(" - ", "/");
+        while (normalized.contains("//")) {
+            normalized = normalized.replace("//", "/");
+        }
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        while (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalizeBlank(normalized);
+    }
+
     private String normalizeBaseUrl(String value) {
         String normalized = Optional.ofNullable(value)
                 .map(String::trim)
@@ -1584,6 +1607,26 @@ public class LearnFacadeService {
         } catch (FeignException ex) {
             if (courseIds.isEmpty()) {
                 throw BusinessException.badRequest("Failed to load enrolled courses");
+            }
+        }
+
+        try {
+            CourseApiResponse<PageResponse<CourseSummaryResponse>> response =
+                    courseServiceClient.listCourses(authorization, 1, 100);
+            PageResponse<CourseSummaryResponse> page = response == null ? null : response.getData();
+            if (page != null && page.getItems() != null) {
+                page.getItems().stream()
+                        .map(CourseSummaryResponse::getId)
+                        .filter(value -> value != null)
+                        .forEach(courseIds::add);
+            }
+        } catch (FeignException.Forbidden ex) {
+            throw BusinessException.forbidden("No access to visible courses");
+        } catch (FeignException.Unauthorized ex) {
+            throw BusinessException.unauthorized("Invalid token");
+        } catch (FeignException ex) {
+            if (courseIds.isEmpty()) {
+                throw BusinessException.badRequest("Failed to load visible courses");
             }
         }
 
@@ -1706,7 +1749,7 @@ public class LearnFacadeService {
                 Long courseId = courseEntry.getKey();
                 CourseContext context = courseEntry.getValue();
                 for (CourseResourceResponse resource : context.resources()) {
-                    if (!matchesFocusPoint(resource, focusPoint.getKnowledgePointId())) {
+                    if (!matchesFocusPoint(resource, focusPoint)) {
                         continue;
                     }
 
@@ -1743,13 +1786,29 @@ public class LearnFacadeService {
                 .toList();
     }
 
-    private boolean matchesFocusPoint(CourseResourceResponse resource, Long knowledgePointId) {
+    private boolean matchesFocusPoint(CourseResourceResponse resource, AbilityMapResponse focusPoint) {
         if (resource.getKnowledgePoints() == null || resource.getKnowledgePoints().isEmpty()) {
             return false;
         }
+        Long knowledgePointId = focusPoint.getKnowledgePointId();
+        String focusName = normalizeBlank(focusPoint.getKnowledgePointName());
+        String focusPath = normalizeKnowledgePath(focusPoint.getKnowledgePointPath());
         return resource.getKnowledgePoints().stream()
-                .map(CourseResourceKnowledgePointResponse::getId)
-                .anyMatch(knowledgePointId::equals);
+                .anyMatch(knowledgePoint -> {
+                    if (knowledgePointId != null && knowledgePointId.equals(knowledgePoint.getId())) {
+                        return true;
+                    }
+                    String resourceName = normalizeBlank(knowledgePoint.getName());
+                    if (focusName != null && resourceName != null && focusName.equalsIgnoreCase(resourceName)) {
+                        return true;
+                    }
+                    String resourcePath = normalizeKnowledgePath(knowledgePoint.getPath());
+                    return focusPath != null
+                            && resourcePath != null
+                            && (resourcePath.equalsIgnoreCase(focusPath)
+                            || resourcePath.toLowerCase(Locale.ROOT).startsWith(focusPath.toLowerCase(Locale.ROOT) + "/")
+                            || focusPath.toLowerCase(Locale.ROOT).startsWith(resourcePath.toLowerCase(Locale.ROOT) + "/"));
+                });
     }
 
     private double scorePathCandidate(AbilityMapResponse focusPoint, double currentProgress) {
