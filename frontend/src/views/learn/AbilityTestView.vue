@@ -157,7 +157,7 @@ const knowledgePointOptions = computed<KnowledgePointOption[]>(() => {
   const items: KnowledgePointOption[] = []
   const walk = (nodes: KnowledgePointNode[]) => {
     nodes.forEach((node) => {
-      if (node.active) {
+      if (node.active !== false) {
         items.push({ id: node.id, nodeType: node.nodeType, path: node.path })
       }
       if (node.children?.length) walk(node.children)
@@ -192,6 +192,9 @@ function masteryColor(level: number) {
 
 async function loadKnowledgePoints() {
   knowledgePointTree.value = await courseApi.listKnowledgePointTree({ activeOnly: true })
+  if (knowledgePointOptions.value.length === 0) {
+    knowledgePointTree.value = await courseApi.listKnowledgePointTree({ activeOnly: false })
+  }
 }
 
 async function startTest() {
