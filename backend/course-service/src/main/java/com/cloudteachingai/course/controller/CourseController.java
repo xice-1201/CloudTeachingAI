@@ -32,8 +32,11 @@ import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpRange;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -387,22 +390,40 @@ public class CourseController {
     }
 
     @GetMapping("/resources/{resourceId}/content")
-    public ResponseEntity<Resource> getResourceContent(
-            @RequestHeader("Authorization") String authorization,
+    public ResponseEntity<?> getResourceContent(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader,
             @PathVariable Long resourceId,
+            @RequestParam(required = false) String accessToken,
             @RequestParam(defaultValue = "false") boolean download) {
-        UserContext userContext = extractUserContext(authorization);
+        UserContext userContext = extractUserContext(authorization, accessToken);
         CourseFacadeService.ManagedResourceContent content = courseFacadeService.loadManagedResourceContent(resourceId, userContext);
+        Resource resource = resourceStorageService.loadAsResource(content.storageKey());
+        MediaType mediaType = resourceStorageService.resolveMediaType(content.storageKey());
 
         ContentDisposition disposition = download
                 ? ContentDisposition.attachment().filename(content.title()).build()
                 : ContentDisposition.inline().filename(content.title()).build();
 
+        if (!download && rangeHeader != null && !rangeHeader.isBlank()) {
+            List<HttpRange> ranges = HttpRange.parseRanges(rangeHeader);
+            if (!ranges.isEmpty()) {
+                ResourceRegion region = ranges.getFirst().toResourceRegion(resource);
+                return ResponseEntity.status(206)
+                        .contentType(mediaType)
+                        .cacheControl(CacheControl.noStore())
+                        .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                        .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                        .body(region);
+            }
+        }
+
         return ResponseEntity.ok()
-                .contentType(resourceStorageService.resolveMediaType(content.storageKey()))
+                .contentType(mediaType)
                 .cacheControl(CacheControl.noStore())
-                .header("Content-Disposition", disposition.toString())
-                .body(resourceStorageService.loadAsResource(content.storageKey()));
+                .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                .body(resource);
     }
 
     @PostMapping("/chapters/{chapterId}/resources")
@@ -484,6 +505,13 @@ public class CourseController {
     }
 
     private UserContext extractUserContext(String authorization) {
+        return extractUserContext(authorization, null);
+    }
+
+    private UserContext extractUserContext(String authorization, String accessToken) {
+        if ((authorization == null || authorization.isBlank()) && accessToken != null && !accessToken.isBlank()) {
+            authorization = "Bearer " + accessToken.trim();
+        }
         if (authorization == null || authorization.isBlank() || !authorization.startsWith("Bearer ")) {
             throw BusinessException.unauthorized("Missing or invalid Authorization header");
         }

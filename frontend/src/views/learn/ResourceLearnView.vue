@@ -194,6 +194,15 @@ function buildDownloadUrl(url: string) {
   return `${resolvedUrl}${separator}download=true`
 }
 
+function buildStreamingResourceUrl(url: string) {
+  const resolvedUrl = resolveResourceUrl(url)
+  if (!isInternalResourceUrl(resolvedUrl)) return resolvedUrl
+  const token = localStorage.getItem('token')
+  if (!token) return resolvedUrl
+  const separator = resolvedUrl.includes('?') ? '&' : '?'
+  return `${resolvedUrl}${separator}accessToken=${encodeURIComponent(token)}`
+}
+
 function parsePositiveId(value: unknown) {
   const rawValue = Array.isArray(value) ? value[0] : value
   const id = Number(rawValue)
@@ -350,7 +359,10 @@ async function loadResourcePage() {
     return
   }
   const resolvedUrl = resolveResourceUrl(resourceData.url)
-  if (isInternalResourceUrl(resolvedUrl)) {
+  if (resourceData.type === 'VIDEO') {
+    revokeTemporaryResourceUrl()
+    resourceUrl.value = buildStreamingResourceUrl(resolvedUrl)
+  } else if (isInternalResourceUrl(resolvedUrl)) {
     resourceUrl.value = await buildAuthorizedResourceUrl(resolvedUrl)
   } else {
     revokeTemporaryResourceUrl()
