@@ -119,6 +119,37 @@ export interface ResourceTagSuggestion {
   reason: string
 }
 
+export interface KnowledgeGraphNode {
+  id: number
+  parentId?: number | null
+  name: string
+  path: string
+  nodeType: 'SUBJECT' | 'DOMAIN' | 'POINT'
+  active: boolean
+  depth: number
+  directResourceCount: number
+  resourceCount: number
+  coverageLevel: 'NONE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH' | string
+  color: string
+}
+
+export interface KnowledgeGraphEdge {
+  source: number
+  target: number
+  relation: 'PARENT_CHILD' | string
+}
+
+export interface KnowledgeGraph {
+  rootId?: number | null
+  rootName?: string | null
+  rootPath?: string | null
+  totalKnowledgePoints: number
+  totalResourceRelations: number
+  coveredKnowledgePoints: number
+  nodes: KnowledgeGraphNode[]
+  edges: KnowledgeGraphEdge[]
+}
+
 export interface Announcement {
   id: number
   courseId: number

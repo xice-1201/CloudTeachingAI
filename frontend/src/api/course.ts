@@ -1,6 +1,6 @@
 import request from '@/utils/request'
 import type { AxiosRequestConfig } from 'axios'
-import type { Course, Chapter, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse, Announcement, DiscussionPost, ExerciseQuestion } from '@/types'
+import type { Course, Chapter, KnowledgeGraph, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse, Announcement, DiscussionPost, ExerciseQuestion } from '@/types'
 
 export const courseApi = {
   listCourses: (params?: { page?: number; pageSize?: number; keyword?: string; status?: string }): Promise<PageResponse<Course>> =>
@@ -109,6 +109,9 @@ export const courseApi = {
 
   listKnowledgePointTree: (params?: { activeOnly?: boolean }): Promise<KnowledgePointNode[]> =>
     request.get('/knowledge-points/tree', { params }),
+
+  getKnowledgeGraph: (params?: { rootId?: number | null; activeOnly?: boolean }): Promise<KnowledgeGraph> =>
+    request.get('/knowledge-points/graph', { params }),
 
   createKnowledgePoint: (data: {
     parentId?: number | null

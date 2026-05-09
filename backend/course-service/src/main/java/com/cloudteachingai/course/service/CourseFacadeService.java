@@ -12,6 +12,9 @@ import com.cloudteachingai.course.dto.CourseUpsertRequest;
 import com.cloudteachingai.course.dto.ExerciseGenerateRequest;
 import com.cloudteachingai.course.dto.InternalKnowledgePointResponse;
 import com.cloudteachingai.course.dto.InternalResourceTaggingContextResponse;
+import com.cloudteachingai.course.dto.KnowledgeGraphEdgeResponse;
+import com.cloudteachingai.course.dto.KnowledgeGraphNodeResponse;
+import com.cloudteachingai.course.dto.KnowledgeGraphResponse;
 import com.cloudteachingai.course.dto.KnowledgePointNodeResponse;
 import com.cloudteachingai.course.dto.KnowledgePointUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
@@ -559,6 +562,105 @@ public class CourseFacadeService {
                 ? knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc()
                 : knowledgePointRepository.findAllByOrderByOrderIndexAscIdAsc();
         return buildKnowledgePointTree(knowledgePoints, new HashMap<>());
+    }
+
+    public KnowledgeGraphResponse getKnowledgeGraph(Long rootId, boolean activeOnly, UserContext userContext) {
+        assertRole(userContext, "STUDENT", "TEACHER", "ADMIN");
+        List<KnowledgePointEntity> sourceKnowledgePoints = activeOnly
+                ? knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc()
+                : knowledgePointRepository.findAllByOrderByOrderIndexAscIdAsc();
+        Map<Long, KnowledgePointEntity> sourceMap = sourceKnowledgePoints.stream()
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+        if (sourceMap.isEmpty()) {
+            return KnowledgeGraphResponse.builder()
+                    .rootId(rootId)
+                    .totalKnowledgePoints(0)
+                    .totalResourceRelations(0)
+                    .coveredKnowledgePoints(0)
+                    .nodes(List.of())
+                    .edges(List.of())
+                    .build();
+        }
+
+        KnowledgePointEntity root = null;
+        List<KnowledgePointEntity> scopedKnowledgePoints;
+        if (rootId == null) {
+            scopedKnowledgePoints = sourceKnowledgePoints;
+        } else {
+            root = sourceMap.get(rootId);
+            if (root == null) {
+                throw BusinessException.notFound("Knowledge graph root not found");
+            }
+            scopedKnowledgePoints = collectKnowledgePointSubtree(rootId, sourceKnowledgePoints);
+        }
+
+        Map<Long, KnowledgePointEntity> scopedMap = scopedKnowledgePoints.stream()
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+        Map<Long, List<KnowledgePointEntity>> childrenByParent = new LinkedHashMap<>();
+        for (KnowledgePointEntity knowledgePoint : scopedKnowledgePoints) {
+            if (knowledgePoint.getParentId() != null && scopedMap.containsKey(knowledgePoint.getParentId())) {
+                childrenByParent.computeIfAbsent(knowledgePoint.getParentId(), ignored -> new ArrayList<>()).add(knowledgePoint);
+            }
+        }
+        childrenByParent.values().forEach(children -> children.sort(
+                Comparator.comparing(KnowledgePointEntity::getOrderIndex).thenComparing(KnowledgePointEntity::getId)));
+
+        Map<Long, Integer> directCounts = loadKnowledgePointDirectResourceCounts();
+        Map<Long, Integer> subtreeCounts = new LinkedHashMap<>();
+        Set<Long> visitedForCount = new LinkedHashSet<>();
+        for (KnowledgePointEntity knowledgePoint : scopedKnowledgePoints) {
+            calculateSubtreeResourceCount(knowledgePoint.getId(), childrenByParent, directCounts, subtreeCounts, visitedForCount);
+        }
+
+        List<KnowledgeGraphNodeResponse> nodes = new ArrayList<>();
+        List<KnowledgeGraphEdgeResponse> edges = new ArrayList<>();
+        Map<Long, Integer> depthById = calculateKnowledgeGraphDepths(scopedKnowledgePoints, scopedMap);
+        for (KnowledgePointEntity knowledgePoint : scopedKnowledgePoints) {
+            int directResourceCount = directCounts.getOrDefault(knowledgePoint.getId(), 0);
+            int resourceCount = subtreeCounts.getOrDefault(knowledgePoint.getId(), directResourceCount);
+            nodes.add(KnowledgeGraphNodeResponse.builder()
+                    .id(knowledgePoint.getId())
+                    .parentId(knowledgePoint.getParentId())
+                    .name(knowledgePoint.getName())
+                    .path(buildKnowledgePointPath(knowledgePoint.getId(), sourceMap))
+                    .nodeType(knowledgePoint.getNodeType().name())
+                    .active(knowledgePoint.getActive())
+                    .depth(depthById.getOrDefault(knowledgePoint.getId(), 0))
+                    .directResourceCount(directResourceCount)
+                    .resourceCount(resourceCount)
+                    .coverageLevel(resolveKnowledgeGraphCoverageLevel(resourceCount))
+                    .color(resolveKnowledgeGraphColor(resourceCount))
+                    .build());
+            if (knowledgePoint.getParentId() != null && scopedMap.containsKey(knowledgePoint.getParentId())) {
+                edges.add(KnowledgeGraphEdgeResponse.builder()
+                        .source(knowledgePoint.getParentId())
+                        .target(knowledgePoint.getId())
+                        .relation("PARENT_CHILD")
+                        .build());
+            }
+        }
+
+        int totalResourceRelations = nodes.stream()
+                .filter(node -> node.getParentId() == null || rootId != null && Objects.equals(node.getId(), rootId))
+                .mapToInt(KnowledgeGraphNodeResponse::getResourceCount)
+                .sum();
+        if (rootId == null) {
+            totalResourceRelations = directCounts.entrySet().stream()
+                    .filter(entry -> scopedMap.containsKey(entry.getKey()))
+                    .mapToInt(Map.Entry::getValue)
+                    .sum();
+        }
+
+        return KnowledgeGraphResponse.builder()
+                .rootId(root == null ? null : root.getId())
+                .rootName(root == null ? null : root.getName())
+                .rootPath(root == null ? null : buildKnowledgePointPath(root.getId(), sourceMap))
+                .totalKnowledgePoints(nodes.size())
+                .totalResourceRelations(totalResourceRelations)
+                .coveredKnowledgePoints((int) nodes.stream().filter(node -> node.getResourceCount() > 0).count())
+                .nodes(nodes)
+                .edges(edges)
+                .build();
     }
 
     @Transactional
@@ -1466,6 +1568,128 @@ public class CourseFacadeService {
                 .sorted(Comparator.comparing(KnowledgePointEntity::getOrderIndex).thenComparing(KnowledgePointEntity::getId))
                 .map(root -> toKnowledgePointTreeNode(root, knowledgePointMap, childrenByParent))
                 .toList();
+    }
+
+    private List<KnowledgePointEntity> collectKnowledgePointSubtree(Long rootId, List<KnowledgePointEntity> knowledgePoints) {
+        Map<Long, List<KnowledgePointEntity>> childrenByParent = new LinkedHashMap<>();
+        Map<Long, KnowledgePointEntity> knowledgePointMap = new LinkedHashMap<>();
+        for (KnowledgePointEntity knowledgePoint : knowledgePoints) {
+            knowledgePointMap.put(knowledgePoint.getId(), knowledgePoint);
+            if (knowledgePoint.getParentId() != null) {
+                childrenByParent.computeIfAbsent(knowledgePoint.getParentId(), ignored -> new ArrayList<>()).add(knowledgePoint);
+            }
+        }
+        childrenByParent.values().forEach(children -> children.sort(
+                Comparator.comparing(KnowledgePointEntity::getOrderIndex).thenComparing(KnowledgePointEntity::getId)));
+
+        List<KnowledgePointEntity> result = new ArrayList<>();
+        collectKnowledgePointSubtree(rootId, knowledgePointMap, childrenByParent, result, new LinkedHashSet<>());
+        return result;
+    }
+
+    private void collectKnowledgePointSubtree(
+            Long knowledgePointId,
+            Map<Long, KnowledgePointEntity> knowledgePointMap,
+            Map<Long, List<KnowledgePointEntity>> childrenByParent,
+            List<KnowledgePointEntity> collector,
+            Set<Long> visited
+    ) {
+        if (!visited.add(knowledgePointId)) {
+            return;
+        }
+        KnowledgePointEntity current = knowledgePointMap.get(knowledgePointId);
+        if (current == null) {
+            return;
+        }
+        collector.add(current);
+        for (KnowledgePointEntity child : childrenByParent.getOrDefault(knowledgePointId, List.of())) {
+            collectKnowledgePointSubtree(child.getId(), knowledgePointMap, childrenByParent, collector, visited);
+        }
+    }
+
+    private Map<Long, Integer> loadKnowledgePointDirectResourceCounts() {
+        Map<Long, Integer> counts = new LinkedHashMap<>();
+        for (ResourceKnowledgePointRepository.ResourceCountProjection projection : resourceKnowledgePointRepository.countResourcesByKnowledgePoint()) {
+            if (projection.getKnowledgePointId() == null) {
+                continue;
+            }
+            counts.put(projection.getKnowledgePointId(), Math.toIntExact(projection.getResourceCount()));
+        }
+        return counts;
+    }
+
+    private int calculateSubtreeResourceCount(
+            Long knowledgePointId,
+            Map<Long, List<KnowledgePointEntity>> childrenByParent,
+            Map<Long, Integer> directCounts,
+            Map<Long, Integer> subtreeCounts,
+            Set<Long> visited
+    ) {
+        if (subtreeCounts.containsKey(knowledgePointId)) {
+            return subtreeCounts.get(knowledgePointId);
+        }
+        if (!visited.add(knowledgePointId)) {
+            return directCounts.getOrDefault(knowledgePointId, 0);
+        }
+
+        int count = directCounts.getOrDefault(knowledgePointId, 0);
+        for (KnowledgePointEntity child : childrenByParent.getOrDefault(knowledgePointId, List.of())) {
+            count += calculateSubtreeResourceCount(child.getId(), childrenByParent, directCounts, subtreeCounts, visited);
+        }
+        subtreeCounts.put(knowledgePointId, count);
+        visited.remove(knowledgePointId);
+        return count;
+    }
+
+    private Map<Long, Integer> calculateKnowledgeGraphDepths(
+            List<KnowledgePointEntity> scopedKnowledgePoints,
+            Map<Long, KnowledgePointEntity> scopedMap
+    ) {
+        Map<Long, Integer> depths = new LinkedHashMap<>();
+        for (KnowledgePointEntity knowledgePoint : scopedKnowledgePoints) {
+            depths.put(knowledgePoint.getId(), calculateKnowledgeGraphDepth(knowledgePoint, scopedMap, new LinkedHashSet<>()));
+        }
+        return depths;
+    }
+
+    private int calculateKnowledgeGraphDepth(
+            KnowledgePointEntity knowledgePoint,
+            Map<Long, KnowledgePointEntity> scopedMap,
+            Set<Long> visited
+    ) {
+        int depth = 0;
+        KnowledgePointEntity cursor = knowledgePoint;
+        while (cursor.getParentId() != null && scopedMap.containsKey(cursor.getParentId()) && visited.add(cursor.getId())) {
+            depth++;
+            cursor = scopedMap.get(cursor.getParentId());
+        }
+        return depth;
+    }
+
+    private String resolveKnowledgeGraphCoverageLevel(int resourceCount) {
+        if (resourceCount <= 0) {
+            return "NONE";
+        }
+        if (resourceCount <= 2) {
+            return "LOW";
+        }
+        if (resourceCount <= 5) {
+            return "MEDIUM";
+        }
+        if (resourceCount <= 10) {
+            return "HIGH";
+        }
+        return "VERY_HIGH";
+    }
+
+    private String resolveKnowledgeGraphColor(int resourceCount) {
+        return switch (resolveKnowledgeGraphCoverageLevel(resourceCount)) {
+            case "LOW" -> "#f56c6c";
+            case "MEDIUM" -> "#e6a23c";
+            case "HIGH" -> "#409eff";
+            case "VERY_HIGH" -> "#67c23a";
+            default -> "#c0c4cc";
+        };
     }
 
     private KnowledgePointNodeResponse toKnowledgePointTreeNode(

@@ -13,6 +13,7 @@ import com.cloudteachingai.course.dto.DiscussionPostResponse;
 import com.cloudteachingai.course.dto.DiscussionPostUpsertRequest;
 import com.cloudteachingai.course.dto.InternalKnowledgePointResponse;
 import com.cloudteachingai.course.dto.InternalResourceTaggingContextResponse;
+import com.cloudteachingai.course.dto.KnowledgeGraphResponse;
 import com.cloudteachingai.course.dto.KnowledgePointNodeResponse;
 import com.cloudteachingai.course.dto.KnowledgePointUpsertRequest;
 import com.cloudteachingai.course.dto.PageResponse;
@@ -321,6 +322,15 @@ public class CourseController {
             @RequestParam(defaultValue = "true") boolean activeOnly) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(courseFacadeService.listKnowledgePointTree(activeOnly, userContext));
+    }
+
+    @GetMapping("/knowledge-points/graph")
+    public ApiResponse<KnowledgeGraphResponse> getKnowledgeGraph(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam(required = false) Long rootId,
+            @RequestParam(defaultValue = "true") boolean activeOnly) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.getKnowledgeGraph(rootId, activeOnly, userContext));
     }
 
     @PostMapping("/knowledge-points")

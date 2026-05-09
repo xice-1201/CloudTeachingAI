@@ -83,6 +83,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/learn/LearningPathView.vue'),
       },
       {
+        path: 'knowledge-graph',
+        name: 'KnowledgeGraph',
+        component: () => import('@/views/learn/KnowledgeGraphView.vue'),
+      },
+      {
         path: 'assignments',
         name: 'AssignmentList',
         component: () => import('@/views/assign/AssignmentListView.vue'),
