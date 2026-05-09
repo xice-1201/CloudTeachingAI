@@ -5,6 +5,7 @@ import com.cloudteachingai.user.dto.ApiResponse;
 import com.cloudteachingai.user.dto.CreateAdminAuditLogRequest;
 import com.cloudteachingai.user.dto.CreateTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.user.dto.CreateUserRequest;
+import com.cloudteachingai.user.dto.MentorRelationResponse;
 import com.cloudteachingai.user.dto.PageResponse;
 import com.cloudteachingai.user.dto.ReviewTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.user.dto.ServiceHealthResponse;
@@ -206,14 +207,45 @@ public class UserController {
     public ApiResponse<Map<String, Object>> getMentorRelations(
             @RequestHeader(value = "X-User-Id", required = false) Long userIdHeader,
             @RequestParam(value = "userId", required = false) Long userIdParam) {
-        return ApiResponse.success(Map.of("mentor", Map.of(), "students", List.of()));
+        return ApiResponse.success(userService.getMentorRelations(resolveUserId(userIdHeader, userIdParam)));
     }
 
     @PostMapping("/users/mentor-relations")
-    public ApiResponse<Map<String, String>> applyForMentor(
+    public ApiResponse<MentorRelationResponse> applyForMentor(
             @RequestHeader(value = "X-User-Id", required = false) Long userIdHeader,
             @RequestParam(value = "userId", required = false) Long userIdParam,
             @RequestBody(required = false) Map<String, Object> body) {
-        return ApiResponse.success(Map.of("message", "申请已提交"));
+        Long mentorId = parseLong(body == null ? null : body.get("mentorId"));
+        return ApiResponse.success(userService.applyForMentor(resolveUserId(userIdHeader, userIdParam), mentorId));
+    }
+
+    @PostMapping("/users/mentor-relations/{id}/approve")
+    public ApiResponse<MentorRelationResponse> approveMentorRelation(
+            @RequestHeader(value = "X-User-Id", required = false) Long userIdHeader,
+            @RequestParam(value = "userId", required = false) Long userIdParam,
+            @PathVariable Long id) {
+        return ApiResponse.success(userService.approveMentorRelation(resolveUserId(userIdHeader, userIdParam), id));
+    }
+
+    @PostMapping("/users/mentor-relations/{id}/reject")
+    public ApiResponse<MentorRelationResponse> rejectMentorRelation(
+            @RequestHeader(value = "X-User-Id", required = false) Long userIdHeader,
+            @RequestParam(value = "userId", required = false) Long userIdParam,
+            @PathVariable Long id) {
+        return ApiResponse.success(userService.rejectMentorRelation(resolveUserId(userIdHeader, userIdParam), id));
+    }
+
+    private Long resolveUserId(Long userIdHeader, Long userIdParam) {
+        return userIdHeader != null ? userIdHeader : userIdParam;
+    }
+
+    private Long parseLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            return Long.parseLong(text);
+        }
+        return null;
     }
 }

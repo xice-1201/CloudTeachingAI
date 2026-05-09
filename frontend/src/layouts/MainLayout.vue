@@ -46,7 +46,7 @@
           <span>知识图谱</span>
         </el-menu-item>
 
-        <el-menu-item v-if="userStore.isStudent" index="/mentor">
+        <el-menu-item v-if="!userStore.isAdmin" index="/mentor">
           <el-icon><UserFilled /></el-icon>
           <span>导师关系</span>
         </el-menu-item>

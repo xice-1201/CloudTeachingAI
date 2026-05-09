@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { AdminAuditLog, User, PageResponse, TeacherRegistrationApplication } from '@/types'
+import type { AdminAuditLog, User, PageResponse, TeacherRegistrationApplication, MentorApplication, MentorRelations } from '@/types'
 
 export const userApi = {
   getProfile: (config?: Record<string, any>): Promise<User> =>
@@ -55,9 +55,15 @@ export const userApi = {
   rejectTeacherRegistrationApplication: (id: number, data: { reviewerId: number; reviewNote?: string }): Promise<TeacherRegistrationApplication> =>
     request.post(`/admin/teacher-registration-applications/${id}/reject`, data),
 
-  applyMentor: (mentorId: string | number): Promise<void> =>
+  applyMentor: (mentorId: string | number): Promise<MentorApplication> =>
     request.post(`/users/mentor-relations`, { mentorId }),
 
-  getMentorRelations: (): Promise<{ mentor?: User; students: User[] }> =>
+  getMentorRelations: (): Promise<MentorRelations> =>
     request.get('/users/mentor-relations'),
+
+  approveMentorApplication: (applicationId: string | number): Promise<MentorApplication> =>
+    request.post(`/users/mentor-relations/${applicationId}/approve`),
+
+  rejectMentorApplication: (applicationId: string | number): Promise<MentorApplication> =>
+    request.post(`/users/mentor-relations/${applicationId}/reject`),
 }

@@ -366,6 +366,24 @@ export interface Notification {
   createdAt: string
 }
 
+export interface MentorApplication {
+  id: number
+  studentId: number
+  mentorId: number
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  student?: User | null
+  mentor?: User | null
+  requestedAt: string
+  reviewedAt?: string | null
+  reviewNote?: string | null
+}
+
+export interface MentorRelations {
+  mentor?: User | null
+  students: User[]
+  applications: MentorApplication[]
+}
+
 export interface ChatMessage {
   id: number
   role: 'user' | 'assistant'

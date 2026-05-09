@@ -5,14 +5,17 @@ import com.cloudteachingai.user.client.NotifyServiceClient;
 import com.cloudteachingai.user.dto.CreateNotificationRequest;
 import com.cloudteachingai.user.dto.CreateTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.user.dto.CreateUserRequest;
+import com.cloudteachingai.user.dto.MentorRelationResponse;
 import com.cloudteachingai.user.dto.PageResponse;
 import com.cloudteachingai.user.dto.ReviewTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.user.dto.TeacherRegistrationApplicationResponse;
 import com.cloudteachingai.user.dto.UpdateProfileRequest;
 import com.cloudteachingai.user.dto.UserResponse;
+import com.cloudteachingai.user.entity.MentorRelation;
 import com.cloudteachingai.user.entity.TeacherRegistrationApplication;
 import com.cloudteachingai.user.entity.User;
 import com.cloudteachingai.user.exception.BusinessException;
+import com.cloudteachingai.user.repository.MentorRelationRepository;
 import com.cloudteachingai.user.repository.TeacherRegistrationApplicationRepository;
 import com.cloudteachingai.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,7 +30,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @Service
@@ -35,6 +41,7 @@ import java.util.List;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final MentorRelationRepository mentorRelationRepository;
     private final TeacherRegistrationApplicationRepository teacherRegistrationApplicationRepository;
     private final AuthServiceClient authServiceClient;
     private final NotifyServiceClient notifyServiceClient;
@@ -147,6 +154,120 @@ public class UserService {
         Page<User> users = userRepository.findAll(specification, pageable);
         List<UserResponse> items = users.getContent().stream().map(UserResponse::from).toList();
         return new PageResponse<>(items, (int) users.getTotalElements(), page, pageSize);
+    }
+
+    public Map<String, Object> getMentorRelations(Long userId) {
+        User user = requireUser(userId);
+        Map<String, Object> response = new LinkedHashMap<>();
+
+        if (user.getRole() == User.UserRole.STUDENT) {
+            UserResponse mentor = mentorRelationRepository
+                    .findFirstByStudentIdAndStatusOrderByRequestedAtDesc(userId, MentorRelation.Status.APPROVED)
+                    .flatMap(relation -> userRepository.findById(relation.getMentorId()))
+                    .map(UserResponse::from)
+                    .orElse(null);
+            List<MentorRelationResponse> applications = mentorRelationRepository
+                    .findAllByStudentIdAndStatusOrderByRequestedAtDesc(userId, MentorRelation.Status.PENDING)
+                    .stream()
+                    .map(this::toMentorRelationResponse)
+                    .toList();
+            response.put("mentor", mentor);
+            response.put("students", List.of());
+            response.put("applications", applications);
+            return response;
+        }
+
+        if (user.getRole() == User.UserRole.TEACHER) {
+            List<UserResponse> students = mentorRelationRepository
+                    .findAllByMentorIdAndStatusOrderByReviewedAtDesc(userId, MentorRelation.Status.APPROVED)
+                    .stream()
+                    .map(relation -> userRepository.findById(relation.getStudentId()).orElse(null))
+                    .filter(Objects::nonNull)
+                    .map(UserResponse::from)
+                    .toList();
+            List<MentorRelationResponse> applications = mentorRelationRepository
+                    .findAllByMentorIdAndStatusOrderByRequestedAtDesc(userId, MentorRelation.Status.PENDING)
+                    .stream()
+                    .map(this::toMentorRelationResponse)
+                    .toList();
+            response.put("mentor", null);
+            response.put("students", students);
+            response.put("applications", applications);
+            return response;
+        }
+
+        response.put("mentor", null);
+        response.put("students", List.of());
+        response.put("applications", List.of());
+        return response;
+    }
+
+    @Transactional
+    public MentorRelationResponse applyForMentor(Long studentId, Long mentorId) {
+        User student = requireUser(studentId);
+        if (mentorId == null) {
+            throw BusinessException.badRequest("请选择导师");
+        }
+        User mentor = requireUser(mentorId);
+        if (student.getRole() != User.UserRole.STUDENT) {
+            throw BusinessException.badRequest("只有学生可以申请导师");
+        }
+        if (mentor.getRole() != User.UserRole.TEACHER) {
+            throw BusinessException.badRequest("只能申请教师作为导师");
+        }
+        if (mentorRelationRepository.existsByStudentIdAndStatus(studentId, MentorRelation.Status.APPROVED)) {
+            throw BusinessException.conflict("你已经拥有导师关系");
+        }
+        mentorRelationRepository
+                .findByStudentIdAndMentorIdAndStatus(studentId, mentorId, MentorRelation.Status.PENDING)
+                .ifPresent(existing -> {
+                    throw BusinessException.conflict("已向该教师提交导师申请");
+                });
+
+        MentorRelation relation = mentorRelationRepository.save(MentorRelation.builder()
+                .studentId(studentId)
+                .mentorId(mentorId)
+                .status(MentorRelation.Status.PENDING)
+                .build());
+        notifyMentorApplicationSubmitted(relation, student, mentor);
+        return MentorRelationResponse.from(relation, student, mentor);
+    }
+
+    @Transactional
+    public MentorRelationResponse approveMentorRelation(Long teacherId, Long relationId) {
+        User teacher = requireUser(teacherId);
+        if (teacher.getRole() != User.UserRole.TEACHER) {
+            throw BusinessException.badRequest("只有教师可以处理导师申请");
+        }
+        MentorRelation relation = requirePendingMentorApplicationForTeacher(relationId, teacherId);
+        if (mentorRelationRepository.existsByStudentIdAndStatus(relation.getStudentId(), MentorRelation.Status.APPROVED)) {
+            throw BusinessException.conflict("该学生已经拥有导师关系");
+        }
+
+        relation.setStatus(MentorRelation.Status.APPROVED);
+        relation.setReviewedAt(LocalDateTime.now());
+        relation = mentorRelationRepository.save(relation);
+        rejectOtherPendingMentorApplications(relation);
+
+        User student = requireUser(relation.getStudentId());
+        notifyMentorApplicationApproved(relation, student, teacher);
+        return MentorRelationResponse.from(relation, student, teacher);
+    }
+
+    @Transactional
+    public MentorRelationResponse rejectMentorRelation(Long teacherId, Long relationId) {
+        User teacher = requireUser(teacherId);
+        if (teacher.getRole() != User.UserRole.TEACHER) {
+            throw BusinessException.badRequest("只有教师可以处理导师申请");
+        }
+        MentorRelation relation = requirePendingMentorApplicationForTeacher(relationId, teacherId);
+        relation.setStatus(MentorRelation.Status.REJECTED);
+        relation.setReviewedAt(LocalDateTime.now());
+        relation = mentorRelationRepository.save(relation);
+
+        User student = requireUser(relation.getStudentId());
+        notifyMentorApplicationRejected(relation, student, teacher);
+        return MentorRelationResponse.from(relation, student, teacher);
     }
 
     @Transactional
@@ -301,6 +422,93 @@ public class UserService {
             ));
         } catch (Exception e) {
             log.warn("Failed to create welcome notification for user {}", user.getId(), e);
+        }
+    }
+
+    private User requireUser(Long userId) {
+        if (userId == null) {
+            throw BusinessException.unauthorized("未提供用户身份");
+        }
+        return userRepository.findById(userId)
+                .orElseThrow(() -> BusinessException.notFound("用户不存在"));
+    }
+
+    private MentorRelation requirePendingMentorApplicationForTeacher(Long relationId, Long teacherId) {
+        MentorRelation relation = mentorRelationRepository.findByIdAndMentorId(relationId, teacherId)
+                .orElseThrow(() -> BusinessException.notFound("导师申请不存在"));
+        if (relation.getStatus() != MentorRelation.Status.PENDING) {
+            throw BusinessException.conflict("导师申请已处理");
+        }
+        return relation;
+    }
+
+    private MentorRelationResponse toMentorRelationResponse(MentorRelation relation) {
+        User student = userRepository.findById(relation.getStudentId()).orElse(null);
+        User mentor = userRepository.findById(relation.getMentorId()).orElse(null);
+        return MentorRelationResponse.from(relation, student, mentor);
+    }
+
+    private void rejectOtherPendingMentorApplications(MentorRelation approvedRelation) {
+        List<MentorRelation> pendingApplications = mentorRelationRepository
+                .findAllByStudentIdAndStatusOrderByRequestedAtDesc(
+                        approvedRelation.getStudentId(),
+                        MentorRelation.Status.PENDING);
+        for (MentorRelation pending : pendingApplications) {
+            if (pending.getId().equals(approvedRelation.getId())) {
+                continue;
+            }
+            pending.setStatus(MentorRelation.Status.REJECTED);
+            pending.setReviewedAt(LocalDateTime.now());
+            pending.setReviewNote("已通过其他导师申请");
+            mentorRelationRepository.save(pending);
+        }
+    }
+
+    private void notifyMentorApplicationSubmitted(MentorRelation relation, User student, User mentor) {
+        try {
+            notifyServiceClient.createNotification(new CreateNotificationRequest(
+                    mentor.getId(),
+                    "SYSTEM",
+                    "新的导师申请",
+                    String.format("学生 %s（%s）申请成为你的指导学生，请及时处理。", student.getUsername(), student.getEmail()),
+                    "MENTOR_RELATION",
+                    relation.getId(),
+                    "/mentor"
+            ));
+        } catch (Exception e) {
+            log.warn("Failed to notify mentor {} for mentor application {}", mentor.getId(), relation.getId(), e);
+        }
+    }
+
+    private void notifyMentorApplicationApproved(MentorRelation relation, User student, User mentor) {
+        try {
+            notifyServiceClient.createNotification(new CreateNotificationRequest(
+                    student.getId(),
+                    "SYSTEM",
+                    "导师申请已通过",
+                    String.format("%s 老师已同意你的导师申请。", mentor.getUsername()),
+                    "MENTOR_RELATION",
+                    relation.getId(),
+                    "/mentor"
+            ));
+        } catch (Exception e) {
+            log.warn("Failed to notify student {} for approved mentor application {}", student.getId(), relation.getId(), e);
+        }
+    }
+
+    private void notifyMentorApplicationRejected(MentorRelation relation, User student, User mentor) {
+        try {
+            notifyServiceClient.createNotification(new CreateNotificationRequest(
+                    student.getId(),
+                    "SYSTEM",
+                    "导师申请未通过",
+                    String.format("%s 老师暂未同意你的导师申请。", mentor.getUsername()),
+                    "MENTOR_RELATION",
+                    relation.getId(),
+                    "/mentor"
+            ));
+        } catch (Exception e) {
+            log.warn("Failed to notify student {} for rejected mentor application {}", student.getId(), relation.getId(), e);
         }
     }
 

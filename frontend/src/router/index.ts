@@ -132,6 +132,7 @@ const routes: RouteRecordRaw[] = [
         path: 'mentor',
         name: 'MentorRelation',
         component: () => import('@/views/user/MentorView.vue'),
+        meta: { roles: ['STUDENT', 'TEACHER'] },
       },
       {
         path: 'admin',
