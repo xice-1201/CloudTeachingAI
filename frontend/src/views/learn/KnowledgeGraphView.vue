@@ -58,29 +58,6 @@
       </div>
     </div>
 
-    <section class="scope-nav">
-      <span class="scope-nav-label">当前路径</span>
-      <button
-        type="button"
-        class="scope-link"
-        :class="{ active: selectedRootId === null }"
-        @click="selectAllGraphRoot"
-      >
-        全平台知识点
-      </button>
-      <template v-for="item in scopeTrail" :key="item.id">
-        <span class="scope-separator">/</span>
-        <button
-          type="button"
-          class="scope-link"
-          :class="{ active: selectedRootId === item.id }"
-          @click="selectGraphRoot(item.id)"
-        >
-          {{ item.name }}
-        </button>
-      </template>
-    </section>
-
     <section class="summary-grid">
       <div class="summary-item">
         <div class="summary-label">当前范围</div>
@@ -113,7 +90,31 @@
     />
 
     <section v-else class="graph-layout">
-      <div ref="chartEl" class="graph-chart" />
+      <div class="graph-canvas">
+        <section class="scope-nav">
+          <span class="scope-nav-label">当前路径</span>
+          <button
+            type="button"
+            class="scope-link"
+            :class="{ active: selectedRootId === null }"
+            @click="selectAllGraphRoot"
+          >
+            全平台知识点
+          </button>
+          <template v-for="item in scopeTrail" :key="item.id">
+            <span class="scope-separator">/</span>
+            <button
+              type="button"
+              class="scope-link"
+              :class="{ active: selectedRootId === item.id }"
+              @click="selectGraphRoot(item.id)"
+            >
+              {{ item.name }}
+            </button>
+          </template>
+        </section>
+        <div ref="chartEl" class="graph-chart" />
+      </div>
       <aside class="node-panel">
         <div class="panel-title">资源覆盖排行</div>
         <div v-if="rankedNodes.length === 0" class="panel-empty">暂无资源关联数据</div>
@@ -425,11 +426,20 @@ function handleResize() {
 }
 
 .scope-nav {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-bottom: 14px;
+  max-width: min(680px, calc(100% - 28px));
+  padding: 8px 10px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 2px 8px rgba(31, 45, 61, 0.08);
   color: #606266;
   font-size: 13px;
 }
@@ -525,11 +535,17 @@ function handleResize() {
   min-height: 620px;
 }
 
-.graph-chart {
+.graph-canvas {
+  position: relative;
   min-height: 620px;
   border: 1px solid #ebeef5;
   border-radius: 8px;
   background: #fff;
+  overflow: hidden;
+}
+
+.graph-chart {
+  min-height: 620px;
 }
 
 .node-panel {
