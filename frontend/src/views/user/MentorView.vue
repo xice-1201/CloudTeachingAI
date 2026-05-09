@@ -61,6 +61,10 @@ const teachers = ref<User[]>([])
 const keyword = ref('')
 const loading = ref(false)
 
+function normalizeMentor(value?: User | null) {
+  return value && typeof value.id === 'number' ? value : null
+}
+
 async function searchTeachers() {
   loading.value = true
   try {
@@ -78,7 +82,10 @@ async function applyMentor(mentorId: number) {
 
 onMounted(async () => {
   const relations = await userApi.getMentorRelations()
-  mentor.value = relations.mentor ?? null
+  mentor.value = normalizeMentor(relations.mentor)
+  if (!mentor.value) {
+    await searchTeachers()
+  }
 })
 </script>
 

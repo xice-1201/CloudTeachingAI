@@ -62,43 +62,61 @@
       </template>
     </el-empty>
 
-    <div v-else-if="hasResources" class="path-container">
-      <div v-for="item in path?.resources" :key="item.resourceId" class="path-step">
-        <div class="step-index">{{ item.orderIndex }}</div>
-        <button type="button" class="step-card" @click="openResource(item)">
-          <div class="step-top">
-            <div class="step-heading">
-              <div class="step-title">{{ item.resourceTitle }}</div>
-              <div class="step-course">
-                {{ item.courseTitle }}
-                <span v-if="item.chapterTitle"> / {{ item.chapterTitle }}</span>
-              </div>
+    <div v-else-if="hasResources" class="route-board">
+      <div class="route-start">
+        <span class="route-start-icon">
+          <el-icon><Flag /></el-icon>
+        </span>
+        <span>从当前掌握情况出发</span>
+      </div>
+      <div class="route-scroll">
+        <div
+          v-for="(item, index) in path?.resources"
+          :key="item.resourceId"
+          class="route-node"
+          :class="routeNodeClass(item)"
+        >
+          <div class="route-track">
+            <div class="route-dot">
+              <el-icon v-if="isCompleted(item)"><Finished /></el-icon>
+              <span v-else>{{ item.orderIndex }}</span>
             </div>
-            <div class="step-tags">
-              <el-tag size="small" effect="plain">{{ item.focusKnowledgePointName }}</el-tag>
+            <div v-if="index < (path?.resources.length ?? 0) - 1" class="route-connector">
+              <span class="route-connector-fill" :style="{ width: connectorProgress(item) }" />
+            </div>
+          </div>
+
+          <button type="button" class="milestone-card" @click="openResource(item)">
+            <div class="milestone-kicker">
+              <span>第 {{ item.orderIndex }} 站</span>
               <el-tag size="small" :type="pathStatusTagType(item)" effect="light">
                 {{ item.statusLabel || pathStatusLabel(item) }}
               </el-tag>
             </div>
-          </div>
-          <div class="step-reason">{{ item.reason }}</div>
-          <div class="step-progress">
-            <div class="step-progress-head">
-              <span>当前学习进度</span>
+            <div class="milestone-title">{{ item.resourceTitle }}</div>
+            <div class="milestone-course">
+              {{ item.courseTitle }}
+              <span v-if="item.chapterTitle"> / {{ item.chapterTitle }}</span>
+            </div>
+            <div class="milestone-focus">
+              <span>{{ item.focusKnowledgePointName }}</span>
               <span v-if="item.recommendationScore != null">推荐度 {{ Math.round(item.recommendationScore * 100) }}%</span>
             </div>
-            <el-progress
-              :percentage="Math.round(item.currentProgress * 100)"
-              :stroke-width="8"
-              :color="masteryColor(item.currentProgress)"
-            />
-          </div>
-          <div class="step-footer">
-            <span>{{ nextStepHint(item) }}</span>
-            <span class="step-action">{{ item.actionLabel || pathActionLabel(item) }}</span>
-          </div>
-        </button>
-        <div v-if="item.orderIndex < (path?.resources.length ?? 0)" class="step-connector" />
+            <div class="milestone-reason">{{ item.reason }}</div>
+            <div class="milestone-progress">
+              <span>进度 {{ Math.round(item.currentProgress * 100) }}%</span>
+              <el-progress
+                :percentage="Math.round(item.currentProgress * 100)"
+                :stroke-width="8"
+                :color="masteryColor(item.currentProgress)"
+              />
+            </div>
+            <div class="milestone-footer">
+              <span>{{ nextStepHint(item) }}</span>
+              <span class="milestone-action">{{ item.actionLabel || pathActionLabel(item) }}</span>
+            </div>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -107,7 +125,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ChatDotRound } from '@element-plus/icons-vue'
+import { ChatDotRound, Finished, Flag } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { learnApi } from '@/api/learn'
 import type { LearningPath, PathResource } from '@/types'
@@ -156,6 +174,22 @@ function pathStatusLabel(item: PathResource) {
   if (item.learningStatus === 'COMPLETED' || item.currentProgress >= 0.999) return '已完成'
   if (item.learningStatus === 'IN_PROGRESS' || item.currentProgress > 0) return '学习中'
   return '未开始'
+}
+
+function isCompleted(item: PathResource) {
+  return item.learningStatus === 'COMPLETED' || item.currentProgress >= 0.999
+}
+
+function routeNodeClass(item: PathResource) {
+  if (isCompleted(item)) return 'is-completed'
+  if (item.learningStatus === 'IN_PROGRESS' || item.currentProgress > 0) return 'is-current'
+  return 'is-pending'
+}
+
+function connectorProgress(item: PathResource) {
+  if (isCompleted(item)) return '100%'
+  if (item.learningStatus === 'IN_PROGRESS' || item.currentProgress > 0) return `${Math.max(26, Math.round(item.currentProgress * 100))}%`
+  return '0%'
 }
 
 function pathActionLabel(item: PathResource) {
@@ -314,37 +348,105 @@ onMounted(async () => {
   gap: 12px;
 }
 
-.path-container {
-  max-width: 860px;
+.route-board {
+  padding: 18px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #f8fafc;
 }
 
-.path-step {
-  position: relative;
+.route-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.route-start-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: #ecf5ff;
+  color: #409eff;
+}
+
+.route-scroll {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding-left: 56px;
+  gap: 0;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scroll-snap-type: x proximity;
 }
 
-.step-index {
-  position: absolute;
-  left: 0;
-  top: 18px;
+.route-node {
+  min-width: 300px;
+  max-width: 340px;
+  flex: 0 0 32%;
+  scroll-snap-align: start;
+}
+
+.route-track {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+}
+
+.route-dot {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 38px;
   height: 38px;
+  border: 3px solid #dcdfe6;
   border-radius: 999px;
-  background: #409eff;
-  color: #fff;
+  background: #fff;
+  color: #606266;
+  font-size: 14px;
   font-weight: 700;
-  z-index: 1;
+  flex-shrink: 0;
+  box-shadow: 0 3px 10px rgba(31, 45, 61, 0.08);
 }
 
-.step-card {
-  width: 100%;
-  padding: 18px 20px;
+.route-node.is-current .route-dot {
+  border-color: #e6a23c;
+  color: #e6a23c;
+}
+
+.route-node.is-completed .route-dot {
+  border-color: #67c23a;
+  background: #67c23a;
+  color: #fff;
+}
+
+.route-connector {
+  position: relative;
+  height: 6px;
+  flex: 1;
+  min-width: 96px;
+  margin: 0 10px;
+  border-radius: 999px;
+  background: #dcdfe6;
+  overflow: hidden;
+}
+
+.route-connector-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #67c23a, #409eff);
+}
+
+.milestone-card {
+  width: calc(100% - 22px);
+  min-height: 286px;
+  margin-right: 22px;
+  padding: 16px;
   border: 1px solid #e4e7ed;
   border-radius: 8px;
   background: #fff;
@@ -353,84 +455,78 @@ onMounted(async () => {
   transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
 }
 
-.step-card:hover {
+.milestone-card:hover {
   border-color: #409eff;
   box-shadow: 0 10px 24px rgba(64, 158, 255, 0.12);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
 
-.step-top {
+.milestone-kicker,
+.milestone-focus,
+.milestone-footer {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.step-heading {
-  min-width: 0;
+.milestone-kicker {
+  color: #909399;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.step-title {
-  font-size: 15px;
-  font-weight: 600;
+.milestone-title {
+  margin-top: 12px;
   color: #303133;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.step-course {
-  margin-top: 6px;
-  font-size: 13px;
+.milestone-course {
+  margin-top: 8px;
   color: #909399;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
-.step-tags {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.step-reason {
+.milestone-focus {
   margin-top: 14px;
-  color: #606266;
-  line-height: 1.7;
-  font-size: 14px;
+  color: #409eff;
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.step-progress {
-  margin-top: 16px;
+.milestone-reason {
+  margin-top: 12px;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.milestone-progress {
   display: grid;
   gap: 8px;
+  margin-top: 14px;
   color: #606266;
   font-size: 13px;
 }
 
-.step-progress-head,
-.step-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.step-footer {
+.milestone-footer {
   margin-top: 14px;
   color: #909399;
   font-size: 13px;
+  line-height: 1.5;
 }
 
-.step-action {
+.milestone-action {
   color: #409eff;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.step-connector {
-  width: 2px;
-  height: 28px;
-  margin-left: -38px;
-  background: #dcdfe6;
 }
 
 @media (max-width: 768px) {
@@ -448,23 +544,47 @@ onMounted(async () => {
   }
 
   .empty-actions,
-  .step-top,
-  .step-progress-head,
-  .step-footer {
+  .milestone-kicker,
+  .milestone-focus,
+  .milestone-footer {
     flex-direction: column;
   }
 
-  .step-tags {
-    justify-content: flex-start;
+  .route-board {
+    padding: 14px;
   }
 
-  .path-step {
-    padding-left: 44px;
+  .route-scroll {
+    flex-direction: column;
+    gap: 16px;
+    overflow-x: visible;
+    padding-bottom: 0;
   }
 
-  .step-index {
+  .route-node {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .route-track {
+    min-height: 34px;
+  }
+
+  .route-dot {
     width: 32px;
     height: 32px;
+  }
+
+  .route-connector {
+    display: none;
+  }
+
+  .milestone-card {
+    width: 100%;
+    min-height: 0;
+    margin-right: 0;
   }
 }
 </style>

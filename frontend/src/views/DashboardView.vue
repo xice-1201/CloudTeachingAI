@@ -166,8 +166,8 @@
         </el-col>
       </el-row>
 
-      <LearningPathView embedded />
       <KnowledgeGraphView embedded />
+      <LearningPathView embedded />
 
       <el-row :gutter="20" style="margin-top: 20px">
         <el-col :span="16">
