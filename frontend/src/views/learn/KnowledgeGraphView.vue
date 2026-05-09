@@ -58,6 +58,29 @@
       </div>
     </div>
 
+    <section class="scope-nav">
+      <span class="scope-nav-label">当前路径</span>
+      <button
+        type="button"
+        class="scope-link"
+        :class="{ active: selectedRootId === null }"
+        @click="selectAllGraphRoot"
+      >
+        全平台知识点
+      </button>
+      <template v-for="item in scopeTrail" :key="item.id">
+        <span class="scope-separator">/</span>
+        <button
+          type="button"
+          class="scope-link"
+          :class="{ active: selectedRootId === item.id }"
+          @click="selectGraphRoot(item.id)"
+        >
+          {{ item.name }}
+        </button>
+      </template>
+    </section>
+
     <section class="summary-grid">
       <div class="summary-item">
         <div class="summary-label">当前范围</div>
@@ -159,6 +182,26 @@ const knowledgePointOptions = computed<KnowledgePointOption[]>(() => {
 const rankedNodes = computed(() => [...(graph.value?.nodes ?? [])]
   .sort((left, right) => right.resourceCount - left.resourceCount || left.path.localeCompare(right.path, 'zh-CN'))
   .slice(0, 12))
+
+const selectedRootOption = computed(() => selectedRootId.value == null
+  ? null
+  : knowledgePointOptions.value.find((item) => item.id === selectedRootId.value) ?? null)
+
+const scopeTrail = computed(() => {
+  if (!selectedRootOption.value) {
+    return []
+  }
+
+  const parts = selectedRootOption.value.path.split('/').map((part) => part.trim()).filter(Boolean)
+  return parts.reduce<Array<{ id: number; name: string }>>((trail, _part, index) => {
+    const path = parts.slice(0, index + 1).join('/')
+    const option = knowledgePointOptions.value.find((item) => normalizeKnowledgePointText(item.path) === normalizeKnowledgePointText(path))
+    if (option) {
+      trail.push({ id: option.id, name: option.name })
+    }
+    return trail
+  }, [])
+})
 
 function knowledgeTypeLabel(type: KnowledgePointNode['nodeType']) {
   return { SUBJECT: '学科', DOMAIN: '知识领域', POINT: '知识点' }[type] ?? type
@@ -271,6 +314,11 @@ async function selectGraphRoot(id: number) {
   await loadGraph()
 }
 
+async function selectAllGraphRoot() {
+  selectedRootId.value = null
+  await loadGraph()
+}
+
 async function selectGraphRootByNode(item: KnowledgeGraphNode) {
   const id = resolveSelectableRootId(item)
   if (id == null) return
@@ -374,6 +422,44 @@ function handleResize() {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.scope-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: #606266;
+  font-size: 13px;
+}
+
+.scope-nav-label {
+  color: #909399;
+}
+
+.scope-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #409eff;
+  font: inherit;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.scope-link:hover {
+  color: #66b1ff;
+}
+
+.scope-link.active {
+  color: #303133;
+  font-weight: 600;
+  cursor: default;
+}
+
+.scope-separator {
+  color: #c0c4cc;
 }
 
 .summary-grid {
