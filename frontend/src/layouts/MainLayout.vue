@@ -16,14 +16,10 @@
           <span>{{ homeMenuLabel }}</span>
         </el-menu-item>
 
-        <el-sub-menu v-if="!userStore.isAdmin" index="courses">
-          <template #title>
-            <el-icon><Reading /></el-icon>
-            <span>课程管理</span>
-          </template>
-          <el-menu-item index="/courses">课程列表</el-menu-item>
-          <el-menu-item v-if="!userStore.isStudent" index="/courses/create">创建课程</el-menu-item>
-        </el-sub-menu>
+        <el-menu-item v-if="!userStore.isAdmin" index="/courses">
+          <el-icon><Reading /></el-icon>
+          <span>课程管理</span>
+        </el-menu-item>
 
         <el-sub-menu v-if="userStore.isStudent" index="learning">
           <template #title>
@@ -45,7 +41,7 @@
           <span>AI 助手</span>
         </el-menu-item>
 
-        <el-menu-item index="/knowledge-graph">
+        <el-menu-item v-if="!userStore.isTeacher" index="/knowledge-graph">
           <el-icon><Share /></el-icon>
           <span>知识图谱</span>
         </el-menu-item>
@@ -117,6 +113,9 @@ const homeMenuLabel = computed(() => (userStore.isAdmin ? '管理首页' : '首�
 const activeMenu = computed(() => {
   if (userStore.isAdmin && route.path.startsWith('/admin')) {
     return '/admin'
+  }
+  if (route.path.startsWith('/courses')) {
+    return '/courses'
   }
   return route.path
 })

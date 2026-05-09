@@ -146,6 +146,8 @@
           </el-card>
         </el-col>
       </el-row>
+
+      <KnowledgeGraphView embedded />
     </template>
 
     <template v-else>
@@ -205,6 +207,7 @@ import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
 import { assignApi } from '@/api/assign'
 import { useUserStore } from '@/store/user'
+import KnowledgeGraphView from '@/views/learn/KnowledgeGraphView.vue'
 import type { Assignment, Course, DiscussionPost, Submission, TeacherDashboard } from '@/types'
 
 const router = useRouter()

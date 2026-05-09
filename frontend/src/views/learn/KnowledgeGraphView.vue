@@ -1,7 +1,37 @@
 <template>
-  <div class="page-container" v-loading="loading">
-    <div class="page-header">
+  <div :class="embedded ? 'knowledge-graph-panel' : 'page-container'" v-loading="loading">
+    <div v-if="!embedded" class="page-header">
       <span class="page-title">知识图谱</span>
+      <div class="header-actions">
+        <el-select
+          v-model="selectedRootId"
+          filterable
+          clearable
+          placeholder="选择图谱范围"
+          class="scope-select"
+          @change="loadGraph"
+          @clear="loadGraph"
+        >
+          <el-option
+            v-for="item in knowledgePointOptions"
+            :key="item.id"
+            :label="item.path"
+            :value="item.id"
+          >
+            <div class="option-row">
+              <span>{{ item.path }}</span>
+              <el-tag size="small" effect="plain">{{ knowledgeTypeLabel(item.nodeType) }}</el-tag>
+            </div>
+          </el-option>
+        </el-select>
+        <el-button type="primary" :loading="loading" @click="loadGraph">刷新</el-button>
+      </div>
+    </div>
+    <div v-else class="embedded-header">
+      <div>
+        <div class="embedded-title">知识图谱</div>
+        <div class="embedded-subtitle">全平台课程资源关联的知识点覆盖情况</div>
+      </div>
       <div class="header-actions">
         <el-select
           v-model="selectedRootId"
@@ -92,6 +122,10 @@ import { courseApi } from '@/api/course'
 import type { KnowledgeGraph, KnowledgeGraphNode, KnowledgePointNode } from '@/types'
 
 type KnowledgePointOption = Pick<KnowledgePointNode, 'id' | 'nodeType' | 'path'>
+
+withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+})
 
 const chartEl = ref<HTMLElement>()
 const loading = ref(false)
@@ -262,6 +296,32 @@ function handleResize() {
   gap: 12px;
 }
 
+.knowledge-graph-panel {
+  margin-top: 20px;
+}
+
+.embedded-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.embedded-title {
+  color: #303133;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.embedded-subtitle {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .scope-select {
   width: min(460px, 48vw);
 }
@@ -428,6 +488,11 @@ function handleResize() {
 }
 
 @media (max-width: 768px) {
+  .embedded-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .header-actions {
     width: 100%;
     align-items: stretch;
