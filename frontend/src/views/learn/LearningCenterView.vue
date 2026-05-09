@@ -43,7 +43,7 @@
           <div class="quick-actions">
             <button type="button" class="action-item" @click="$router.push('/learning/ability-test')">
               <div class="action-title">开始能力测试</div>
-              <div class="action-desc">按知识点范围进行一轮掌握度诊断</div>
+              <div class="action-desc">按学科范围进行一轮掌握度诊断</div>
             </button>
             <button type="button" class="action-item" @click="$router.push('/learning/path')">
               <div class="action-title">查看学习路线</div>

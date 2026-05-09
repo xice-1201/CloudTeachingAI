@@ -16,7 +16,7 @@
           <span>{{ homeMenuLabel }}</span>
         </el-menu-item>
 
-        <el-menu-item v-if="!userStore.isAdmin" index="/courses">
+        <el-menu-item v-if="!userStore.isAdmin && !userStore.isStudent" index="/courses">
           <el-icon><Reading /></el-icon>
           <span>课程管理</span>
         </el-menu-item>
@@ -27,6 +27,7 @@
             <span>学习中心</span>
           </template>
           <el-menu-item index="/learning">学习概览</el-menu-item>
+          <el-menu-item index="/courses">课程管理</el-menu-item>
           <el-menu-item index="/learning/ability-test">能力测试</el-menu-item>
           <el-menu-item index="/learning/path">学习路线</el-menu-item>
         </el-sub-menu>
