@@ -1068,6 +1068,7 @@ async function handleSubmitResource() {
       type: resourceDialog.form.type,
       url: resourceUrl || undefined,
       description: resourceDialog.form.description || undefined,
+      knowledgePointIds: resourceDialog.form.knowledgePointIds,
       tagLabels: normalizeTagLabels(resourceDialog.form.tagLabels),
       duration: resourceDialog.form.duration || undefined,
       size: resourceSize,

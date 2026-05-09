@@ -605,7 +605,7 @@ public class CourseFacadeService {
         childrenByParent.values().forEach(children -> children.sort(
                 Comparator.comparing(KnowledgePointEntity::getOrderIndex).thenComparing(KnowledgePointEntity::getId)));
 
-        Map<Long, Integer> directCounts = loadKnowledgePointDirectResourceCounts();
+        Map<Long, Integer> directCounts = loadKnowledgePointDirectResourceCounts(sourceMap);
         Map<Long, Integer> subtreeCounts = new LinkedHashMap<>();
         Set<Long> visitedForCount = new LinkedHashSet<>();
         for (KnowledgePointEntity knowledgePoint : scopedKnowledgePoints) {
@@ -1607,14 +1607,47 @@ public class CourseFacadeService {
         }
     }
 
-    private Map<Long, Integer> loadKnowledgePointDirectResourceCounts() {
-        Map<Long, Integer> counts = new LinkedHashMap<>();
-        for (ResourceKnowledgePointRepository.ResourceCountProjection projection : resourceKnowledgePointRepository.countResourcesByKnowledgePoint()) {
-            if (projection.getKnowledgePointId() == null) {
+    private Map<Long, Integer> loadKnowledgePointDirectResourceCounts(Map<Long, KnowledgePointEntity> knowledgePointMap) {
+        Map<Long, Set<Long>> resourceIdsByKnowledgePoint = new LinkedHashMap<>();
+        Map<String, List<Long>> knowledgePointIdsByNormalizedName = new LinkedHashMap<>();
+        for (KnowledgePointEntity knowledgePoint : knowledgePointMap.values()) {
+            knowledgePointIdsByNormalizedName
+                    .computeIfAbsent(normalizeSuggestionText(knowledgePoint.getName()), ignored -> new ArrayList<>())
+                    .add(knowledgePoint.getId());
+        }
+
+        for (ResourceKnowledgePointRepository.ResourceKnowledgePointLinkProjection link : resourceKnowledgePointRepository.findResourceKnowledgePointLinks()) {
+            if (link.getKnowledgePointId() == null || link.getResourceId() == null || !knowledgePointMap.containsKey(link.getKnowledgePointId())) {
                 continue;
             }
-            counts.put(projection.getKnowledgePointId(), Math.toIntExact(projection.getResourceCount()));
+            resourceIdsByKnowledgePoint
+                    .computeIfAbsent(link.getKnowledgePointId(), ignored -> new LinkedHashSet<>())
+                    .add(link.getResourceId());
         }
+
+        for (ResourceTagRepository.ResourceTagKnowledgeLinkProjection link : resourceTagRepository.findResourceTagKnowledgeLinks()) {
+            if (link.getResourceId() == null) {
+                continue;
+            }
+            if (link.getKnowledgePointId() != null && knowledgePointMap.containsKey(link.getKnowledgePointId())) {
+                resourceIdsByKnowledgePoint
+                        .computeIfAbsent(link.getKnowledgePointId(), ignored -> new LinkedHashSet<>())
+                        .add(link.getResourceId());
+            }
+
+            String normalizedLabel = normalizeSuggestionText(link.getNormalizedLabel());
+            if (!StringUtils.hasText(normalizedLabel)) {
+                continue;
+            }
+            for (Long matchedKnowledgePointId : knowledgePointIdsByNormalizedName.getOrDefault(normalizedLabel, List.of())) {
+                resourceIdsByKnowledgePoint
+                        .computeIfAbsent(matchedKnowledgePointId, ignored -> new LinkedHashSet<>())
+                        .add(link.getResourceId());
+            }
+        }
+
+        Map<Long, Integer> counts = new LinkedHashMap<>();
+        resourceIdsByKnowledgePoint.forEach((knowledgePointId, resourceIds) -> counts.put(knowledgePointId, resourceIds.size()));
         return counts;
     }
 

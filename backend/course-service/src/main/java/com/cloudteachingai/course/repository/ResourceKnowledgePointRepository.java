@@ -20,9 +20,21 @@ public interface ResourceKnowledgePointRepository extends JpaRepository<Resource
             """)
     List<ResourceCountProjection> countResourcesByKnowledgePoint();
 
+    @Query("""
+            select relation.resourceId as resourceId, relation.knowledgePointId as knowledgePointId
+            from ResourceKnowledgePointEntity relation
+            """)
+    List<ResourceKnowledgePointLinkProjection> findResourceKnowledgePointLinks();
+
     interface ResourceCountProjection {
         Long getKnowledgePointId();
 
         Long getResourceCount();
+    }
+
+    interface ResourceKnowledgePointLinkProjection {
+        Long getResourceId();
+
+        Long getKnowledgePointId();
     }
 }
