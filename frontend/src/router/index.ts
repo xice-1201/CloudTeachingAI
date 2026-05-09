@@ -2,8 +2,18 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useUserStore } from '@/store/user'
 
+const CHUNK_RELOAD_KEY = 'cloudteachingai:chunk-reload'
+
 function getHomeRouteByRole(role?: string | null) {
   return role === 'ADMIN' ? { name: 'Admin' as const } : { name: 'Dashboard' as const }
+}
+
+function isDynamicImportError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('Failed to fetch dynamically imported module')
+    || message.includes('Importing a module script failed')
+    || message.includes('error loading dynamically imported module')
+    || message.includes('Unable to preload CSS')
 }
 
 const routes: RouteRecordRaw[] = [
@@ -143,6 +153,20 @@ const router = createRouter({
   routes,
 })
 
+router.onError((error) => {
+  if (!isDynamicImportError(error)) {
+    return
+  }
+
+  if (sessionStorage.getItem(CHUNK_RELOAD_KEY) === '1') {
+    sessionStorage.removeItem(CHUNK_RELOAD_KEY)
+    return
+  }
+
+  sessionStorage.setItem(CHUNK_RELOAD_KEY, '1')
+  window.location.reload()
+})
+
 router.beforeEach(async (to, _from, next) => {
   const userStore = useUserStore()
   const token = localStorage.getItem('token')
@@ -201,6 +225,10 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   next()
+})
+
+router.afterEach(() => {
+  sessionStorage.removeItem(CHUNK_RELOAD_KEY)
 })
 
 export default router
