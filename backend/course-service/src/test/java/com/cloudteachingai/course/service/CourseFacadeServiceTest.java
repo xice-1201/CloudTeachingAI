@@ -161,6 +161,82 @@ class CourseFacadeServiceTest {
     }
 
     @Test
+    void confirmResourceTagsCreatesMissingManualTagUnderSelectedDomain() {
+        ResourceEntity resource = resource();
+        ChapterEntity chapter = ChapterEntity.builder()
+                .id(201L)
+                .courseId(301L)
+                .title("Python")
+                .orderIndex(1)
+                .build();
+        CourseEntity course = CourseEntity.builder()
+                .id(301L)
+                .teacherId(401L)
+                .title("Python")
+                .description("Python")
+                .status(CourseStatus.DRAFT)
+                .visibilityType(CourseVisibilityType.PUBLIC)
+                .build();
+        KnowledgePointEntity subject = KnowledgePointEntity.builder()
+                .id(1L)
+                .name("计算机科学")
+                .nodeType(KnowledgePointType.SUBJECT)
+                .active(true)
+                .orderIndex(1)
+                .build();
+        KnowledgePointEntity python = KnowledgePointEntity.builder()
+                .id(2L)
+                .parentId(1L)
+                .name("Python")
+                .nodeType(KnowledgePointType.DOMAIN)
+                .active(true)
+                .orderIndex(1)
+                .build();
+        ResourceTagConfirmRequest request = new ResourceTagConfirmRequest();
+        request.setKnowledgePointIds(List.of(2L));
+        request.setTagLabels(List.of("工具"));
+
+        when(resourceRepository.findById(1001L)).thenReturn(Optional.of(resource));
+        when(chapterRepository.findById(201L)).thenReturn(Optional.of(chapter));
+        when(courseRepository.findById(301L)).thenReturn(Optional.of(course));
+        when(knowledgePointRepository.findByIdIn(List.of(2L))).thenReturn(List.of(python));
+        when(knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc()).thenReturn(new ArrayList<>(List.of(subject, python)));
+        when(knowledgePointRepository.findAllByOrderByOrderIndexAscIdAsc()).thenReturn(new ArrayList<>(List.of(subject, python)));
+        when(knowledgePointRepository.save(any(KnowledgePointEntity.class))).thenAnswer(invocation -> {
+            KnowledgePointEntity entity = invocation.getArgument(0);
+            entity.setId(8L);
+            return entity;
+        });
+        when(resourceRepository.save(any(ResourceEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(resourceStorageService.isManagedStorageKey("resources/1001.pdf")).thenReturn(false);
+        when(resourceKnowledgePointRepository.findByResourceIdIn(anyCollection())).thenReturn(List.of());
+        when(resourceTagRepository.findByResourceIdIn(anyCollection())).thenReturn(List.of());
+
+        courseFacadeService.confirmResourceTags(1001L, request, new UserContext(401L, "TEACHER"));
+
+        ArgumentCaptor<KnowledgePointEntity> knowledgePointCaptor = ArgumentCaptor.forClass(KnowledgePointEntity.class);
+        verify(knowledgePointRepository).save(knowledgePointCaptor.capture());
+        assertThat(knowledgePointCaptor.getValue()).satisfies(created -> {
+            assertThat(created.getParentId()).isEqualTo(2L);
+            assertThat(created.getName()).isEqualTo("工具");
+            assertThat(created.getNodeType()).isEqualTo(KnowledgePointType.POINT);
+            assertThat(created.getActive()).isTrue();
+        });
+
+        ArgumentCaptor<Iterable<ResourceKnowledgePointEntity>> relationCaptor = ArgumentCaptor.forClass(Iterable.class);
+        verify(resourceKnowledgePointRepository).saveAll(relationCaptor.capture());
+        assertThat(toList(relationCaptor.getValue()))
+                .extracting(ResourceKnowledgePointEntity::getKnowledgePointId)
+                .containsExactly(2L, 8L);
+
+        ArgumentCaptor<Iterable<ResourceTagEntity>> tagCaptor = ArgumentCaptor.forClass(Iterable.class);
+        verify(resourceTagRepository).saveAll(tagCaptor.capture());
+        assertThat(toList(tagCaptor.getValue()))
+                .extracting(ResourceTagEntity::getLabel)
+                .containsExactly("工具", "Python");
+    }
+
+    @Test
     void createResourceDefersTagAgentRequestUntilAfterCommit() {
         ChapterEntity chapter = ChapterEntity.builder()
                 .id(201L)

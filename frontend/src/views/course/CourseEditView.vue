@@ -257,6 +257,8 @@
               v-model="resourceDialog.form.knowledgePointIds"
               multiple
               filterable
+              allow-create
+              default-first-option
               placeholder="选择资源关联的知识点"
               style="width: 100%"
             >
@@ -440,7 +442,7 @@ const resourceDialog = reactive({
   isEdit: false,
   chapterId: '',
   resourceId: '',
-  form: { title: '', type: 'DOCUMENT' as Resource['type'], url: '', description: '', managedFile: false, knowledgePointIds: [] as number[], tagLabels: [] as string[], duration: 0, size: 0, orderIndex: 1, exerciseQuestions: [] as ExerciseQuestion[] },
+  form: { title: '', type: 'DOCUMENT' as Resource['type'], url: '', description: '', managedFile: false, knowledgePointIds: [] as Array<number | string>, tagLabels: [] as string[], duration: 0, size: 0, orderIndex: 1, exerciseQuestions: [] as ExerciseQuestion[] },
 })
 const tagReviewDialog = reactive({
   visible: false,
@@ -689,10 +691,27 @@ async function generateExerciseQuestions() {
 }
 
 function selectedKnowledgePointLabels() {
-  const selectedIds = new Set(resourceDialog.form.knowledgePointIds)
-  return knowledgePointOptions.value
+  const selectedIds = new Set(selectedKnowledgePointIds())
+  const existingLabels = knowledgePointOptions.value
     .filter((item) => selectedIds.has(item.id))
     .map((item) => item.name)
+  return Array.from(new Set([...existingLabels, ...selectedManualTagLabels()]))
+}
+
+function selectedKnowledgePointIds() {
+  return resourceDialog.form.knowledgePointIds
+    .filter((value): value is number => typeof value === 'number')
+}
+
+function selectedManualTagLabels() {
+  const labels = new Map<string, string>()
+  for (const value of resourceDialog.form.knowledgePointIds) {
+    if (typeof value !== 'string') continue
+    const label = value.trim()
+    if (!label) continue
+    labels.set(label.toLowerCase(), label)
+  }
+  return Array.from(labels.values())
 }
 
 function knowledgeTypeLabel(type: KnowledgePointNode['nodeType']) {
@@ -1248,7 +1267,8 @@ async function handleSubmitResource() {
       type: resourceDialog.form.type,
       url: resourceUrl || undefined,
       description: resourceDialog.form.description || undefined,
-      knowledgePointIds: resourceDialog.form.knowledgePointIds,
+      knowledgePointIds: selectedKnowledgePointIds(),
+      tagLabels: selectedManualTagLabels(),
       duration: resourceDialog.form.duration || undefined,
       size: resourceSize,
       orderIndex: resourceDialog.form.orderIndex,

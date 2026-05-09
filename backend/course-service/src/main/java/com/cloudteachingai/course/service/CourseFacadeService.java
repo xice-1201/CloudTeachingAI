@@ -2040,7 +2040,10 @@ public class CourseFacadeService {
             }
         }
 
-        Map<Long, KnowledgePointEntity> activeAttachableKnowledgePointMap = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
+        List<KnowledgePointEntity> activeKnowledgePoints = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc();
+        Map<Long, KnowledgePointEntity> activeKnowledgePointMap = activeKnowledgePoints.stream()
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+        Map<Long, KnowledgePointEntity> activeAttachableKnowledgePointMap = activeKnowledgePoints.stream()
                 .filter(item -> item.getNodeType() != KnowledgePointType.SUBJECT)
                 .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
         Map<String, KnowledgePointEntity> knowledgePointByNormalizedLabel = new LinkedHashMap<>();
@@ -2073,13 +2076,18 @@ public class CourseFacadeService {
             mergedLabels.add(knowledgePoint.getName());
         }
 
-        List<String> unmatchedLabels = new ArrayList<>();
         for (String tagLabel : mergedLabels) {
             String normalizedLabel = normalizeSuggestionText(tagLabel);
             KnowledgePointEntity matchedKnowledgePoint = knowledgePointByNormalizedLabel.get(normalizedLabel);
             if (matchedKnowledgePoint == null) {
-                unmatchedLabels.add(tagLabel);
-                continue;
+                matchedKnowledgePoint = createKnowledgePointForManualTag(
+                        tagLabel,
+                        knowledgePoints,
+                        activeKnowledgePoints,
+                        activeKnowledgePointMap
+                );
+                knowledgePointByNormalizedLabel.putIfAbsent(normalizedLabel, matchedKnowledgePoint);
+                activeAttachableKnowledgePointMap.putIfAbsent(matchedKnowledgePoint.getId(), matchedKnowledgePoint);
             }
             relationMap.putIfAbsent(matchedKnowledgePoint.getId(), ResourceKnowledgePointEntity.builder()
                     .resourceId(resource.getId())
@@ -2096,9 +2104,6 @@ public class CourseFacadeService {
                     .source(ResourceTagSource.MANUAL)
                     .build());
         }
-        if (!unmatchedLabels.isEmpty()) {
-            throw BusinessException.badRequest("Resource tags must match existing knowledge points: " + String.join(", ", unmatchedLabels));
-        }
 
         if (!relationMap.isEmpty()) {
             resourceKnowledgePointRepository.saveAll(relationMap.values());
@@ -2110,6 +2115,64 @@ public class CourseFacadeService {
         resource.setTaggingStatus(ResourceTaggingStatus.CONFIRMED);
         resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         resourceRepository.save(resource);
+    }
+
+    private KnowledgePointEntity createKnowledgePointForManualTag(
+            String tagLabel,
+            List<KnowledgePointEntity> selectedKnowledgePoints,
+            List<KnowledgePointEntity> activeKnowledgePoints,
+            Map<Long, KnowledgePointEntity> activeKnowledgePointMap
+    ) {
+        KnowledgePointEntity parent = resolveManualTagParent(
+                selectedKnowledgePoints,
+                activeKnowledgePoints,
+                activeKnowledgePointMap
+        );
+        if (parent == null) {
+            throw BusinessException.badRequest("Please create a subject or select a parent knowledge point before adding new tags");
+        }
+
+        KnowledgePointType nodeType = parent.getNodeType() == KnowledgePointType.SUBJECT
+                ? KnowledgePointType.DOMAIN
+                : KnowledgePointType.POINT;
+        KnowledgePointEntity entity = KnowledgePointEntity.builder()
+                .parentId(parent.getId())
+                .name(tagLabel.trim())
+                .description(null)
+                .keywords(tagLabel.trim())
+                .nodeType(nodeType)
+                .active(true)
+                .orderIndex(resolveKnowledgePointOrderIndex(parent.getId(), null))
+                .build();
+        KnowledgePointEntity saved = knowledgePointRepository.save(entity);
+        publishKnowledgePointUpdatedEvent(saved);
+        activeKnowledgePoints.add(saved);
+        activeKnowledgePointMap.put(saved.getId(), saved);
+        return saved;
+    }
+
+    private KnowledgePointEntity resolveManualTagParent(
+            List<KnowledgePointEntity> selectedKnowledgePoints,
+            List<KnowledgePointEntity> activeKnowledgePoints,
+            Map<Long, KnowledgePointEntity> activeKnowledgePointMap
+    ) {
+        for (KnowledgePointEntity selected : selectedKnowledgePoints) {
+            if (selected.getNodeType() == KnowledgePointType.DOMAIN) {
+                return selected;
+            }
+        }
+        for (KnowledgePointEntity selected : selectedKnowledgePoints) {
+            if (selected.getNodeType() == KnowledgePointType.POINT && selected.getParentId() != null) {
+                KnowledgePointEntity parent = activeKnowledgePointMap.get(selected.getParentId());
+                if (parent != null && parent.getNodeType() == KnowledgePointType.DOMAIN) {
+                    return parent;
+                }
+            }
+        }
+        return activeKnowledgePoints.stream()
+                .filter(item -> item.getNodeType() == KnowledgePointType.SUBJECT)
+                .findFirst()
+                .orElse(null);
     }
 
     private String normalizeSuggestionText(String text) {
