@@ -678,6 +678,8 @@ async function generateExerciseQuestions() {
   exerciseGenerating.value = true
   try {
     const questions = await courseApi.generateExerciseQuestions({
+      courseId: Number(courseId.value) || undefined,
+      chapterId: Number(resourceDialog.chapterId) || undefined,
       title: resourceDialog.form.title,
       description: resourceDialog.form.description,
       tagLabels: selectedKnowledgePointLabels(),

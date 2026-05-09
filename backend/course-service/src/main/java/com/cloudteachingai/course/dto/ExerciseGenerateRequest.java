@@ -6,6 +6,8 @@ import java.util.List;
 
 @Data
 public class ExerciseGenerateRequest {
+    private Long courseId;
+    private Long chapterId;
     private String title;
     private String description;
     private List<String> tagLabels;

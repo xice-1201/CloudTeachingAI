@@ -814,7 +814,112 @@ public class CourseFacadeService {
             UserContext userContext
     ) {
         assertRole(userContext, "TEACHER", "ADMIN");
-        return exerciseQuestionGenerationService.generate(request);
+        return exerciseQuestionGenerationService.generate(enrichExerciseGenerationRequest(request, userContext));
+    }
+
+    private ExerciseGenerateRequest enrichExerciseGenerationRequest(
+            ExerciseGenerateRequest request,
+            UserContext userContext
+    ) {
+        if (hasExerciseSeedInput(request)) {
+            return request;
+        }
+
+        CourseEntity course = null;
+        ChapterEntity chapter = null;
+        if (request.getChapterId() != null) {
+            chapter = requireChapter(request.getChapterId());
+            course = requireManageableCourse(chapter.getCourseId(), userContext);
+            if (request.getCourseId() != null && !Objects.equals(request.getCourseId(), course.getId())) {
+                throw BusinessException.badRequest("Chapter does not belong to the selected course");
+            }
+        } else if (request.getCourseId() != null) {
+            course = requireManageableCourse(request.getCourseId(), userContext);
+        }
+
+        if (course == null) {
+            return request;
+        }
+
+        ExerciseGenerateRequest enriched = new ExerciseGenerateRequest();
+        enriched.setCourseId(course.getId());
+        enriched.setChapterId(chapter == null ? null : chapter.getId());
+        enriched.setTitle(buildExerciseContextTitle(course, chapter));
+        enriched.setDescription(buildExerciseContextDescription(course, chapter));
+        enriched.setTagLabels(List.of());
+        enriched.setQuestionCount(request.getQuestionCount());
+        return enriched;
+    }
+
+    private boolean hasExerciseSeedInput(ExerciseGenerateRequest request) {
+        return StringUtils.hasText(request.getTitle())
+                || StringUtils.hasText(request.getDescription())
+                || !normalizeTagLabels(request.getTagLabels()).isEmpty();
+    }
+
+    private String buildExerciseContextTitle(CourseEntity course, ChapterEntity chapter) {
+        if (chapter == null) {
+            return course.getTitle();
+        }
+        return course.getTitle() + " - " + chapter.getTitle();
+    }
+
+    private String buildExerciseContextDescription(CourseEntity course, ChapterEntity chapter) {
+        List<String> parts = new ArrayList<>();
+        addExerciseContextPart(parts, "课程", course.getTitle(), course.getDescription());
+        if (chapter != null) {
+            addExerciseContextPart(parts, "单元", chapter.getTitle(), chapter.getDescription());
+        }
+
+        List<ResourceEntity> chapterResources = chapter == null
+                ? List.of()
+                : resourceRepository.findByChapterIdOrderByOrderIndexAscIdAsc(chapter.getId());
+        addResourceContext(parts, "当前单元资源", chapterResources, 12);
+
+        List<ChapterEntity> courseChapters = chapterRepository.findByCourseIdOrderByOrderIndexAscIdAsc(course.getId());
+        List<Long> chapterIds = courseChapters.stream().map(ChapterEntity::getId).toList();
+        List<ResourceEntity> courseResources = chapterIds.isEmpty()
+                ? List.of()
+                : resourceRepository.findByChapterIdInOrderByOrderIndexAscIdAsc(chapterIds);
+        List<ResourceEntity> otherCourseResources = courseResources.stream()
+                .filter(resource -> chapter == null || !Objects.equals(resource.getChapterId(), chapter.getId()))
+                .toList();
+        addResourceContext(parts, "课程其他资源", otherCourseResources, 16);
+
+        return String.join("\n", parts);
+    }
+
+    private void addExerciseContextPart(List<String> parts, String label, String title, String description) {
+        if (!StringUtils.hasText(title) && !StringUtils.hasText(description)) {
+            return;
+        }
+        StringBuilder builder = new StringBuilder(label).append("：");
+        if (StringUtils.hasText(title)) {
+            builder.append(title.trim());
+        }
+        if (StringUtils.hasText(description)) {
+            builder.append("。").append(description.trim());
+        }
+        parts.add(builder.toString());
+    }
+
+    private void addResourceContext(List<String> parts, String label, List<ResourceEntity> resources, int limit) {
+        List<String> summaries = resources.stream()
+                .filter(resource -> resource.getType() != ResourceType.EXERCISE)
+                .limit(limit)
+                .map(resource -> {
+                    StringBuilder builder = new StringBuilder();
+                    builder.append(resource.getTitle());
+                    if (StringUtils.hasText(resource.getDescription())) {
+                        builder.append("：").append(resource.getDescription().trim());
+                    }
+                    return builder.toString();
+                })
+                .filter(StringUtils::hasText)
+                .toList();
+        if (!summaries.isEmpty()) {
+            parts.add(label + "：" + String.join("；", summaries));
+        }
     }
 
     @Transactional

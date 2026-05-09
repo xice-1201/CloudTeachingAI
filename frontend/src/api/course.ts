@@ -171,6 +171,8 @@ export const courseApi = {
     request.post(`/resources/${resourceId}/tagging/retry`),
 
   generateExerciseQuestions: (data: {
+    courseId?: number
+    chapterId?: number
     title?: string
     description?: string
     tagLabels?: string[]

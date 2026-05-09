@@ -267,6 +267,67 @@ class CourseFacadeServiceTest {
     }
 
     @Test
+    void generateExerciseQuestionsUsesCourseAndChapterContextWhenRequestIsBlank() {
+        CourseEntity course = CourseEntity.builder()
+                .id(301L)
+                .teacherId(401L)
+                .title("Python 入门")
+                .description("面向初学者的 Python 基础课程")
+                .status(CourseStatus.DRAFT)
+                .visibilityType(CourseVisibilityType.PUBLIC)
+                .build();
+        ChapterEntity chapter = ChapterEntity.builder()
+                .id(201L)
+                .courseId(301L)
+                .title("条件与循环")
+                .description("控制流程基础")
+                .orderIndex(1)
+                .build();
+        ResourceEntity resource = ResourceEntity.builder()
+                .id(1001L)
+                .chapterId(201L)
+                .title("if 语句示例")
+                .description("通过条件判断选择不同执行路径")
+                .type(ResourceType.VIDEO)
+                .orderIndex(1)
+                .build();
+        ExerciseGenerateRequest request = new ExerciseGenerateRequest();
+        request.setCourseId(301L);
+        request.setChapterId(201L);
+        request.setQuestionCount(5);
+        ResourceResponse.ExerciseQuestionResponse generated = ResourceResponse.ExerciseQuestionResponse.builder()
+                .id("q1")
+                .stem("根据上下文生成的问题")
+                .options(List.of(
+                        ResourceResponse.ExerciseOptionResponse.builder().id("A").text("正确项").build(),
+                        ResourceResponse.ExerciseOptionResponse.builder().id("B").text("干扰项").build()
+                ))
+                .answer("A")
+                .build();
+
+        when(chapterRepository.findById(201L)).thenReturn(Optional.of(chapter));
+        when(courseRepository.findById(301L)).thenReturn(Optional.of(course));
+        when(resourceRepository.findByChapterIdOrderByOrderIndexAscIdAsc(201L)).thenReturn(List.of(resource));
+        when(chapterRepository.findByCourseIdOrderByOrderIndexAscIdAsc(301L)).thenReturn(List.of(chapter));
+        when(resourceRepository.findByChapterIdInOrderByOrderIndexAscIdAsc(List.of(201L))).thenReturn(List.of(resource));
+        when(exerciseQuestionGenerationService.generate(any(ExerciseGenerateRequest.class))).thenReturn(List.of(generated));
+
+        List<ResourceResponse.ExerciseQuestionResponse> response = courseFacadeService.generateExerciseQuestions(
+                request,
+                new UserContext(401L, "TEACHER")
+        );
+
+        ArgumentCaptor<ExerciseGenerateRequest> requestCaptor = ArgumentCaptor.forClass(ExerciseGenerateRequest.class);
+        verify(exerciseQuestionGenerationService).generate(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().getTitle()).isEqualTo("Python 入门 - 条件与循环");
+        assertThat(requestCaptor.getValue().getDescription())
+                .contains("Python 入门")
+                .contains("条件与循环")
+                .contains("if 语句示例");
+        assertThat(response).containsExactly(generated);
+    }
+
+    @Test
     void createResourceDefersTagAgentRequestUntilAfterCommit() {
         ChapterEntity chapter = ChapterEntity.builder()
                 .id(201L)
