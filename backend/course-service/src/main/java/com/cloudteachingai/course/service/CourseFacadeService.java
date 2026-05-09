@@ -114,6 +114,7 @@ public class CourseFacadeService {
     private final CourseCoverStorageService courseCoverStorageService;
     private final ResourceStorageService resourceStorageService;
     private final ResourceTagSuggestionService resourceTagSuggestionService;
+    private final ExerciseQuestionGenerationService exerciseQuestionGenerationService;
     private final ResourceTagAgentClient resourceTagAgentClient;
     private final OutboxService outboxService;
     private final PlatformTransactionManager transactionManager;
@@ -813,35 +814,7 @@ public class CourseFacadeService {
             UserContext userContext
     ) {
         assertRole(userContext, "TEACHER", "ADMIN");
-        int count = Math.max(1, Math.min(MAX_EXERCISE_QUESTIONS, request.getQuestionCount() == null ? 5 : request.getQuestionCount()));
-        List<String> topics = normalizeTagLabels(request.getTagLabels());
-        if (topics.isEmpty() && StringUtils.hasText(request.getTitle())) {
-            topics = List.of(request.getTitle().trim());
-        }
-        if (topics.isEmpty()) {
-            topics = List.of("本课程核心知识点");
-        }
-
-        List<ResourceResponse.ExerciseQuestionResponse> questions = new ArrayList<>();
-        for (int index = 0; index < count; index++) {
-            String topic = topics.get(index % topics.size());
-            String distractorA = index + 1 < topics.size() ? topics.get((index + 1) % topics.size()) : "只需要记忆概念名称";
-            String distractorB = index + 2 < topics.size() ? topics.get((index + 2) % topics.size()) : "与课程目标无关的内容";
-            String distractorC = StringUtils.hasText(request.getDescription()) ? "忽略题干中的学习场景" : "跳过资源学习直接完成";
-            questions.add(ResourceResponse.ExerciseQuestionResponse.builder()
-                    .id(UUID.randomUUID().toString())
-                    .stem("关于“" + topic + "”，下列哪一项最符合本资源的学习目标？")
-                    .options(List.of(
-                            ResourceResponse.ExerciseOptionResponse.builder().id("A").text("理解“" + topic + "”的关键概念，并能结合资源内容进行判断").build(),
-                            ResourceResponse.ExerciseOptionResponse.builder().id("B").text(distractorA).build(),
-                            ResourceResponse.ExerciseOptionResponse.builder().id("C").text(distractorB).build(),
-                            ResourceResponse.ExerciseOptionResponse.builder().id("D").text(distractorC).build()
-                    ))
-                    .answer("A")
-                    .explanation("该题用于检查学生是否掌握“" + topic + "”对应的核心理解点。")
-                    .build());
-        }
-        return questions;
+        return exerciseQuestionGenerationService.generate(request);
     }
 
     @Transactional

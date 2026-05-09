@@ -3,6 +3,7 @@ package com.cloudteachingai.course.service;
 import com.cloudteachingai.course.client.ResourceTagAgentClient;
 import com.cloudteachingai.course.client.UserServiceClient;
 import com.cloudteachingai.course.controller.CourseController.UserContext;
+import com.cloudteachingai.course.dto.ExerciseGenerateRequest;
 import com.cloudteachingai.course.dto.ResourceResponse;
 import com.cloudteachingai.course.dto.ResourceTagConfirmRequest;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
@@ -77,6 +78,8 @@ class CourseFacadeServiceTest {
     private ResourceStorageService resourceStorageService;
     @Mock
     private ResourceTagSuggestionService resourceTagSuggestionService;
+    @Mock
+    private ExerciseQuestionGenerationService exerciseQuestionGenerationService;
     @Mock
     private ResourceTagAgentClient resourceTagAgentClient;
     @Mock
@@ -234,6 +237,33 @@ class CourseFacadeServiceTest {
         assertThat(toList(tagCaptor.getValue()))
                 .extracting(ResourceTagEntity::getLabel)
                 .containsExactly("工具", "Python");
+    }
+
+    @Test
+    void generateExerciseQuestionsDelegatesToAiGenerationService() {
+        ExerciseGenerateRequest request = new ExerciseGenerateRequest();
+        request.setTitle("Python 条件语句");
+        request.setTagLabels(List.of("条件分支"));
+        request.setQuestionCount(3);
+        ResourceResponse.ExerciseQuestionResponse generated = ResourceResponse.ExerciseQuestionResponse.builder()
+                .id("q1")
+                .stem("if 语句的主要作用是什么？")
+                .options(List.of(
+                        ResourceResponse.ExerciseOptionResponse.builder().id("A").text("根据条件选择执行路径").build(),
+                        ResourceResponse.ExerciseOptionResponse.builder().id("B").text("定义模块").build()
+                ))
+                .answer("A")
+                .explanation("if 用于条件判断。")
+                .build();
+        when(exerciseQuestionGenerationService.generate(request)).thenReturn(List.of(generated));
+
+        List<ResourceResponse.ExerciseQuestionResponse> response = courseFacadeService.generateExerciseQuestions(
+                request,
+                new UserContext(401L, "TEACHER")
+        );
+
+        assertThat(response).containsExactly(generated);
+        verify(exerciseQuestionGenerationService).generate(request);
     }
 
     @Test

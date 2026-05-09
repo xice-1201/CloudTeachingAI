@@ -90,6 +90,14 @@ ai:
       clip-duration-seconds: ${AI_TAG_PREVIEW_VIDEO_CLIP_DURATION_SECONDS:18}
       max-clips: ${AI_TAG_PREVIEW_VIDEO_MAX_CLIPS:3}
       max-transcript-chars: ${AI_TAG_PREVIEW_VIDEO_MAX_TRANSCRIPT_CHARS:4000}
+  exercise-generation:
+    enabled: ${AI_EXERCISE_GENERATION_ENABLED:true}
+    api-key: ${AI_EXERCISE_GENERATION_API_KEY:${DEEPSEEK_API_KEY:}}
+    base-url: ${AI_EXERCISE_GENERATION_BASE_URL:${DEEPSEEK_BASE_URL:https://api.deepseek.com}}
+    model: ${AI_EXERCISE_GENERATION_MODEL:${DEEPSEEK_MODEL:deepseek-chat}}
+    fallback-api-key: ${AI_EXERCISE_GENERATION_FALLBACK_API_KEY:${OPENAI_API_KEY:}}
+    fallback-base-url: ${AI_EXERCISE_GENERATION_FALLBACK_BASE_URL:${OPENAI_BASE_URL:https://api.openai.com/v1}}
+    fallback-model: ${AI_EXERCISE_GENERATION_FALLBACK_MODEL:gpt-4.1-mini}
 
 logging:
   level:
