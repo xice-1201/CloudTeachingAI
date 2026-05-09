@@ -166,6 +166,9 @@
         </el-col>
       </el-row>
 
+      <LearningPathView embedded />
+      <KnowledgeGraphView embedded />
+
       <el-row :gutter="20" style="margin-top: 20px">
         <el-col :span="16">
           <el-card shadow="never" header="最近学习">
@@ -209,6 +212,7 @@ import { learnApi } from '@/api/learn'
 import { assignApi } from '@/api/assign'
 import { useUserStore } from '@/store/user'
 import KnowledgeGraphView from '@/views/learn/KnowledgeGraphView.vue'
+import LearningPathView from '@/views/learn/LearningPathView.vue'
 import type { Assignment, Course, DiscussionPost, Submission, TeacherDashboard } from '@/types'
 
 const router = useRouter()

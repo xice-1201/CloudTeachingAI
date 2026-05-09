@@ -29,7 +29,6 @@
           <el-menu-item index="/learning">学习概览</el-menu-item>
           <el-menu-item index="/courses">课程管理</el-menu-item>
           <el-menu-item index="/learning/ability-test">能力测试</el-menu-item>
-          <el-menu-item index="/learning/path">学习路线</el-menu-item>
         </el-sub-menu>
 
         <el-menu-item v-if="!userStore.isAdmin" index="/assignments">
@@ -42,7 +41,7 @@
           <span>AI 助手</span>
         </el-menu-item>
 
-        <el-menu-item v-if="!userStore.isTeacher" index="/knowledge-graph">
+        <el-menu-item v-if="userStore.isAdmin" index="/knowledge-graph">
           <el-icon><Share /></el-icon>
           <span>知识图谱</span>
         </el-menu-item>

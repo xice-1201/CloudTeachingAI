@@ -1,7 +1,16 @@
 <template>
-  <div class="page-container" v-loading="loading">
-    <div class="page-header">
+  <div :class="embedded ? 'learning-path-panel' : 'page-container'" v-loading="loading">
+    <div v-if="!embedded" class="page-header">
       <span class="page-title">个性化学习路线</span>
+      <el-button type="primary" :loading="generating" @click="handleGenerate">
+        重新生成路线
+      </el-button>
+    </div>
+    <div v-else class="embedded-header">
+      <div>
+        <div class="embedded-title">个性化学习路线</div>
+        <div class="embedded-subtitle">根据能力图谱、学习进度和课程资源推荐下一步</div>
+      </div>
       <el-button type="primary" :loading="generating" @click="handleGenerate">
         重新生成路线
       </el-button>
@@ -103,10 +112,19 @@ import { useRouter } from 'vue-router'
 import { learnApi } from '@/api/learn'
 import type { LearningPath, PathResource } from '@/types'
 
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false,
+})
+
 const router = useRouter()
 const loading = ref(false)
 const generating = ref(false)
 const path = ref<LearningPath | null>(null)
+const embedded = computed(() => props.embedded)
+const returnUrl = computed(() => (embedded.value ? '/dashboard' : '/learning/path'))
+const returnLabel = computed(() => (embedded.value ? '返回首页' : '返回路线'))
 
 const hasPath = computed(() => Boolean(path.value))
 const hasResources = computed(() => Boolean(path.value?.resources?.length))
@@ -129,7 +147,7 @@ function openResource(item: PathResource) {
     path: `/courses/${item.courseId}/learn/${item.resourceId}`,
     query: {
       fromPath: '1',
-      returnUrl: '/learning/path',
+      returnUrl: returnUrl.value,
     },
   })
 }
@@ -165,8 +183,8 @@ function askAiForFocus(item: LearningPath['focusKnowledgePoints'][number]) {
     query: {
       knowledgePointId: item.knowledgePointId,
       knowledgePointName: item.knowledgePointName,
-      returnUrl: '/learning/path',
-      returnLabel: '返回路线',
+      returnUrl: returnUrl.value,
+      returnLabel: returnLabel.value,
     },
   })
 }
@@ -202,6 +220,32 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.learning-path-panel {
+  margin-top: 20px;
+}
+
+.embedded-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.embedded-title {
+  color: #303133;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.embedded-subtitle {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .route-summary {
   display: flex;
   align-items: flex-start;
@@ -390,6 +434,11 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
+  .embedded-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .route-summary {
     flex-direction: column;
   }
