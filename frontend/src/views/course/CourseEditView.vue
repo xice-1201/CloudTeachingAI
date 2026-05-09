@@ -289,8 +289,8 @@
                     <el-tag size="small" effect="plain">{{ suggestion.kind === 'GENERATED' ? 'AI 新生成' : '复用现有标签' }}</el-tag>
                   </div>
                   <div v-if="suggestion.path" class="suggestion-path">{{ suggestion.path }}</div>
-                  <div v-else-if="suggestion.suggestedParentKnowledgePointPath" class="suggestion-path">
-                    将创建到 {{ suggestion.suggestedParentKnowledgePointPath }}
+                  <div v-else-if="resolveSuggestionParentPath(suggestion)" class="suggestion-path">
+                    将创建到 {{ resolveSuggestionParentPath(suggestion) }}
                   </div>
                   <div class="suggestion-path">{{ suggestion.reason }}</div>
                 </div>
@@ -710,7 +710,7 @@ function resolveSuggestionKnowledgePointId(suggestion: ResourceTagSuggestion) {
 }
 
 function canApplySuggestion(suggestion: ResourceTagSuggestion) {
-  return Boolean(suggestion.label.trim() && (resolveSuggestionKnowledgePointId(suggestion) || suggestion.suggestedParentKnowledgePointId))
+  return Boolean(suggestion.label.trim() && (resolveSuggestionKnowledgePointId(suggestion) || resolveSuggestionParentId(suggestion)))
 }
 
 function suggestionKey(suggestion: ResourceTagSuggestion) {
@@ -738,7 +738,7 @@ function nextKnowledgePointOrderIndex(parentId: number) {
 }
 
 async function createKnowledgePointFromSuggestion(suggestion: ResourceTagSuggestion) {
-  const parentId = suggestion.suggestedParentKnowledgePointId
+  const parentId = resolveSuggestionParentId(suggestion)
   if (!parentId) return undefined
 
   const existingId = resolveSuggestionKnowledgePointId(suggestion)
@@ -755,6 +755,48 @@ async function createKnowledgePointFromSuggestion(suggestion: ResourceTagSuggest
   })
   await loadKnowledgePoints()
   return created.id
+}
+
+function resolveSuggestionParentId(suggestion: ResourceTagSuggestion) {
+  if (suggestion.suggestedParentKnowledgePointId) {
+    return suggestion.suggestedParentKnowledgePointId
+  }
+
+  const selectedParentId = resolveSelectedKnowledgePointParentId()
+  if (selectedParentId) {
+    return selectedParentId
+  }
+
+  const normalizedText = `${suggestion.label} ${suggestion.reason ?? ''}`.trim().toLowerCase()
+  const scoredDomains = knowledgePointOptions.value
+    .filter((item) => item.nodeType === 'DOMAIN')
+    .map((item) => ({
+      item,
+      score: Number(normalizedText.includes(item.name.trim().toLowerCase()))
+        + Number(item.path.split('/').some((part) => normalizedText.includes(part.trim().toLowerCase()))),
+    }))
+    .sort((a, b) => b.score - a.score || a.item.path.localeCompare(b.item.path))
+
+  return scoredDomains[0]?.item.id
+}
+
+function resolveSelectedKnowledgePointParentId() {
+  const selectedIds = new Set(resourceDialog.form.knowledgePointIds)
+  const selectedOptions = knowledgePointOptions.value.filter((item) => selectedIds.has(item.id))
+  const selectedDomain = selectedOptions.find((item) => item.nodeType === 'DOMAIN')
+  if (selectedDomain) {
+    return selectedDomain.id
+  }
+  const selectedPoint = selectedOptions.find((item) => item.nodeType === 'POINT' && item.parentId)
+  return selectedPoint?.parentId
+}
+
+function resolveSuggestionParentPath(suggestion: ResourceTagSuggestion) {
+  if (suggestion.suggestedParentKnowledgePointPath) {
+    return suggestion.suggestedParentKnowledgePointPath
+  }
+  const parentId = resolveSuggestionParentId(suggestion)
+  return knowledgePointOptions.value.find((item) => item.id === parentId)?.path
 }
 
 async function applySuggestedKnowledgePoints(items: ResourceTagSuggestion[]) {
