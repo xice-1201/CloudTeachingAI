@@ -57,6 +57,9 @@ public class ResourceEntity {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    @Column(name = "exercise_content", columnDefinition = "TEXT")
+    private String exerciseContent;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "tagging_status", nullable = false, length = 20)
     private ResourceTaggingStatus taggingStatus;

@@ -25,6 +25,7 @@ export const RESOURCE_TYPES = {
   VIDEO: 'VIDEO',
   DOCUMENT: 'DOCUMENT',
   SLIDE: 'SLIDE',
+  EXERCISE: 'EXERCISE',
 } as const
 
 export type ResourceType = (typeof RESOURCE_TYPES)[keyof typeof RESOURCE_TYPES]

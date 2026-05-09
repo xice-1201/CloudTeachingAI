@@ -9,6 +9,7 @@ import com.cloudteachingai.course.dto.ChapterResponse;
 import com.cloudteachingai.course.dto.ChapterUpsertRequest;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
+import com.cloudteachingai.course.dto.ExerciseGenerateRequest;
 import com.cloudteachingai.course.dto.InternalKnowledgePointResponse;
 import com.cloudteachingai.course.dto.InternalResourceTaggingContextResponse;
 import com.cloudteachingai.course.dto.KnowledgePointNodeResponse;
@@ -52,6 +53,9 @@ import com.cloudteachingai.course.repository.KnowledgePointRepository;
 import com.cloudteachingai.course.repository.ResourceKnowledgePointRepository;
 import com.cloudteachingai.course.repository.ResourceRepository;
 import com.cloudteachingai.course.repository.ResourceTagRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -83,6 +87,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -90,7 +95,9 @@ import java.util.Set;
 public class CourseFacadeService {
 
     private static final int MAX_TAG_SUGGESTIONS = 8;
+    private static final int MAX_EXERCISE_QUESTIONS = 20;
     private static final String AUDIT_TARGET_COURSE = "COURSE";
+    private static final String EXERCISE_STORAGE_KEY = "exercise://configured";
 
     private final CourseRepository courseRepository;
     private final ChapterRepository chapterRepository;
@@ -107,6 +114,7 @@ public class CourseFacadeService {
     private final ResourceTagAgentClient resourceTagAgentClient;
     private final OutboxService outboxService;
     private final PlatformTransactionManager transactionManager;
+    private final ObjectMapper objectMapper;
 
     public PageResponse<CourseResponse> listCourses(UserContext userContext, int page, int pageSize, String keyword, String status) {
         Pageable pageable = PageRequest.of(toPageIndex(page), toPageSize(pageSize), Sort.by(Sort.Direction.DESC, "updatedAt"));
@@ -442,32 +450,40 @@ public class CourseFacadeService {
         ChapterEntity chapter = requireChapter(chapterId);
         CourseEntity course = requireManageableCourse(chapter.getCourseId(), userContext);
 
+        ResourceType resourceType = parseResourceType(request.getType());
+        String exerciseContent = null;
         String storageKey = normalizeBlank(request.getUrl());
-        if (!StringUtils.hasText(storageKey)) {
+        if (resourceType == ResourceType.EXERCISE) {
+            exerciseContent = serializeExerciseQuestions(request.getExerciseQuestions());
+            storageKey = EXERCISE_STORAGE_KEY;
+        } else if (!StringUtils.hasText(storageKey)) {
             throw BusinessException.badRequest("Please upload a resource file or provide an external URL");
         }
 
         List<Long> manualKnowledgePointIds = normalizeKnowledgePointIds(request.getKnowledgePointIds());
         List<String> manualTagLabels = normalizeTagLabels(request.getTagLabels());
-        ResourceStatus initialStatus = manualKnowledgePointIds.isEmpty() && manualTagLabels.isEmpty()
-                ? ResourceStatus.PROCESSING
-                : ResourceStatus.PUBLISHED;
+        ResourceStatus initialStatus = resourceType == ResourceType.EXERCISE || (!manualKnowledgePointIds.isEmpty() || !manualTagLabels.isEmpty())
+                ? ResourceStatus.PUBLISHED
+                : ResourceStatus.PROCESSING;
 
         ResourceEntity resource = ResourceEntity.builder()
                 .chapterId(chapterId)
                 .title(request.getTitle().trim())
-                .type(parseResourceType(request.getType()))
+                .type(resourceType)
                 .storageKey(storageKey)
                 .fileSize(request.getSize())
                 .durationSeconds(request.getDuration())
                 .description(normalizeBlank(request.getDescription()))
+                .exerciseContent(exerciseContent)
                 .orderIndex(resolveResourceOrderIndex(chapterId, request.getOrderIndex()))
                 .status(initialStatus)
                 .build();
 
         ResourceEntity saved = resourceRepository.save(resource);
         replaceManualResourceTags(saved, manualKnowledgePointIds, manualTagLabels);
-        publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds, manualTagLabels);
+        if (resourceType != ResourceType.EXERCISE) {
+            publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds, manualTagLabels);
+        }
         Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(saved.getId()));
         Map<Long, List<ResourceTagResponse>> resourceLabelMap = loadResourceTagMap(List.of(saved.getId()));
         return toResourceResponse(
@@ -484,23 +500,32 @@ public class CourseFacadeService {
         CourseEntity course = requireManageableCourse(chapter.getCourseId(), userContext);
 
         String previousStorageKey = resource.getStorageKey();
-        String updatedStorageKey = StringUtils.hasText(request.getUrl()) ? request.getUrl().trim() : previousStorageKey;
+        ResourceType resourceType = parseResourceType(request.getType());
+        String exerciseContent = resourceType == ResourceType.EXERCISE
+                ? serializeExerciseQuestions(request.getExerciseQuestions())
+                : null;
+        String updatedStorageKey = resourceType == ResourceType.EXERCISE
+                ? EXERCISE_STORAGE_KEY
+                : (StringUtils.hasText(request.getUrl()) ? request.getUrl().trim() : previousStorageKey);
         List<Long> manualKnowledgePointIds = normalizeKnowledgePointIds(request.getKnowledgePointIds());
         List<String> manualTagLabels = normalizeTagLabels(request.getTagLabels());
 
         resource.setTitle(request.getTitle().trim());
-        resource.setType(parseResourceType(request.getType()));
+        resource.setType(resourceType);
         resource.setStorageKey(updatedStorageKey);
-        resource.setFileSize(request.getSize());
-        resource.setDurationSeconds(request.getDuration());
+        resource.setFileSize(resourceType == ResourceType.EXERCISE ? null : request.getSize());
+        resource.setDurationSeconds(resourceType == ResourceType.EXERCISE ? null : request.getDuration());
         resource.setDescription(normalizeBlank(request.getDescription()));
+        resource.setExerciseContent(exerciseContent);
         resource.setOrderIndex(resolveOrderIndex(request.getOrderIndex(), resource.getOrderIndex()));
-        resource.setStatus(manualKnowledgePointIds.isEmpty() && manualTagLabels.isEmpty()
-                ? ResourceStatus.PROCESSING
-                : ResourceStatus.PUBLISHED);
+        resource.setStatus(resourceType == ResourceType.EXERCISE || (!manualKnowledgePointIds.isEmpty() || !manualTagLabels.isEmpty())
+                ? ResourceStatus.PUBLISHED
+                : ResourceStatus.PROCESSING);
         ResourceEntity saved = resourceRepository.save(resource);
         replaceManualResourceTags(saved, manualKnowledgePointIds, manualTagLabels);
-        publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds, manualTagLabels);
+        if (resourceType != ResourceType.EXERCISE) {
+            publishResourceUploadedEventIfNeeded(saved, chapter, course, manualKnowledgePointIds, manualTagLabels);
+        }
         if (!Objects.equals(previousStorageKey, updatedStorageKey)) {
             resourceStorageService.deleteIfManaged(previousStorageKey);
         }
@@ -647,6 +672,42 @@ public class CourseFacadeService {
         runAfterCurrentCommit(() -> requestAiTagging(event));
 
         return toResourceResponse(saved, List.of(), List.of());
+    }
+
+    public List<ResourceResponse.ExerciseQuestionResponse> generateExerciseQuestions(
+            ExerciseGenerateRequest request,
+            UserContext userContext
+    ) {
+        assertRole(userContext, "TEACHER", "ADMIN");
+        int count = Math.max(1, Math.min(MAX_EXERCISE_QUESTIONS, request.getQuestionCount() == null ? 5 : request.getQuestionCount()));
+        List<String> topics = normalizeTagLabels(request.getTagLabels());
+        if (topics.isEmpty() && StringUtils.hasText(request.getTitle())) {
+            topics = List.of(request.getTitle().trim());
+        }
+        if (topics.isEmpty()) {
+            topics = List.of("本课程核心知识点");
+        }
+
+        List<ResourceResponse.ExerciseQuestionResponse> questions = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            String topic = topics.get(index % topics.size());
+            String distractorA = index + 1 < topics.size() ? topics.get((index + 1) % topics.size()) : "只需要记忆概念名称";
+            String distractorB = index + 2 < topics.size() ? topics.get((index + 2) % topics.size()) : "与课程目标无关的内容";
+            String distractorC = StringUtils.hasText(request.getDescription()) ? "忽略题干中的学习场景" : "跳过资源学习直接完成";
+            questions.add(ResourceResponse.ExerciseQuestionResponse.builder()
+                    .id(UUID.randomUUID().toString())
+                    .stem("关于“" + topic + "”，下列哪一项最符合本资源的学习目标？")
+                    .options(List.of(
+                            ResourceResponse.ExerciseOptionResponse.builder().id("A").text("理解“" + topic + "”的关键概念，并能结合资源内容进行判断").build(),
+                            ResourceResponse.ExerciseOptionResponse.builder().id("B").text(distractorA).build(),
+                            ResourceResponse.ExerciseOptionResponse.builder().id("C").text(distractorB).build(),
+                            ResourceResponse.ExerciseOptionResponse.builder().id("D").text(distractorC).build()
+                    ))
+                    .answer("A")
+                    .explanation("该题用于检查学生是否掌握“" + topic + "”对应的核心理解点。")
+                    .build());
+        }
+        return questions;
     }
 
     @Transactional
@@ -1272,7 +1333,93 @@ public class CourseFacadeService {
                 .size(entity.getFileSize())
                 .orderIndex(entity.getOrderIndex())
                 .createdAt(entity.getCreatedAt().toString())
+                .exerciseQuestions(deserializeExerciseQuestions(entity.getExerciseContent()))
                 .build();
+    }
+
+    private String serializeExerciseQuestions(List<ResourceUpsertRequest.ExerciseQuestionRequest> questions) {
+        List<ResourceResponse.ExerciseQuestionResponse> normalizedQuestions = normalizeExerciseQuestions(questions);
+        if (normalizedQuestions.isEmpty()) {
+            throw BusinessException.badRequest("Exercise resource must contain at least one single-choice question");
+        }
+        try {
+            return objectMapper.writeValueAsString(normalizedQuestions);
+        } catch (JsonProcessingException ex) {
+            throw BusinessException.badRequest("Invalid exercise content");
+        }
+    }
+
+    private List<ResourceResponse.ExerciseQuestionResponse> normalizeExerciseQuestions(List<ResourceUpsertRequest.ExerciseQuestionRequest> questions) {
+        if (questions == null || questions.isEmpty()) {
+            return List.of();
+        }
+        List<ResourceResponse.ExerciseQuestionResponse> result = new ArrayList<>();
+        int index = 0;
+        for (ResourceUpsertRequest.ExerciseQuestionRequest question : questions) {
+            if (question == null || !StringUtils.hasText(question.getStem())) {
+                continue;
+            }
+            List<ResourceResponse.ExerciseOptionResponse> options = normalizeExerciseOptions(question.getOptions());
+            if (options.size() < 2) {
+                continue;
+            }
+            String answer = StringUtils.hasText(question.getAnswer()) ? question.getAnswer().trim().toUpperCase(Locale.ROOT) : "";
+            Set<String> optionIds = options.stream().map(ResourceResponse.ExerciseOptionResponse::getId).collect(java.util.stream.Collectors.toSet());
+            if (!optionIds.contains(answer)) {
+                answer = options.get(0).getId();
+            }
+            result.add(ResourceResponse.ExerciseQuestionResponse.builder()
+                    .id(StringUtils.hasText(question.getId()) ? question.getId().trim() : UUID.randomUUID().toString())
+                    .stem(question.getStem().trim())
+                    .options(options)
+                    .answer(answer)
+                    .explanation(normalizeBlank(question.getExplanation()))
+                    .build());
+            index += 1;
+            if (index >= MAX_EXERCISE_QUESTIONS) {
+                break;
+            }
+        }
+        return result;
+    }
+
+    private List<ResourceResponse.ExerciseOptionResponse> normalizeExerciseOptions(List<ResourceUpsertRequest.ExerciseOptionRequest> options) {
+        if (options == null || options.isEmpty()) {
+            return List.of();
+        }
+        List<String> fallbackIds = List.of("A", "B", "C", "D");
+        List<ResourceResponse.ExerciseOptionResponse> result = new ArrayList<>();
+        Set<String> usedIds = new LinkedHashSet<>();
+        for (int index = 0; index < options.size() && result.size() < 6; index++) {
+            ResourceUpsertRequest.ExerciseOptionRequest option = options.get(index);
+            if (option == null || !StringUtils.hasText(option.getText())) {
+                continue;
+            }
+            String fallbackId = index < fallbackIds.size() ? fallbackIds.get(index) : String.valueOf(index + 1);
+            String id = StringUtils.hasText(option.getId()) ? option.getId().trim().toUpperCase(Locale.ROOT) : fallbackId;
+            if (usedIds.contains(id)) {
+                id = fallbackId;
+            }
+            usedIds.add(id);
+            result.add(ResourceResponse.ExerciseOptionResponse.builder()
+                    .id(id)
+                    .text(option.getText().trim())
+                    .build());
+        }
+        return result;
+    }
+
+    private List<ResourceResponse.ExerciseQuestionResponse> deserializeExerciseQuestions(String content) {
+        if (!StringUtils.hasText(content)) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(content, new TypeReference<>() {
+            });
+        } catch (Exception ex) {
+            log.warn("Failed to parse exercise content", ex);
+            return List.of();
+        }
     }
 
     private String buildManagedResourceUrl(Long resourceId) {

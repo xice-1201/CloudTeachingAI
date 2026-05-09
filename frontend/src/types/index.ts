@@ -49,7 +49,7 @@ export interface Resource {
   id: number
   chapterId: number
   title: string
-  type: 'VIDEO' | 'DOCUMENT' | 'SLIDE'
+  type: 'VIDEO' | 'DOCUMENT' | 'SLIDE' | 'EXERCISE'
   url: string
   sourceUrl?: string | null
   description?: string
@@ -62,6 +62,20 @@ export interface Resource {
   size?: number
   orderIndex: number
   createdAt: string
+  exerciseQuestions?: ExerciseQuestion[]
+}
+
+export interface ExerciseQuestion {
+  id: string
+  stem: string
+  options: ExerciseOption[]
+  answer: string
+  explanation?: string | null
+}
+
+export interface ExerciseOption {
+  id: string
+  text: string
 }
 
 export interface ResourceTag {

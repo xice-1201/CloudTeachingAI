@@ -419,7 +419,7 @@ function visibilityLabel(currentCourse: Course) {
 }
 
 function resourceTypeLabel(type: string) {
-  return { VIDEO: '视频', DOCUMENT: '文档', SLIDE: '课件' }[type] ?? type
+  return { VIDEO: '视频', DOCUMENT: '文档', SLIDE: '文档', EXERCISE: '习题' }[type] ?? type
 }
 
 function formatDate(value: string) {
@@ -448,7 +448,7 @@ function formatDuration(seconds: number) {
 }
 
 function resourceIcon(type: string) {
-  return { VIDEO: VideoPlay, DOCUMENT: Document, SLIDE: Paperclip }[type] ?? Document
+  return { VIDEO: VideoPlay, DOCUMENT: Document, SLIDE: Document, EXERCISE: Paperclip }[type] ?? Document
 }
 
 function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) {

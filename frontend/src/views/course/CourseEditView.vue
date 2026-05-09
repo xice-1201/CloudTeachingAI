@@ -192,7 +192,7 @@
 
     <el-dialog v-model="resourceDialog.visible" :title="resourceDialog.isEdit ? '编辑资源' : '新增资源'" width="840px">
       <el-form ref="resourceFormRef" :model="resourceDialog.form" :rules="resourceRules" label-width="95px">
-        <el-form-item label="本地文件">
+        <el-form-item v-if="resourceDialog.form.type !== 'EXERCISE'" label="本地文件">
           <el-upload action="#" :auto-upload="false" :show-file-list="false" @change="handleResourceFileChange">
             <el-button type="primary">选择文件</el-button>
           </el-upload>
@@ -219,14 +219,36 @@
           <el-select v-model="resourceDialog.form.type" style="width: 100%">
             <el-option label="视频" value="VIDEO" />
             <el-option label="文档" value="DOCUMENT" />
-            <el-option label="课件" value="SLIDE" />
+            <el-option label="习题" value="EXERCISE" />
           </el-select>
         </el-form-item>
-        <el-form-item label="资源地址" prop="url"><el-input v-model="resourceDialog.form.url" placeholder="请输入资源 URL" /></el-form-item>
-        <el-row :gutter="12">
+        <el-form-item v-if="resourceDialog.form.type !== 'EXERCISE'" label="资源地址" prop="url"><el-input v-model="resourceDialog.form.url" placeholder="请输入资源 URL" /></el-form-item>
+        <el-row v-if="resourceDialog.form.type !== 'EXERCISE'" :gutter="12">
           <el-col :span="12"><el-form-item label="时长(秒)"><el-input-number v-model="resourceDialog.form.duration" :min="0" :max="86400" style="width: 100%" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="大小(B)"><el-input-number v-model="resourceDialog.form.size" :min="0" :max="2147483647" style="width: 100%" /></el-form-item></el-col>
         </el-row>
+        <div v-if="resourceDialog.form.type === 'EXERCISE'" class="exercise-editor">
+          <el-divider content-position="left">习题配置</el-divider>
+          <div class="tree-toolbar">
+            <el-button type="primary" plain :loading="exerciseGenerating" @click="generateExerciseQuestions">AI 生成习题</el-button>
+            <el-button @click="addExerciseQuestion">新增题目</el-button>
+          </div>
+          <div v-if="!resourceDialog.form.exerciseQuestions.length" class="field-tip">一个习题资源至少需要配置一道单选题。</div>
+          <div v-for="(question, qIndex) in resourceDialog.form.exerciseQuestions" :key="question.id" class="exercise-question">
+            <div class="exercise-question-head">
+              <strong>第 {{ qIndex + 1 }} 题</strong>
+              <el-button link type="danger" @click="removeExerciseQuestion(qIndex)">删除</el-button>
+            </div>
+            <el-input v-model="question.stem" type="textarea" :rows="2" placeholder="请输入题干" />
+            <el-radio-group v-model="question.answer" class="exercise-options">
+              <div v-for="option in question.options" :key="option.id" class="exercise-option">
+                <el-radio :value="option.id">{{ option.id }}</el-radio>
+                <el-input v-model="option.text" :placeholder="`选项 ${option.id}`" />
+              </div>
+            </el-radio-group>
+            <el-input v-model="question.explanation" type="textarea" :rows="2" placeholder="答案解析，可选" />
+          </div>
+        </div>
         <el-form-item label="排序"><el-input-number v-model="resourceDialog.form.orderIndex" :min="1" :max="999" /></el-form-item>
         <el-divider content-position="left">资源标签</el-divider>
         <el-form-item label="手动标签">
@@ -314,7 +336,7 @@ import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { courseApi } from '@/api/course'
 import { userApi } from '@/api/user'
-import type { Chapter, Course, Resource, ResourceKnowledgePoint, ResourceTag, ResourceTagSuggestion, User } from '@/types'
+import type { Chapter, Course, ExerciseQuestion, Resource, ResourceKnowledgePoint, ResourceTag, ResourceTagSuggestion, User } from '@/types'
 
 type RequestLikeError = Error & {
   code?: number
@@ -348,6 +370,7 @@ const pageLoading = ref(false)
 const savingCourse = ref(false)
 const chapterSubmitting = ref(false)
 const resourceSubmitting = ref(false)
+const exerciseGenerating = ref(false)
 const studentLoading = ref(false)
 const suggestionLoading = ref(false)
 const tagReviewSubmitting = ref(false)
@@ -391,7 +414,7 @@ const resourceDialog = reactive({
   isEdit: false,
   chapterId: '',
   resourceId: '',
-  form: { title: '', type: 'DOCUMENT' as Resource['type'], url: '', description: '', managedFile: false, knowledgePointIds: [] as number[], tagLabels: [] as string[], duration: 0, size: 0, orderIndex: 1 },
+  form: { title: '', type: 'DOCUMENT' as Resource['type'], url: '', description: '', managedFile: false, knowledgePointIds: [] as number[], tagLabels: [] as string[], duration: 0, size: 0, orderIndex: 1, exerciseQuestions: [] as ExerciseQuestion[] },
 })
 const tagReviewDialog = reactive({
   visible: false,
@@ -422,12 +445,27 @@ const resourceRules: FormRules = {
   type: [{ required: true, message: '请选择资源类型', trigger: 'change' }],
   url: [{
     validator: (_rule, value, callback) => {
+      if (resourceDialog.form.type === 'EXERCISE') return callback()
       if (selectedResourceFile.value) return callback()
       if (typeof value === 'string' && value.trim()) return callback()
       if (resourceDialog.isEdit && resourceDialog.form.managedFile) return callback()
       callback(new Error('请上传资源文件或填写资源地址'))
     },
     trigger: 'blur',
+  }],
+  exerciseQuestions: [{
+    validator: (_rule, value, callback) => {
+      if (resourceDialog.form.type !== 'EXERCISE') return callback()
+      const questions = Array.isArray(value) ? value : []
+      if (!questions.length) return callback(new Error('请至少配置一道单选题'))
+      const invalid = questions.some((question: ExerciseQuestion) => {
+        const options = question.options.filter((option) => option.text.trim())
+        return !question.stem.trim() || options.length < 2 || !options.some((option) => option.id === question.answer)
+      })
+      if (invalid) return callback(new Error('请完善题干、至少两个选项和正确答案'))
+      callback()
+    },
+    trigger: 'change',
   }],
   knowledgePointIds: [{
     validator: (_rule, value, callback) => {
@@ -557,7 +595,7 @@ function logCourseEditError(step: string, error: unknown, extra?: Record<string,
 
 function courseStatusTag(status: Course['status']) { return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info' }
 function courseStatusLabel(status: Course['status']) { return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status] ?? status }
-function resourceTypeLabel(type: Resource['type']) { return { VIDEO: '视频', DOCUMENT: '文档', SLIDE: '课件' }[type] ?? type }
+function resourceTypeLabel(type: Resource['type']) { return { VIDEO: '视频', DOCUMENT: '文档', SLIDE: '文档', EXERCISE: '习题' }[type] ?? type }
 function resourceTaggingLabel(status?: Resource['taggingStatus']) { return { CONFIRMED: '已确认', SUGGESTED: '待确认', UNTAGGED: '待标注', PROCESSING: '生成中', FAILED: '生成失败' }[status ?? 'UNTAGGED'] ?? '待标注' }
 function resourceTaggingType(status?: Resource['taggingStatus']) { return { CONFIRMED: 'success', SUGGESTED: 'warning', UNTAGGED: 'info', PROCESSING: 'primary', FAILED: 'danger' }[status ?? 'UNTAGGED'] ?? 'info' }
 function formatDuration(seconds: number) { const minutes = Math.floor(seconds / 60); const remainingSeconds = seconds % 60; return `${minutes}:${String(remainingSeconds).padStart(2, '0')}` }
@@ -575,6 +613,62 @@ function normalizeTagLabels(labels: string[]) {
     normalized.set(value.toLowerCase(), value)
   })
   return Array.from(normalized.values())
+}
+function createBlankExerciseQuestion(): ExerciseQuestion {
+  return {
+    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+    stem: '',
+    answer: 'A',
+    options: [
+      { id: 'A', text: '' },
+      { id: 'B', text: '' },
+      { id: 'C', text: '' },
+      { id: 'D', text: '' },
+    ],
+    explanation: '',
+  }
+}
+function addExerciseQuestion() {
+  resourceDialog.form.exerciseQuestions.push(createBlankExerciseQuestion())
+}
+function removeExerciseQuestion(index: number) {
+  resourceDialog.form.exerciseQuestions.splice(index, 1)
+}
+function normalizeExerciseQuestions(questions: ExerciseQuestion[]) {
+  return questions
+    .map((question) => ({
+      ...question,
+      stem: question.stem.trim(),
+      explanation: question.explanation?.trim() || undefined,
+      options: question.options.map((option) => ({ ...option, text: option.text.trim() })).filter((option) => option.text),
+    }))
+    .filter((question) => question.stem && question.options.length >= 2)
+}
+function validateExerciseQuestions() {
+  if (resourceDialog.form.type !== 'EXERCISE') return true
+  const questions = normalizeExerciseQuestions(resourceDialog.form.exerciseQuestions)
+  const invalid = questions.length === 0 || questions.some((question) => !question.options.some((option) => option.id === question.answer))
+  if (invalid) {
+    ElMessage.warning('请至少配置一道完整单选题，并设置正确答案')
+    return false
+  }
+  resourceDialog.form.exerciseQuestions = questions
+  return true
+}
+async function generateExerciseQuestions() {
+  exerciseGenerating.value = true
+  try {
+    const questions = await courseApi.generateExerciseQuestions({
+      title: resourceDialog.form.title,
+      description: resourceDialog.form.description,
+      tagLabels: normalizeTagLabels(resourceDialog.form.tagLabels),
+      questionCount: Math.max(3, resourceDialog.form.exerciseQuestions.length || 5),
+    })
+    resourceDialog.form.exerciseQuestions = questions.length ? questions : [createBlankExerciseQuestion()]
+    ElMessage.success('AI 习题草稿已生成，可继续编辑后保存')
+  } finally {
+    exerciseGenerating.value = false
+  }
 }
 function applySuggestedTags(labels: string[]) { resourceDialog.form.tagLabels = normalizeTagLabels([...resourceDialog.form.tagLabels, ...labels]) }
 function buildTagReviewOptions(resource: Resource) {
@@ -780,6 +874,7 @@ function resetResourceDialog(chapterId = '') {
   resourceDialog.form.tagLabels = []
   resourceDialog.form.duration = 0
   resourceDialog.form.size = 0
+  resourceDialog.form.exerciseQuestions = []
   resourceDialog.form.orderIndex = (resourceMap.value[Number(chapterId)]?.length ?? 0) + 1
 }
 
@@ -935,16 +1030,24 @@ function openEditResourceDialog(chapter: Chapter, resource: Resource) {
   ])
   resourceDialog.form.duration = resource.duration ?? 0
   resourceDialog.form.size = resource.size ?? 0
+  resourceDialog.form.exerciseQuestions = resource.exerciseQuestions?.length ? resource.exerciseQuestions.map((question) => ({
+    ...question,
+    options: question.options.map((option) => ({ ...option })),
+  })) : []
   resourceDialog.form.orderIndex = resource.orderIndex
 }
 
 async function handleSubmitResource() {
   await resourceFormRef.value?.validate()
+  if (!validateExerciseQuestions()) return
   resourceSubmitting.value = true
   try {
     let resourceUrl = resourceDialog.form.url?.trim() ?? ''
     let resourceSize = resourceDialog.form.size || undefined
-    if (selectedResourceFile.value) {
+    if (resourceDialog.form.type === 'EXERCISE') {
+      resourceUrl = ''
+      resourceSize = undefined
+    } else if (selectedResourceFile.value) {
       resourceUploadProgress.visible = true
       resourceUploadProgress.percent = 0
       resourceUploadProgress.label = '正在上传资源文件'
@@ -969,6 +1072,7 @@ async function handleSubmitResource() {
       duration: resourceDialog.form.duration || undefined,
       size: resourceSize,
       orderIndex: resourceDialog.form.orderIndex,
+      exerciseQuestions: resourceDialog.form.type === 'EXERCISE' ? resourceDialog.form.exerciseQuestions : undefined,
     }
     if (resourceDialog.isEdit) {
       await courseApi.updateResource(resourceDialog.resourceId, payload)
@@ -1109,6 +1213,11 @@ onBeforeUnmount(() => {
 .upload-file-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; color: #606266; font-size: 13px; }
 .upload-progress { width: 100%; margin-top: 10px; }
 .upload-progress-meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; color: #606266; font-size: 12px; }
+.exercise-editor { margin-bottom: 18px; }
+.exercise-question { display: grid; gap: 10px; padding: 14px; margin-top: 12px; border: 1px solid #ebeef5; border-radius: 8px; background: #fbfcff; }
+.exercise-question-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.exercise-options { display: grid; gap: 8px; }
+.exercise-option { display: grid; grid-template-columns: 48px 1fr; align-items: center; gap: 8px; }
 .knowledge-tree { max-height: 260px; overflow: auto; border: 1px solid #ebeef5; border-radius: 8px; padding: 8px 12px; }
 .knowledge-node { display: flex; flex-direction: column; gap: 4px; padding: 2px 0; }
 .tag-review { display: grid; gap: 12px; }

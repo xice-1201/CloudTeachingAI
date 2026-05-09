@@ -1,6 +1,6 @@
 import request from '@/utils/request'
 import type { AxiosRequestConfig } from 'axios'
-import type { Course, Chapter, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse, Announcement, DiscussionPost } from '@/types'
+import type { Course, Chapter, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse, Announcement, DiscussionPost, ExerciseQuestion } from '@/types'
 
 export const courseApi = {
   listCourses: (params?: { page?: number; pageSize?: number; keyword?: string; status?: string }): Promise<PageResponse<Course>> =>
@@ -166,6 +166,14 @@ export const courseApi = {
 
   retryResourceTagging: (resourceId: string): Promise<Resource> =>
     request.post(`/resources/${resourceId}/tagging/retry`),
+
+  generateExerciseQuestions: (data: {
+    title?: string
+    description?: string
+    tagLabels?: string[]
+    questionCount?: number
+  }): Promise<ExerciseQuestion[]> =>
+    request.post('/resources/exercises/generate', data),
 
   createResource: (chapterId: string, data: Partial<Resource>): Promise<Resource> =>
     request.post(`/chapters/${chapterId}/resources`, data),

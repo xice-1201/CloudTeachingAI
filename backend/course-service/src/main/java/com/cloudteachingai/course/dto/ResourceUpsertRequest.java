@@ -21,4 +21,20 @@ public class ResourceUpsertRequest {
     private Integer duration;
     private Long size;
     private Integer orderIndex;
+    private List<ExerciseQuestionRequest> exerciseQuestions;
+
+    @Data
+    public static class ExerciseQuestionRequest {
+        private String id;
+        private String stem;
+        private List<ExerciseOptionRequest> options;
+        private String answer;
+        private String explanation;
+    }
+
+    @Data
+    public static class ExerciseOptionRequest {
+        private String id;
+        private String text;
+    }
 }

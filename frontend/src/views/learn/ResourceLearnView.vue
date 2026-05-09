@@ -25,6 +25,35 @@
           @ended="handleEnded"
         />
       </div>
+      <div v-else-if="resource?.type === 'EXERCISE'" class="exercise-area">
+        <div class="exercise-panel">
+          <div class="exercise-head">
+            <h2>{{ resource.title }}</h2>
+            <el-tag>{{ resource.exerciseQuestions?.length ?? 0 }} 道单选题</el-tag>
+          </div>
+          <div v-if="!resource.exerciseQuestions?.length" class="progress-text">当前习题资源还没有配置题目。</div>
+          <div v-else class="exercise-list">
+            <section v-for="(question, index) in resource.exerciseQuestions" :key="question.id" class="exercise-question">
+              <div class="exercise-stem">{{ index + 1 }}. {{ question.stem }}</div>
+              <el-radio-group v-model="exerciseAnswers[question.id]" class="exercise-options" :disabled="exerciseSubmitted">
+                <el-radio v-for="option in question.options" :key="option.id" :value="option.id">
+                  {{ option.id }}. {{ option.text }}
+                </el-radio>
+              </el-radio-group>
+              <div v-if="exerciseSubmitted" class="exercise-result" :class="{ correct: exerciseAnswers[question.id] === question.answer }">
+                正确答案：{{ question.answer }}
+                <span v-if="question.explanation">，解析：{{ question.explanation }}</span>
+              </div>
+            </section>
+          </div>
+          <div class="exercise-actions">
+            <el-button v-if="exerciseSubmitted" @click="resetExerciseAnswers">重新作答</el-button>
+            <el-button type="primary" :disabled="!resource.exerciseQuestions?.length" @click="submitExerciseAnswers">
+              {{ exerciseSubmitted ? '已提交' : '提交答案' }}
+            </el-button>
+          </div>
+        </div>
+      </div>
       <div v-else class="doc-area">
         <iframe v-if="resourceUrl" :src="resourceUrl" class="doc-frame" />
       </div>
@@ -149,6 +178,8 @@ const resourceDiscussions = ref<DiscussionPost[]>([])
 const replyingToId = ref<number | null>(null)
 const replyContent = ref('')
 const currentCourseId = ref<number | null>(null)
+const exerciseAnswers = ref<Record<string, string>>({})
+const exerciseSubmitted = ref(false)
 
 const resourceDiscussionForm = ref({
   title: '',
@@ -327,6 +358,7 @@ async function handleEnded() {
 
 async function saveProgress() {
   if (!canTrackProgress.value || !resource.value) return
+  if (resource.value.type === 'EXERCISE' && !progress.value?.completed) return
   const isVideo = resource.value.type === 'VIDEO'
   const percent = isVideo && videoEl.value ? videoEl.value.currentTime / (videoEl.value.duration || 1) : 1
   const payload = buildProgressPayload(percent, isVideo && videoEl.value ? Math.floor(videoEl.value.currentTime) : undefined)
@@ -358,6 +390,13 @@ async function loadResourcePage() {
     resourceUrl.value = ''
     return
   }
+  exerciseAnswers.value = {}
+  exerciseSubmitted.value = Boolean(progressData?.completed && resourceData.type === 'EXERCISE')
+  if (resourceData.type === 'EXERCISE') {
+    revokeTemporaryResourceUrl()
+    resourceUrl.value = ''
+    return
+  }
   const resolvedUrl = resolveResourceUrl(resourceData.url)
   if (resourceData.type === 'VIDEO') {
     revokeTemporaryResourceUrl()
@@ -382,6 +421,27 @@ async function loadResourcePage() {
       notifyPathProgress(progress.value)
     }
   }
+}
+
+async function submitExerciseAnswers() {
+  if (!resource.value?.exerciseQuestions?.length) return
+  const unanswered = resource.value.exerciseQuestions.some((question) => !exerciseAnswers.value[question.id])
+  if (unanswered) {
+    ElMessage.warning('请完成所有题目后再提交')
+    return
+  }
+  exerciseSubmitted.value = true
+  if (!canTrackProgress.value) return
+  const payload = buildProgressPayload(1)
+  if (!payload) return
+  progress.value = await learnApi.updateProgress(String(resource.value.id), payload)
+  notifyPathProgress(progress.value)
+  ElMessage.success('习题已提交，学习进度已更新')
+}
+
+function resetExerciseAnswers() {
+  exerciseAnswers.value = {}
+  exerciseSubmitted.value = false
 }
 
 async function loadResourceDiscussions() {
@@ -605,6 +665,76 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   border: none;
+}
+
+.exercise-area {
+  flex: 1;
+  overflow-y: auto;
+  background: #f5f7fb;
+  padding: 28px;
+}
+
+.exercise-panel {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.exercise-head,
+.exercise-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.exercise-head h2 {
+  margin: 0;
+  color: #303133;
+  font-size: 22px;
+}
+
+.exercise-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.exercise-question {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.exercise-stem {
+  color: #303133;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.exercise-options {
+  display: grid;
+  gap: 10px;
+}
+
+.exercise-result {
+  color: #f56c6c;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.exercise-result.correct {
+  color: #67c23a;
+}
+
+.exercise-actions {
+  justify-content: flex-end;
+  margin-top: 20px;
 }
 
 .learn-sidebar {

@@ -26,4 +26,26 @@ public class ResourceResponse {
     private Long size;
     private Integer orderIndex;
     private String createdAt;
+    private java.util.List<ExerciseQuestionResponse> exerciseQuestions;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ExerciseQuestionResponse {
+        private String id;
+        private String stem;
+        private java.util.List<ExerciseOptionResponse> options;
+        private String answer;
+        private String explanation;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ExerciseOptionResponse {
+        private String id;
+        private String text;
+    }
 }

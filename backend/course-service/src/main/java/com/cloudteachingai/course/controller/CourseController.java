@@ -8,6 +8,7 @@ import com.cloudteachingai.course.dto.ChapterUpsertRequest;
 import com.cloudteachingai.course.dto.CoverUploadResponse;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
+import com.cloudteachingai.course.dto.ExerciseGenerateRequest;
 import com.cloudteachingai.course.dto.DiscussionPostResponse;
 import com.cloudteachingai.course.dto.DiscussionPostUpsertRequest;
 import com.cloudteachingai.course.dto.InternalKnowledgePointResponse;
@@ -451,6 +452,14 @@ public class CourseController {
             @Valid @RequestBody ResourceUpsertRequest request) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(courseFacadeService.createResource(chapterId, request, userContext));
+    }
+
+    @PostMapping("/resources/exercises/generate")
+    public ApiResponse<List<ResourceResponse.ExerciseQuestionResponse>> generateExerciseQuestions(
+            @RequestHeader("Authorization") String authorization,
+            @RequestBody ExerciseGenerateRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(courseFacadeService.generateExerciseQuestions(request, userContext));
     }
 
     @PostMapping(value = "/resource-files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
