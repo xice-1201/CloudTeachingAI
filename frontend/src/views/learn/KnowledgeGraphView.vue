@@ -100,7 +100,7 @@
             :key="item.id"
             type="button"
             class="node-item"
-            @click="focusNode(item.id)"
+            @click="selectGraphRoot(item.id)"
           >
             <span class="node-dot" :style="{ backgroundColor: item.color }" />
             <span class="node-main">
@@ -175,7 +175,10 @@ function nodeSymbolSize(item: KnowledgeGraphNode) {
 
 function renderGraph() {
   if (!chartEl.value || !graph.value) return
-  if (!chart) chart = echarts.init(chartEl.value)
+  if (!chart) {
+    chart = echarts.init(chartEl.value)
+    chart.on('click', handleGraphClick)
+  }
 
   const nodes = graph.value.nodes.map((item) => ({
     id: String(item.id),
@@ -262,9 +265,17 @@ async function loadGraph() {
   }
 }
 
-function focusNode(id: number) {
-  if (!chart) return
-  chart.dispatchAction({ type: 'focusNodeAdjacency', seriesIndex: 0, dataIndex: graph.value?.nodes.findIndex((item) => item.id === id) ?? -1 })
+async function selectGraphRoot(id: number) {
+  selectedRootId.value = id
+  await loadGraph()
+}
+
+function handleGraphClick(params: echarts.ECElementEvent) {
+  if (params.dataType !== 'node') return
+  const data = params.data as { id?: string | number } | null | undefined
+  const id = Number(data?.id)
+  if (!Number.isFinite(id)) return
+  selectGraphRoot(id).catch(() => undefined)
 }
 
 watch(graph, async () => {
@@ -280,6 +291,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
+  chart?.off('click', handleGraphClick)
   chart?.dispose()
   chart = null
 })
