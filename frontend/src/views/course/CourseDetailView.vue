@@ -184,6 +184,61 @@
               <p class="desc-text">{{ course.description }}</p>
             </div>
           </el-card>
+
+          <el-card v-if="canEdit" shadow="never" class="section-gap" v-loading="analysisLoading">
+            <template #header>
+              <div class="section-header">
+                <span>AI 课程分析</span>
+                <el-button link type="primary" @click="loadTeacherAnalytics">重新分析</el-button>
+              </div>
+            </template>
+
+            <div class="analysis-block">
+              <div class="analysis-title">知识点覆盖</div>
+              <div class="analysis-summary">
+                已覆盖 {{ knowledgeCoverage.length }} 个知识点，{{ untaggedResourceCount }} 个资源待补充标签。
+              </div>
+              <div v-if="knowledgeCoverage.length" class="coverage-list">
+                <div v-for="item in knowledgeCoverage.slice(0, 6)" :key="item.key" class="coverage-item">
+                  <span>{{ item.label }}</span>
+                  <el-tag size="small" effect="plain">{{ item.count }} 个资源</el-tag>
+                </div>
+              </div>
+              <div v-else class="empty-tip">当前课程资源还没有形成知识点覆盖数据。</div>
+            </div>
+
+            <div class="analysis-block">
+              <div class="analysis-title">学习情况</div>
+              <div class="analysis-metrics">
+                <div class="analysis-metric">
+                  <span>活跃学生</span>
+                  <strong>{{ courseAnalytics?.activeStudents ?? 0 }}</strong>
+                </div>
+                <div class="analysis-metric">
+                  <span>平均进度</span>
+                  <strong>{{ percentText(courseAnalytics?.averageProgress ?? 0) }}</strong>
+                </div>
+                <div class="analysis-metric">
+                  <span>完成率</span>
+                  <strong>{{ percentText(courseAnalytics?.completionRate ?? 0) }}</strong>
+                </div>
+              </div>
+              <div class="analysis-summary">
+                {{ learningInsight }}
+              </div>
+              <div v-if="courseAnalytics?.hottestResourceTitle" class="hot-resource">
+                最受关注资源：{{ courseAnalytics.hottestResourceTitle }}
+              </div>
+            </div>
+
+            <div class="analysis-block">
+              <div class="analysis-title">优化建议</div>
+              <ul class="suggestion-list">
+                <li v-for="item in optimizationSuggestions" :key="item">{{ item }}</li>
+              </ul>
+            </div>
+          </el-card>
+
           <el-card shadow="never" class="section-gap">
             <template #header>
               <div class="section-header">
@@ -239,16 +294,19 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ChatDotRound, Document, Paperclip, VideoPlay } from '@element-plus/icons-vue'
 import { courseApi } from '@/api/course'
+import { learnApi } from '@/api/learn'
 import { useUserStore } from '@/store/user'
-import type { Announcement, Chapter, Course, DiscussionPost, Resource, ResourceKnowledgePoint, ResourceTag } from '@/types'
+import type { Announcement, Chapter, Course, DiscussionPost, Resource, ResourceKnowledgePoint, ResourceTag, TeacherDashboard } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
+const analysisLoading = ref(false)
 const announcementSubmitting = ref(false)
 const discussionSubmitting = ref(false)
 const course = ref<Course | null>(null)
+const teacherDashboard = ref<TeacherDashboard | null>(null)
 const chapters = ref<Chapter[]>([])
 const resourceMap = ref<Record<number, Resource[]>>({})
 const announcements = ref<Announcement[]>([])
@@ -279,6 +337,71 @@ const canEnroll = computed(() => userStore.isStudent && course.value?.status ===
 const showEnrollHint = computed(() => userStore.isStudent && !contentAccessGranted.value && course.value?.status === 'PUBLISHED')
 const canParticipateDiscussion = computed(() => contentAccessGranted.value || canEdit.value)
 const recentDiscussions = computed(() => generalDiscussions.value.slice(0, 3))
+const allResources = computed(() => Object.values(resourceMap.value).flat())
+const courseAnalytics = computed(() => {
+  if (!course.value) return null
+  return teacherDashboard.value?.courses.find((item) => item.courseId === course.value?.id) ?? null
+})
+const knowledgeCoverage = computed(() => {
+  const coverage = new Map<string, { key: string; label: string; count: number }>()
+  for (const resource of allResources.value) {
+    const tags = [...(resource.tags ?? []), ...(resource.knowledgePoints ?? [])]
+    const seen = new Set<string>()
+    for (const tag of tags) {
+      const label = resourceTagLabel(tag)
+      const key = String(resourceTagKnowledgePointId(tag) ?? label.trim().toLowerCase())
+      if (!label || seen.has(key)) continue
+      seen.add(key)
+      const current = coverage.get(key) ?? { key, label, count: 0 }
+      current.count += 1
+      coverage.set(key, current)
+    }
+  }
+  return Array.from(coverage.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+})
+const untaggedResourceCount = computed(() => allResources.value.filter((resource) => {
+  return !(resource.tags?.length || resource.knowledgePoints?.length)
+}).length)
+const learningInsight = computed(() => {
+  const analytics = courseAnalytics.value
+  if (!analytics || analytics.learningRecordCount === 0) {
+    return '暂时缺少学生学习行为数据，建议先引导学生访问核心资源。'
+  }
+  if (analytics.averageProgress < 0.35) {
+    return '学生整体学习推进偏慢，建议拆分关键资源并增加阶段性提醒。'
+  }
+  if (analytics.completionRate < 0.4) {
+    return '已有学习行为，但完成率偏低，建议检查资源长度、难度和章节顺序。'
+  }
+  return '课程学习状态较稳定，可继续观察薄弱知识点并迭代资源覆盖。'
+})
+const optimizationSuggestions = computed(() => {
+  const suggestions: string[] = []
+  const analytics = courseAnalytics.value
+  if (untaggedResourceCount.value > 0) {
+    suggestions.push(`优先为 ${untaggedResourceCount.value} 个未标注资源补充知识点，提升学习路线推荐准确度。`)
+  }
+  if (knowledgeCoverage.value.length <= 2 && allResources.value.length >= 3) {
+    suggestions.push('当前知识点覆盖较集中，建议补充先修、拓展或练习类资源，形成更完整的知识结构。')
+  }
+  if (!analytics || analytics.learningRecordCount === 0) {
+    suggestions.push('发布学习公告或课堂任务，引导学生先完成核心视频与课件资源。')
+  } else {
+    if (analytics.averageProgress < 0.35) {
+      suggestions.push('将长视频拆分为更短资源片段，并在章节说明中标出学习目标。')
+    }
+    if (analytics.completionRate < 0.4) {
+      suggestions.push('为低完成率章节增加讨论问题或作业检查点，帮助学生形成学习闭环。')
+    }
+    if (analytics.hottestResourceLearningCount > 0 && analytics.hottestResourceTitle) {
+      suggestions.push(`围绕高频资源《${analytics.hottestResourceTitle}》补充答疑说明或延伸练习。`)
+    }
+  }
+  if (!suggestions.length) {
+    suggestions.push('课程资源与学习状态较均衡，下一步可结合学生反馈微调资源顺序与作业难度。')
+  }
+  return suggestions
+})
 
 function statusTagType(status: string) {
   return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info'
@@ -334,6 +457,14 @@ function resourceTagLabel(tag: ResourceTag | ResourceKnowledgePoint) {
 
 function resourceTagKey(tag: ResourceTag | ResourceKnowledgePoint) {
   return 'label' in tag ? tag.label : tag.id
+}
+
+function resourceTagKnowledgePointId(tag: ResourceTag | ResourceKnowledgePoint) {
+  return 'label' in tag ? tag.knowledgePointId : tag.id
+}
+
+function percentText(value: number) {
+  return `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%`
 }
 
 function openAnnouncementDialog(item?: Announcement) {
@@ -399,6 +530,18 @@ async function loadInteractions() {
   generalDiscussions.value = await courseApi.listDiscussions(courseId, undefined, {
     headers: { 'X-Silent-Error': 'true' },
   }).catch(() => [])
+}
+
+async function loadTeacherAnalytics() {
+  if (!canEdit.value) return
+  analysisLoading.value = true
+  try {
+    teacherDashboard.value = await learnApi.getTeacherDashboard()
+  } catch (_error) {
+    teacherDashboard.value = null
+  } finally {
+    analysisLoading.value = false
+  }
 }
 
 async function handleLifecycle(action: 'publish' | 'unpublish' | 'archive' | 'restore') {
@@ -509,7 +652,7 @@ onMounted(async () => {
   try {
     await loadCourseSummary()
     await loadCurriculum()
-    await loadInteractions()
+    await Promise.all([loadInteractions(), loadTeacherAnalytics()])
     if (route.hash === '#discussions') {
       setTimeout(scrollToDiscussions, 100)
     }
@@ -641,6 +784,93 @@ onMounted(async () => {
   white-space: pre-wrap;
 }
 
+.analysis-block {
+  padding: 14px 0;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.analysis-block:first-of-type {
+  padding-top: 0;
+}
+
+.analysis-block:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.analysis-title {
+  margin-bottom: 10px;
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.analysis-summary,
+.hot-resource {
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.coverage-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.coverage-item,
+.analysis-metrics {
+  display: flex;
+  gap: 10px;
+}
+
+.coverage-item {
+  align-items: center;
+  justify-content: space-between;
+  color: #303133;
+  font-size: 13px;
+}
+
+.analysis-metrics {
+  margin-bottom: 12px;
+}
+
+.analysis-metric {
+  flex: 1;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.analysis-metric span,
+.analysis-metric strong {
+  display: block;
+}
+
+.analysis-metric span {
+  color: #909399;
+  font-size: 12px;
+}
+
+.analysis-metric strong {
+  margin-top: 4px;
+  color: #303133;
+  font-size: 18px;
+}
+
+.hot-resource {
+  margin-top: 10px;
+}
+
+.suggestion-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .discussion-editor,
 .reply-editor {
   display: grid;
@@ -707,6 +937,10 @@ onMounted(async () => {
   .announcement-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .analysis-metrics {
+    flex-direction: column;
   }
 }
 </style>
