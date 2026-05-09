@@ -414,6 +414,7 @@ const coverPreviewUrl = ref('')
 const selectedCoverFile = ref<File | null>(null)
 const studentOptions = ref<User[]>([])
 const knowledgePointOptions = ref<KnowledgePointOption[]>([])
+const allKnowledgePointOptions = ref<KnowledgePointOption[]>([])
 const suggestions = ref<ResourceTagSuggestion[]>([])
 const adoptingSuggestionKeys = ref<Set<string>>(new Set())
 let temporaryCoverUrl = ''
@@ -731,7 +732,7 @@ function setSuggestionAdopting(suggestion: ResourceTagSuggestion, adopting: bool
 function nextKnowledgePointOrderIndex(parentId: number) {
   return Math.max(
     0,
-    ...knowledgePointOptions.value
+    ...allKnowledgePointOptions.value
       .filter((item) => item.parentId === parentId)
       .map((item) => item.orderIndex ?? 0),
   ) + 1
@@ -744,12 +745,14 @@ async function createKnowledgePointFromSuggestion(suggestion: ResourceTagSuggest
   const existingId = resolveSuggestionKnowledgePointId(suggestion)
   if (existingId) return existingId
 
+  const parent = allKnowledgePointOptions.value.find((item) => item.id === parentId)
+  const nodeType: KnowledgePointNode['nodeType'] = parent?.nodeType === 'SUBJECT' ? 'DOMAIN' : 'POINT'
   const created = await courseApi.createKnowledgePoint({
     parentId,
     name: suggestion.label.trim(),
     description: suggestion.reason,
     keywords: suggestion.label.trim(),
-    nodeType: suggestion.suggestedNodeType === 'DOMAIN' ? 'DOMAIN' : 'POINT',
+    nodeType,
     active: true,
     orderIndex: nextKnowledgePointOrderIndex(parentId),
   })
@@ -777,7 +780,21 @@ function resolveSuggestionParentId(suggestion: ResourceTagSuggestion) {
     }))
     .sort((a, b) => b.score - a.score || a.item.path.localeCompare(b.item.path))
 
-  return scoredDomains[0]?.item.id
+  if (scoredDomains[0]?.item.id) {
+    return scoredDomains[0].item.id
+  }
+
+  const normalizedSuggestion = suggestion.label.trim().toLowerCase()
+  const scoredSubjects = allKnowledgePointOptions.value
+    .filter((item) => item.nodeType === 'SUBJECT')
+    .map((item) => ({
+      item,
+      score: Number(normalizedText.includes(item.name.trim().toLowerCase()))
+        + Number(item.path.split('/').some((part) => normalizedSuggestion.includes(part.trim().toLowerCase()))),
+    }))
+    .sort((a, b) => b.score - a.score || a.item.path.localeCompare(b.item.path))
+
+  return scoredSubjects[0]?.item.id
 }
 
 function resolveSelectedKnowledgePointParentId() {
@@ -796,7 +813,7 @@ function resolveSuggestionParentPath(suggestion: ResourceTagSuggestion) {
     return suggestion.suggestedParentKnowledgePointPath
   }
   const parentId = resolveSuggestionParentId(suggestion)
-  return knowledgePointOptions.value.find((item) => item.id === parentId)?.path
+  return allKnowledgePointOptions.value.find((item) => item.id === parentId)?.path
 }
 
 async function applySuggestedKnowledgePoints(items: ResourceTagSuggestion[]) {
@@ -1042,8 +1059,10 @@ async function loadCourse() {
 async function loadKnowledgePoints() {
   const tree = await courseApi.listKnowledgePointTree({ activeOnly: true })
   const options: KnowledgePointOption[] = []
+  const allOptions: KnowledgePointOption[] = []
   const walk = (nodes: KnowledgePointNode[]) => {
     nodes.forEach((node) => {
+      allOptions.push({ id: node.id, parentId: node.parentId, name: node.name, nodeType: node.nodeType, path: node.path, orderIndex: node.orderIndex })
       if (node.active !== false && node.nodeType !== 'SUBJECT') {
         options.push({ id: node.id, parentId: node.parentId, name: node.name, nodeType: node.nodeType, path: node.path, orderIndex: node.orderIndex })
       }
@@ -1053,6 +1072,7 @@ async function loadKnowledgePoints() {
     })
   }
   walk(tree)
+  allKnowledgePointOptions.value = allOptions
   knowledgePointOptions.value = options
 }
 
