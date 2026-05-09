@@ -4,10 +4,10 @@
       <span class="page-title">导师关系</span>
     </div>
 
-    <template v-if="userStore.isTeacher">
+    <template v-if="isTeacherView">
       <el-row :gutter="20">
         <el-col :xs="24" :lg="14">
-          <el-card shadow="never" header="待处理申请" v-loading="relationLoading">
+          <el-card id="mentor-applications" shadow="never" header="待处理申请" v-loading="relationLoading">
             <div v-if="applications.length === 0" class="empty-tip">暂无待处理导师申请。</div>
             <div v-for="application in applications" :key="application.id" class="application-item">
               <el-avatar :size="44" :src="application.student?.avatar">
@@ -121,12 +121,14 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { userApi } from '@/api/user'
 import { useUserStore } from '@/store/user'
 import type { MentorApplication, User } from '@/types'
 
 const userStore = useUserStore()
+const route = useRoute()
 const mentor = ref<User | null>(null)
 const students = ref<User[]>([])
 const applications = ref<MentorApplication[]>([])
@@ -138,6 +140,9 @@ const applyingMentorId = ref<number | null>(null)
 const handlingApplicationId = ref<number | null>(null)
 
 const pendingMentorIds = computed(() => new Set(applications.value.map((item) => item.mentorId)))
+const currentRole = computed(() => userStore.user?.role ?? localStorage.getItem('userRole'))
+const isTeacherView = computed(() => currentRole.value === 'TEACHER')
+const isStudentView = computed(() => currentRole.value === 'STUDENT')
 
 function normalizeMentor(value?: User | null) {
   return value && typeof value.id === 'number' ? value : null
@@ -204,9 +209,15 @@ async function rejectApplication(applicationId: number) {
 }
 
 onMounted(async () => {
+  if (!userStore.user) {
+    await userStore.fetchProfile().catch(() => null)
+  }
   await loadRelations()
-  if (userStore.isStudent && !mentor.value) {
+  if (isStudentView.value && !mentor.value) {
     await searchTeachers()
+  }
+  if (isTeacherView.value && route.query.view === 'applications') {
+    document.querySelector('#mentor-applications')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 })
 </script>

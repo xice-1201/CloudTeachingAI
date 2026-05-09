@@ -473,7 +473,7 @@ public class UserService {
                     String.format("学生 %s（%s）申请成为你的指导学生，请及时处理。", student.getUsername(), student.getEmail()),
                     "MENTOR_RELATION",
                     relation.getId(),
-                    "/mentor"
+                    "/mentor?view=applications"
             ));
         } catch (Exception e) {
             log.warn("Failed to notify mentor {} for mentor application {}", mentor.getId(), relation.getId(), e);
