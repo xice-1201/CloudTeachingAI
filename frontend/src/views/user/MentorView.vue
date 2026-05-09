@@ -66,13 +66,14 @@
                 <div class="mentor-info">
                   <div class="mentor-name">{{ mentor.username }}</div>
                   <div class="mentor-email">{{ mentor.email }}</div>
+                  <el-tag class="mentor-status" size="small" type="success">导师关系已确认</el-tag>
                 </div>
               </div>
             </template>
             <el-empty v-else description="暂无导师" :image-size="80" />
           </el-card>
 
-          <el-card v-if="applications.length > 0" shadow="never" header="申请进度" class="pending-card">
+          <el-card v-if="!hasMentor && applications.length > 0" shadow="never" header="申请进度" class="pending-card">
             <div v-for="application in applications" :key="application.id" class="pending-item">
               <div>
                 <div class="teacher-name">{{ application.mentor?.username || '未知教师' }}</div>
@@ -84,7 +85,7 @@
         </el-col>
 
         <el-col :xs="24" :lg="14">
-          <el-card shadow="never" header="申请导师">
+          <el-card v-if="!hasMentor" shadow="never" header="申请导师">
             <el-form inline>
               <el-form-item>
                 <el-input v-model="keyword" placeholder="搜索教师" clearable @keyup.enter="searchTeachers" />
@@ -111,6 +112,12 @@
                 </el-button>
               </div>
               <el-empty v-if="!loading && teachers.length === 0" description="暂无结果" :image-size="60" />
+            </div>
+          </el-card>
+          <el-card v-else shadow="never" header="导师状态">
+            <div class="confirmed-tip">
+              <el-tag type="success">已确认</el-tag>
+              <span>当前导师关系已生效，暂不开放新的导师申请。</span>
             </div>
           </el-card>
         </el-col>
@@ -143,9 +150,12 @@ const pendingMentorIds = computed(() => new Set(applications.value.map((item) =>
 const currentRole = computed(() => userStore.user?.role ?? localStorage.getItem('userRole'))
 const isTeacherView = computed(() => currentRole.value === 'TEACHER')
 const isStudentView = computed(() => currentRole.value === 'STUDENT')
+const hasMentor = computed(() => Boolean(mentor.value))
 
 function normalizeMentor(value?: User | null) {
-  return value && typeof value.id === 'number' ? value : null
+  if (!value || value.id == null) return null
+  const mentorId = Number(value.id)
+  return Number.isFinite(mentorId) ? { ...value, id: mentorId } : null
 }
 
 function formatDateTime(value?: string | null) {
@@ -170,12 +180,19 @@ async function loadRelations() {
     mentor.value = normalizeMentor(relations.mentor)
     students.value = relations.students ?? []
     applications.value = relations.applications ?? []
+    if (mentor.value) {
+      teachers.value = []
+    }
   } finally {
     relationLoading.value = false
   }
 }
 
 async function applyMentor(mentorId: number) {
+  if (hasMentor.value) {
+    ElMessage.warning('你已经拥有导师关系，不能重复申请')
+    return
+  }
   applyingMentorId.value = mentorId
   try {
     const application = await userApi.applyMentor(mentorId)
@@ -213,7 +230,7 @@ onMounted(async () => {
     await userStore.fetchProfile().catch(() => null)
   }
   await loadRelations()
-  if (isStudentView.value && !mentor.value) {
+  if (isStudentView.value && !hasMentor.value) {
     await searchTeachers()
   }
   if (isTeacherView.value && route.query.view === 'applications') {
@@ -255,6 +272,10 @@ onMounted(async () => {
   overflow-wrap: anywhere;
 }
 
+.mentor-status {
+  margin-top: 8px;
+}
+
 .teacher-list {
   margin-top: 16px;
 }
@@ -283,6 +304,15 @@ onMounted(async () => {
 
 .pending-card {
   margin-top: 20px;
+}
+
+.confirmed-tip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #606266;
+  font-size: 14px;
+  padding: 18px 0;
 }
 
 .empty-tip {
