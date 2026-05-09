@@ -605,7 +605,9 @@ public class CourseFacadeService {
         childrenByParent.values().forEach(children -> children.sort(
                 Comparator.comparing(KnowledgePointEntity::getOrderIndex).thenComparing(KnowledgePointEntity::getId)));
 
-        Map<Long, Integer> directCounts = loadKnowledgePointDirectResourceCounts(sourceMap);
+        List<ResourceTagRepository.ResourceTagKnowledgeLinkProjection> tagLinks = resourceTagRepository.findResourceTagKnowledgeLinks();
+        Map<Long, Set<Long>> directResourceIds = loadKnowledgePointDirectResourceIds(sourceMap, tagLinks);
+        Map<Long, Integer> directCounts = toResourceCountMap(directResourceIds);
         Map<Long, Integer> subtreeCounts = new LinkedHashMap<>();
         Set<Long> visitedForCount = new LinkedHashSet<>();
         for (KnowledgePointEntity knowledgePoint : scopedKnowledgePoints) {
@@ -638,6 +640,10 @@ public class CourseFacadeService {
                         .relation("PARENT_CHILD")
                         .build());
             }
+        }
+
+        if (root != null) {
+            appendTagDerivedKnowledgePointNodes(root, sourceMap, scopedMap, directResourceIds, tagLinks, nodes, edges);
         }
 
         int totalResourceRelations = nodes.stream()
@@ -1607,7 +1613,9 @@ public class CourseFacadeService {
         }
     }
 
-    private Map<Long, Integer> loadKnowledgePointDirectResourceCounts(Map<Long, KnowledgePointEntity> knowledgePointMap) {
+    private Map<Long, Set<Long>> loadKnowledgePointDirectResourceIds(
+            Map<Long, KnowledgePointEntity> knowledgePointMap,
+            List<ResourceTagRepository.ResourceTagKnowledgeLinkProjection> tagLinks) {
         Map<Long, Set<Long>> resourceIdsByKnowledgePoint = new LinkedHashMap<>();
         Map<String, List<Long>> knowledgePointIdsByNormalizedName = new LinkedHashMap<>();
         for (KnowledgePointEntity knowledgePoint : knowledgePointMap.values()) {
@@ -1625,7 +1633,7 @@ public class CourseFacadeService {
                     .add(link.getResourceId());
         }
 
-        for (ResourceTagRepository.ResourceTagKnowledgeLinkProjection link : resourceTagRepository.findResourceTagKnowledgeLinks()) {
+        for (ResourceTagRepository.ResourceTagKnowledgeLinkProjection link : tagLinks) {
             if (link.getResourceId() == null) {
                 continue;
             }
@@ -1646,9 +1654,80 @@ public class CourseFacadeService {
             }
         }
 
+        return resourceIdsByKnowledgePoint;
+    }
+
+    private Map<Long, Integer> toResourceCountMap(Map<Long, Set<Long>> resourceIdsByKnowledgePoint) {
         Map<Long, Integer> counts = new LinkedHashMap<>();
         resourceIdsByKnowledgePoint.forEach((knowledgePointId, resourceIds) -> counts.put(knowledgePointId, resourceIds.size()));
         return counts;
+    }
+
+    private void appendTagDerivedKnowledgePointNodes(
+            KnowledgePointEntity root,
+            Map<Long, KnowledgePointEntity> sourceMap,
+            Map<Long, KnowledgePointEntity> scopedMap,
+            Map<Long, Set<Long>> directResourceIds,
+            List<ResourceTagRepository.ResourceTagKnowledgeLinkProjection> tagLinks,
+            List<KnowledgeGraphNodeResponse> nodes,
+            List<KnowledgeGraphEdgeResponse> edges
+    ) {
+        Set<Long> scopedResourceIds = scopedMap.keySet().stream()
+                .map(id -> directResourceIds.getOrDefault(id, Set.of()))
+                .flatMap(Collection::stream)
+                .collect(LinkedHashSet::new, Set::add, Set::addAll);
+        if (scopedResourceIds.isEmpty()) {
+            return;
+        }
+
+        Set<String> existingLabels = scopedMap.values().stream()
+                .map(KnowledgePointEntity::getName)
+                .map(this::normalizeSuggestionText)
+                .filter(StringUtils::hasText)
+                .collect(LinkedHashSet::new, Set::add, Set::addAll);
+
+        Map<String, TagDerivedKnowledgePointAccumulator> tagAccumulators = new LinkedHashMap<>();
+        for (ResourceTagRepository.ResourceTagKnowledgeLinkProjection link : tagLinks) {
+            if (link.getResourceId() == null || !scopedResourceIds.contains(link.getResourceId())) {
+                continue;
+            }
+            String normalizedLabel = normalizeSuggestionText(link.getNormalizedLabel());
+            if (!StringUtils.hasText(normalizedLabel) || existingLabels.contains(normalizedLabel)) {
+                continue;
+            }
+            String label = StringUtils.hasText(link.getLabel()) ? link.getLabel().trim() : normalizedLabel;
+            tagAccumulators
+                    .computeIfAbsent(normalizedLabel, ignored -> new TagDerivedKnowledgePointAccumulator(label))
+                    .add(link.getResourceId());
+        }
+
+        long derivedId = -1L;
+        String rootPath = buildKnowledgePointPath(root.getId(), sourceMap);
+        for (TagDerivedKnowledgePointAccumulator accumulator : tagAccumulators.values().stream()
+                .sorted(Comparator.comparing(TagDerivedKnowledgePointAccumulator::resourceCount).reversed()
+                        .thenComparing(TagDerivedKnowledgePointAccumulator::label, String::compareToIgnoreCase))
+                .toList()) {
+            int resourceCount = accumulator.resourceCount();
+            nodes.add(KnowledgeGraphNodeResponse.builder()
+                    .id(derivedId)
+                    .parentId(root.getId())
+                    .name(accumulator.label())
+                    .path(rootPath + " / " + accumulator.label())
+                    .nodeType(KnowledgePointType.POINT.name())
+                    .active(true)
+                    .depth(1)
+                    .directResourceCount(resourceCount)
+                    .resourceCount(resourceCount)
+                    .coverageLevel(resolveKnowledgeGraphCoverageLevel(resourceCount))
+                    .color(resolveKnowledgeGraphColor(resourceCount))
+                    .build());
+            edges.add(KnowledgeGraphEdgeResponse.builder()
+                    .source(root.getId())
+                    .target(derivedId)
+                    .relation("PARENT_CHILD")
+                    .build());
+            derivedId--;
+        }
     }
 
     private int calculateSubtreeResourceCount(
@@ -1861,16 +1940,16 @@ public class CourseFacadeService {
             if (!Boolean.TRUE.equals(knowledgePoint.getActive())) {
                 throw BusinessException.badRequest("Inactive knowledge points cannot be selected");
             }
-            if (knowledgePoint.getNodeType() != KnowledgePointType.POINT) {
-                throw BusinessException.badRequest("Only leaf knowledge points can be attached to resources");
+            if (knowledgePoint.getNodeType() == KnowledgePointType.SUBJECT) {
+                throw BusinessException.badRequest("Subject nodes cannot be attached directly to resources");
             }
         }
 
-        Map<Long, KnowledgePointEntity> activeLeafKnowledgePointMap = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
-                .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
+        Map<Long, KnowledgePointEntity> activeAttachableKnowledgePointMap = knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
+                .filter(item -> item.getNodeType() != KnowledgePointType.SUBJECT)
                 .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
         Map<String, KnowledgePointEntity> knowledgePointByNormalizedLabel = new LinkedHashMap<>();
-        for (KnowledgePointEntity knowledgePoint : activeLeafKnowledgePointMap.values()) {
+        for (KnowledgePointEntity knowledgePoint : activeAttachableKnowledgePointMap.values()) {
             knowledgePointByNormalizedLabel.putIfAbsent(normalizeSuggestionText(knowledgePoint.getName()), knowledgePoint);
         }
 
@@ -1899,25 +1978,31 @@ public class CourseFacadeService {
             mergedLabels.add(knowledgePoint.getName());
         }
 
+        List<String> unmatchedLabels = new ArrayList<>();
         for (String tagLabel : mergedLabels) {
             String normalizedLabel = normalizeSuggestionText(tagLabel);
             KnowledgePointEntity matchedKnowledgePoint = knowledgePointByNormalizedLabel.get(normalizedLabel);
-            if (matchedKnowledgePoint != null) {
-                relationMap.putIfAbsent(matchedKnowledgePoint.getId(), ResourceKnowledgePointEntity.builder()
-                        .resourceId(resource.getId())
-                        .knowledgePointId(matchedKnowledgePoint.getId())
-                        .confidence(1D)
-                        .source(ResourceTagSource.MANUAL)
-                        .build());
+            if (matchedKnowledgePoint == null) {
+                unmatchedLabels.add(tagLabel);
+                continue;
             }
-            tagEntities.add(ResourceTagEntity.builder()
+            relationMap.putIfAbsent(matchedKnowledgePoint.getId(), ResourceKnowledgePointEntity.builder()
                     .resourceId(resource.getId())
-                    .label(tagLabel)
-                    .normalizedLabel(normalizedLabel)
-                    .knowledgePointId(matchedKnowledgePoint == null ? null : matchedKnowledgePoint.getId())
+                    .knowledgePointId(matchedKnowledgePoint.getId())
                     .confidence(1D)
                     .source(ResourceTagSource.MANUAL)
                     .build());
+            tagEntities.add(ResourceTagEntity.builder()
+                    .resourceId(resource.getId())
+                    .label(matchedKnowledgePoint.getName())
+                    .normalizedLabel(normalizedLabel)
+                    .knowledgePointId(matchedKnowledgePoint.getId())
+                    .confidence(1D)
+                    .source(ResourceTagSource.MANUAL)
+                    .build());
+        }
+        if (!unmatchedLabels.isEmpty()) {
+            throw BusinessException.badRequest("Resource tags must match existing knowledge points: " + String.join(", ", unmatchedLabels));
         }
 
         if (!relationMap.isEmpty()) {
@@ -1953,6 +2038,27 @@ public class CourseFacadeService {
             }
         }
         return result;
+    }
+
+    private static class TagDerivedKnowledgePointAccumulator {
+        private final String label;
+        private final Set<Long> resourceIds = new LinkedHashSet<>();
+
+        private TagDerivedKnowledgePointAccumulator(String label) {
+            this.label = label;
+        }
+
+        private void add(Long resourceId) {
+            resourceIds.add(resourceId);
+        }
+
+        private String label() {
+            return label;
+        }
+
+        private int resourceCount() {
+            return resourceIds.size();
+        }
     }
 
     public record ManagedResourceContent(String title, ResourceType type, String storageKey) {

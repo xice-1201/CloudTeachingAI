@@ -18,6 +18,7 @@ public interface ResourceTagRepository extends JpaRepository<ResourceTagEntity, 
     @Query("""
             select tag.resourceId as resourceId,
                    tag.knowledgePointId as knowledgePointId,
+                   tag.label as label,
                    tag.normalizedLabel as normalizedLabel
             from ResourceTagEntity tag
             """)
@@ -27,6 +28,8 @@ public interface ResourceTagRepository extends JpaRepository<ResourceTagEntity, 
         Long getResourceId();
 
         Long getKnowledgePointId();
+
+        String getLabel();
 
         String getNormalizedLabel();
     }

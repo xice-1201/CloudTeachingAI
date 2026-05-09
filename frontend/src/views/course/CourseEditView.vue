@@ -250,26 +250,36 @@
           </div>
         </div>
         <el-form-item label="排序"><el-input-number v-model="resourceDialog.form.orderIndex" :min="1" :max="999" /></el-form-item>
-        <el-divider content-position="left">资源标签</el-divider>
-        <el-form-item label="手动标签">
+        <el-divider content-position="left">关联知识点</el-divider>
+        <el-form-item label="知识点" prop="knowledgePointIds">
           <div class="panel-block">
             <el-select
-              v-model="resourceDialog.form.tagLabels"
+              v-model="resourceDialog.form.knowledgePointIds"
               multiple
               filterable
-              allow-create
-              default-first-option
-              placeholder="输入或选择资源标签"
+              placeholder="选择资源关联的知识点"
               style="width: 100%"
-            />
-            <div class="field-tip">标签会优先复用系统已有标签，数量不足时 AI 会补充生成新标签。</div>
+            >
+              <el-option
+                v-for="item in knowledgePointOptions"
+                :key="item.id"
+                :label="item.path"
+                :value="item.id"
+              >
+                <div class="option-content">
+                  <span>{{ item.path }}</span>
+                  <el-tag size="small" effect="plain">{{ knowledgeTypeLabel(item.nodeType) }}</el-tag>
+                </div>
+              </el-option>
+            </el-select>
+            <div class="field-tip">资源标签即知识点，资源统计和知识图谱都会基于这里的知识点关联生成。</div>
           </div>
         </el-form-item>
         <el-form-item label="AI建议">
           <div class="panel-block">
             <div class="tree-toolbar">
               <el-button :loading="suggestionLoading" @click="loadTagSuggestions">生成建议标签</el-button>
-              <el-button v-if="suggestions.length" type="primary" plain @click="applySuggestedTags(suggestions.map((item) => item.label))">一键接受建议</el-button>
+              <el-button v-if="applicableSuggestions.length" type="primary" plain @click="applySuggestedKnowledgePoints(applicableSuggestions)">一键接受建议</el-button>
             </div>
             <div v-if="suggestions.length" class="suggestion-list">
               <div v-for="suggestion in suggestions" :key="`${suggestion.kind}-${suggestion.label}`" class="suggestion-item">
@@ -281,7 +291,14 @@
                   <div v-if="suggestion.path" class="suggestion-path">{{ suggestion.path }}</div>
                   <div class="suggestion-path">{{ suggestion.reason }}</div>
                 </div>
-                <el-button link type="primary" @click="applySuggestedTags([suggestion.label])">采用</el-button>
+                <el-button
+                  link
+                  type="primary"
+                  :disabled="!resolveSuggestionKnowledgePointId(suggestion)"
+                  @click="applySuggestedKnowledgePoints([suggestion])"
+                >
+                  采用
+                </el-button>
               </div>
             </div>
             <div v-else class="field-tip">上传文件、填写资源地址，或至少补充标题/描述后再生成 AI 建议。</div>
@@ -302,12 +319,12 @@
             {{ resourceTaggingLabel(tagReviewDialog.resource.taggingStatus) }}
           </el-tag>
         </div>
-        <div class="field-tip">保留需要采用的 AI 推荐标签，也可以取消勾选后仅确认剩余标签。</div>
+        <div class="field-tip">资源标签即知识点，只能确认已匹配到知识点体系的推荐项。</div>
 
         <el-empty v-if="!tagReviewDialog.options.length" description="当前资源还没有可确认的标签" />
         <el-checkbox-group v-else v-model="tagReviewDialog.selectedKeys" class="tag-review-options">
           <label v-for="option in tagReviewDialog.options" :key="option.key" class="tag-review-option">
-            <el-checkbox :value="option.key">
+            <el-checkbox :value="option.key" :disabled="!option.knowledgePointId">
               <div class="tag-review-option-main">
                 <div class="tag-review-option-title">
                   <span>{{ option.label }}</span>
@@ -336,7 +353,7 @@ import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { courseApi } from '@/api/course'
 import { userApi } from '@/api/user'
-import type { Chapter, Course, ExerciseQuestion, Resource, ResourceKnowledgePoint, ResourceTag, ResourceTagSuggestion, User } from '@/types'
+import type { Chapter, Course, ExerciseQuestion, KnowledgePointNode, Resource, ResourceKnowledgePoint, ResourceTag, ResourceTagSuggestion, User } from '@/types'
 
 type RequestLikeError = Error & {
   code?: number
@@ -359,6 +376,8 @@ type TagReviewOption = {
   confidence?: number
   source?: ResourceTag['source'] | ResourceKnowledgePoint['source']
 }
+
+type KnowledgePointOption = Pick<KnowledgePointNode, 'id' | 'name' | 'nodeType' | 'path'>
 
 const route = useRoute()
 const router = useRouter()
@@ -390,14 +409,15 @@ const courseStatus = ref<Course['status'] | ''>('')
 const coverPreviewUrl = ref('')
 const selectedCoverFile = ref<File | null>(null)
 const studentOptions = ref<User[]>([])
-const leafKnowledgePointCount = ref(0)
+const knowledgePointOptions = ref<KnowledgePointOption[]>([])
 const suggestions = ref<ResourceTagSuggestion[]>([])
 let temporaryCoverUrl = ''
 let resourceFileSelectionSeq = 0
 
 const isEdit = computed(() => Boolean(route.params.id))
 const courseId = computed(() => String(route.params.id ?? ''))
-const hasLeafKnowledgePoints = computed(() => leafKnowledgePointCount.value > 0)
+const hasKnowledgePointOptions = computed(() => knowledgePointOptions.value.length > 0)
+const applicableSuggestions = computed(() => suggestions.value.filter((suggestion) => Boolean(resolveSuggestionKnowledgePointId(suggestion))))
 const allResources = computed(() => Object.values(resourceMap.value).flat())
 const suggestedResources = computed(() => allResources.value.filter((resource) => resource.taggingStatus === 'SUGGESTED'))
 const retryableResources = computed(() => allResources.value.filter(canRetryResourceTagging))
@@ -469,7 +489,7 @@ const resourceRules: FormRules = {
   }],
   knowledgePointIds: [{
     validator: (_rule, value, callback) => {
-      if (!hasLeafKnowledgePoints.value) return callback()
+      if (!hasKnowledgePointOptions.value) return callback()
       if (!value || value.length === 0) return callback(new Error('请至少选择一个知识点标签'))
       callback()
     },
@@ -605,15 +625,6 @@ function resourceTagKey(tag: ResourceTag | ResourceKnowledgePoint) { return 'lab
 function resourceTagPath(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.knowledgePointPath : tag.path }
 function resourceTagKnowledgePointId(tag: ResourceTag | ResourceKnowledgePoint) { return 'label' in tag ? tag.knowledgePointId : tag.id }
 function resolveResourceUrl(url: string) { if (/^https?:\/\//i.test(url) || url.startsWith('/')) return url; return `/${url}` }
-function normalizeTagLabels(labels: string[]) {
-  const normalized = new Map<string, string>()
-  labels.forEach((label) => {
-    const value = label.trim()
-    if (!value) return
-    normalized.set(value.toLowerCase(), value)
-  })
-  return Array.from(normalized.values())
-}
 function createBlankExerciseQuestion(): ExerciseQuestion {
   return {
     id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
@@ -661,7 +672,7 @@ async function generateExerciseQuestions() {
     const questions = await courseApi.generateExerciseQuestions({
       title: resourceDialog.form.title,
       description: resourceDialog.form.description,
-      tagLabels: normalizeTagLabels(resourceDialog.form.tagLabels),
+      tagLabels: selectedKnowledgePointLabels(),
       questionCount: Math.max(3, resourceDialog.form.exerciseQuestions.length || 5),
     })
     resourceDialog.form.exerciseQuestions = questions.length ? questions : [createBlankExerciseQuestion()]
@@ -670,7 +681,36 @@ async function generateExerciseQuestions() {
     exerciseGenerating.value = false
   }
 }
-function applySuggestedTags(labels: string[]) { resourceDialog.form.tagLabels = normalizeTagLabels([...resourceDialog.form.tagLabels, ...labels]) }
+
+function selectedKnowledgePointLabels() {
+  const selectedIds = new Set(resourceDialog.form.knowledgePointIds)
+  return knowledgePointOptions.value
+    .filter((item) => selectedIds.has(item.id))
+    .map((item) => item.name)
+}
+
+function knowledgeTypeLabel(type: KnowledgePointNode['nodeType']) {
+  return { SUBJECT: '学科', DOMAIN: '知识领域', POINT: '知识点' }[type] ?? type
+}
+
+function resolveSuggestionKnowledgePointId(suggestion: ResourceTagSuggestion) {
+  if (suggestion.knowledgePointId && knowledgePointOptions.value.some((item) => item.id === suggestion.knowledgePointId)) {
+    return suggestion.knowledgePointId
+  }
+  const normalizedLabel = suggestion.label.trim().toLowerCase()
+  return knowledgePointOptions.value.find((item) =>
+    item.name.trim().toLowerCase() === normalizedLabel
+    || item.path.trim().toLowerCase() === normalizedLabel
+  )?.id
+}
+
+function applySuggestedKnowledgePoints(items: ResourceTagSuggestion[]) {
+  const ids = items
+    .map(resolveSuggestionKnowledgePointId)
+    .filter((id): id is number => typeof id === 'number')
+  resourceDialog.form.knowledgePointIds = Array.from(new Set([...resourceDialog.form.knowledgePointIds, ...ids]))
+}
+
 function buildTagReviewOptions(resource: Resource) {
   const options = new Map<string, TagReviewOption>()
   const tags = [
@@ -713,7 +753,7 @@ function openResourceTagReviewDialog(resource: Resource) {
   const options = buildTagReviewOptions(resource)
   tagReviewDialog.resource = resource
   tagReviewDialog.options = options
-  tagReviewDialog.selectedKeys = options.map((option) => option.key)
+  tagReviewDialog.selectedKeys = options.filter((option) => option.knowledgePointId).map((option) => option.key)
   tagReviewDialog.visible = true
 }
 function extractFileName(value?: string) {
@@ -896,6 +936,23 @@ async function loadCourse() {
   }
 }
 
+async function loadKnowledgePoints() {
+  const tree = await courseApi.listKnowledgePointTree({ activeOnly: true })
+  const options: KnowledgePointOption[] = []
+  const walk = (nodes: KnowledgePointNode[]) => {
+    nodes.forEach((node) => {
+      if (node.active !== false && node.nodeType !== 'SUBJECT') {
+        options.push({ id: node.id, name: node.name, nodeType: node.nodeType, path: node.path })
+      }
+      if (node.children?.length) {
+        walk(node.children)
+      }
+    })
+  }
+  walk(tree)
+  knowledgePointOptions.value = options
+}
+
 async function loadCurriculum() {
   if (!isEdit.value) return
   try {
@@ -1023,11 +1080,11 @@ function openEditResourceDialog(chapter: Chapter, resource: Resource) {
   resourceDialog.form.url = resource.managedFile ? '' : (resource.sourceUrl ?? resource.url)
   resourceDialog.form.description = resource.description ?? ''
   resourceDialog.form.managedFile = Boolean(resource.managedFile)
-  resourceDialog.form.knowledgePointIds = [...(resource.knowledgePoints?.map((item) => item.id) ?? [])]
-  resourceDialog.form.tagLabels = normalizeTagLabels([
-    ...(resource.tags?.map((item) => item.label) ?? []),
-    ...(resource.knowledgePoints?.map((item) => item.name) ?? []),
-  ])
+  resourceDialog.form.knowledgePointIds = Array.from(new Set([
+    ...(resource.knowledgePoints?.map((item) => item.id) ?? []),
+    ...(resource.tags?.map((item) => item.knowledgePointId).filter((id): id is number => typeof id === 'number') ?? []),
+  ]))
+  resourceDialog.form.tagLabels = []
   resourceDialog.form.duration = resource.duration ?? 0
   resourceDialog.form.size = resource.size ?? 0
   resourceDialog.form.exerciseQuestions = resource.exerciseQuestions?.length ? resource.exerciseQuestions.map((question) => ({
@@ -1069,7 +1126,6 @@ async function handleSubmitResource() {
       url: resourceUrl || undefined,
       description: resourceDialog.form.description || undefined,
       knowledgePointIds: resourceDialog.form.knowledgePointIds,
-      tagLabels: normalizeTagLabels(resourceDialog.form.tagLabels),
       duration: resourceDialog.form.duration || undefined,
       size: resourceSize,
       orderIndex: resourceDialog.form.orderIndex,
@@ -1151,12 +1207,8 @@ async function confirmReviewedResourceTags() {
     const knowledgePointIds = selectedOptions
       .map((option) => option.knowledgePointId)
       .filter((id): id is number => typeof id === 'number')
-    const tagLabels = selectedOptions
-      .filter((option) => !option.knowledgePointId)
-      .map((option) => option.label)
     const updatedResource = await courseApi.confirmResourceTags(String(tagReviewDialog.resource.id), {
       knowledgePointIds,
-      tagLabels,
     })
     replaceResourceInMap(updatedResource)
     tagReviewDialog.visible = false
@@ -1172,10 +1224,13 @@ async function confirmReviewedResourceTags() {
 onMounted(async () => {
   pageLoading.value = true
   try {
-    const [studentResult] = await Promise.allSettled([loadStudentOptions()])
+    const [studentResult, knowledgePointResult] = await Promise.allSettled([loadStudentOptions(), loadKnowledgePoints()])
 
     if (studentResult.status === 'rejected') {
       ElMessage.warning('学生列表加载失败，编辑页已继续加载。请查看浏览器控制台定位原因。')
+    }
+    if (knowledgePointResult.status === 'rejected') {
+      ElMessage.warning('知识点体系加载失败，资源知识点选择暂不可用。')
     }
 
     await loadCourse()
@@ -1207,6 +1262,7 @@ onBeforeUnmount(() => {
 .resource-list,.suggestion-list { display: flex; flex-direction: column; gap: 12px; }
 .resource-card,.suggestion-item { display: flex; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid #ebeef5; border-radius: 10px; background: #fafafa; }
 .resource-main,.panel-block { flex: 1; min-width: 0; width: 100%; }
+.option-content { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .resource-title { color: #303133; font-size: 15px; font-weight: 600; }
 .resource-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; color: #909399; font-size: 13px; }
 .resource-actions { display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0; }
