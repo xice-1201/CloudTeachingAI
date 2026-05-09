@@ -41,6 +41,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -376,9 +377,14 @@ public class ResourceTagSuggestionService {
                     continue;
                 }
                 double confidence = Math.max(0.0D, Math.min(0.99D, generated.path("confidence").asDouble(allowClosestMatches ? 0.52D : 0.66D)));
+                ParentKnowledgePoint parent = selectGeneratedSuggestionParent(label, analysisText, llmCandidates);
                 suggestions.put(normalizedLabel, ResourceTagSuggestionResponse.builder()
                         .label(label)
                         .kind("GENERATED")
+                        .suggestedParentKnowledgePointId(parent.id())
+                        .suggestedParentKnowledgePointName(parent.name())
+                        .suggestedParentKnowledgePointPath(parent.path())
+                        .suggestedNodeType("POINT")
                         .confidence(Math.round(confidence * 100.0D) / 100.0D)
                         .reason(StringUtils.hasText(generated.path("reason").asText()) ? generated.path("reason").asText() : "AI generated tag")
                         .build());
@@ -546,7 +552,9 @@ public class ResourceTagSuggestionService {
                     knowledgePoint.getId(),
                     knowledgePoint.getName(),
                     buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap),
-                    splitKeywords(knowledgePoint.getKeywords())
+                    splitKeywords(knowledgePoint.getKeywords()),
+                    knowledgePoint.getParentId(),
+                    knowledgePoint.getNodeType().name()
             );
             if (StringUtils.hasText(candidate.normalizedLabel())) {
                 candidates.putIfAbsent(candidate.normalizedLabel(), candidate);
@@ -566,7 +574,9 @@ public class ResourceTagSuggestionService {
                     tag.getKnowledgePointId(),
                     knowledgePoint == null ? null : knowledgePoint.getName(),
                     knowledgePoint == null ? null : buildKnowledgePointPath(knowledgePoint.getId(), knowledgePointMap),
-                    knowledgePoint == null ? List.of() : splitKeywords(knowledgePoint.getKeywords())
+                    knowledgePoint == null ? List.of() : splitKeywords(knowledgePoint.getKeywords()),
+                    knowledgePoint == null ? null : knowledgePoint.getParentId(),
+                    knowledgePoint == null ? null : knowledgePoint.getNodeType().name()
             ));
         }
 
@@ -624,12 +634,19 @@ public class ResourceTagSuggestionService {
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()
                         .thenComparing(Map.Entry::getKey))
                 .limit(MAX_TAG_SUGGESTIONS)
-                .map(entry -> ResourceTagSuggestionResponse.builder()
-                        .label(entry.getKey())
-                        .kind("GENERATED")
-                        .confidence(Math.min(0.79D, 0.45D + (entry.getValue() * 0.08D)))
-                        .reason(buildGeneratedFallbackReason(entry.getKey(), request, extractedContent, analysis))
-                        .build())
+                .map(entry -> {
+                    ParentKnowledgePoint parent = selectGeneratedSuggestionParent(entry.getKey(), analysisText, candidates);
+                    return ResourceTagSuggestionResponse.builder()
+                            .label(entry.getKey())
+                            .kind("GENERATED")
+                            .suggestedParentKnowledgePointId(parent.id())
+                            .suggestedParentKnowledgePointName(parent.name())
+                            .suggestedParentKnowledgePointPath(parent.path())
+                            .suggestedNodeType("POINT")
+                            .confidence(Math.min(0.79D, 0.45D + (entry.getValue() * 0.08D)))
+                            .reason(buildGeneratedFallbackReason(entry.getKey(), request, extractedContent, analysis))
+                            .build();
+                })
                 .toList();
 
         LinkedHashMap<String, ResourceTagSuggestionResponse> merged = new LinkedHashMap<>(matchedExisting);
@@ -722,6 +739,70 @@ public class ResourceTagSuggestionService {
                 .confidence(confidence)
                 .reason(reason)
                 .build();
+    }
+
+    private ParentKnowledgePoint selectGeneratedSuggestionParent(String label, String analysisText, List<TagCandidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return ParentKnowledgePoint.empty();
+        }
+
+        Map<Long, TagCandidate> candidatesById = candidates.stream()
+                .filter(item -> item.knowledgePointId() != null)
+                .collect(LinkedHashMap::new, (map, item) -> map.putIfAbsent(item.knowledgePointId(), item), Map::putAll);
+        String normalizedLabel = normalizeSuggestionText(label);
+        String normalizedBody = normalizeSuggestionText((label == null ? "" : label) + " " + (analysisText == null ? "" : analysisText));
+
+        return candidates.stream()
+                .map(candidate -> toParentCandidate(candidate, candidatesById, normalizedLabel, normalizedBody))
+                .filter(Objects::nonNull)
+                .sorted(Comparator
+                        .comparing(ParentCandidate::score, Comparator.reverseOrder())
+                        .thenComparing(item -> Optional.ofNullable(item.parent().path()).orElse("")))
+                .map(ParentCandidate::parent)
+                .findFirst()
+                .orElseGet(ParentKnowledgePoint::empty);
+    }
+
+    private ParentCandidate toParentCandidate(
+            TagCandidate candidate,
+            Map<Long, TagCandidate> candidatesById,
+            String normalizedLabel,
+            String normalizedBody
+    ) {
+        Long parentId = "DOMAIN".equals(candidate.nodeType()) ? candidate.knowledgePointId() : candidate.parentId();
+        if (parentId == null) {
+            return null;
+        }
+
+        TagCandidate parentCandidate = candidatesById.get(parentId);
+        String parentName = parentCandidate == null ? inferParentName(candidate.path()) : parentCandidate.knowledgePointName();
+        String parentPath = parentCandidate == null ? inferParentPath(candidate.path()) : parentCandidate.path();
+        if (!StringUtils.hasText(parentName)) {
+            return null;
+        }
+
+        double score = "DOMAIN".equals(candidate.nodeType()) ? 0.08D : 0D;
+        score += candidateScore(candidate, normalizedLabel, normalizedBody);
+        if (parentCandidate != null) {
+            score += candidateScore(parentCandidate, normalizedLabel, normalizedBody);
+        }
+        return new ParentCandidate(new ParentKnowledgePoint(parentId, parentName, parentPath), score);
+    }
+
+    private String inferParentPath(String path) {
+        if (!StringUtils.hasText(path) || !path.contains("/")) {
+            return null;
+        }
+        return path.substring(0, path.lastIndexOf('/'));
+    }
+
+    private String inferParentName(String path) {
+        String parentPath = inferParentPath(path);
+        if (!StringUtils.hasText(parentPath)) {
+            return null;
+        }
+        int index = parentPath.lastIndexOf('/');
+        return index >= 0 ? parentPath.substring(index + 1) : parentPath;
     }
 
     private String buildAnalysisText(ResourceTagPreviewRequest request, ExtractedContent extractedContent) {
@@ -1433,8 +1514,19 @@ public class ResourceTagSuggestionService {
             Long knowledgePointId,
             String knowledgePointName,
             String path,
-            List<String> keywords
+            List<String> keywords,
+            Long parentId,
+            String nodeType
     ) {
+    }
+
+    private record ParentKnowledgePoint(Long id, String name, String path) {
+        private static ParentKnowledgePoint empty() {
+            return new ParentKnowledgePoint(null, null, null);
+        }
+    }
+
+    private record ParentCandidate(ParentKnowledgePoint parent, double score) {
     }
 
     private record TagProvider(String apiKey, String baseUrl, String model) {

@@ -15,6 +15,10 @@ public class ResourceTagSuggestionResponse {
     private Long knowledgePointId;
     private String knowledgePointName;
     private String path;
+    private Long suggestedParentKnowledgePointId;
+    private String suggestedParentKnowledgePointName;
+    private String suggestedParentKnowledgePointPath;
+    private String suggestedNodeType;
     private Double confidence;
     private String reason;
 }

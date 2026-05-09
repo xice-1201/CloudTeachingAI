@@ -671,18 +671,30 @@ public class CourseFacadeService {
 
     @Transactional
     public KnowledgePointNodeResponse createKnowledgePoint(KnowledgePointUpsertRequest request, UserContext userContext) {
-        assertRole(userContext, "ADMIN");
+        assertRole(userContext, "ADMIN", "TEACHER");
         KnowledgePointType nodeType = parseKnowledgePointType(request.getNodeType());
         KnowledgePointEntity parent = requireValidKnowledgePointParent(request.getParentId(), nodeType);
+        Long parentId = parent == null ? null : parent.getId();
+        String normalizedName = normalizeSuggestionText(request.getName());
+
+        KnowledgePointEntity existing = knowledgePointRepository.findAllByOrderByOrderIndexAscIdAsc().stream()
+                .filter(item -> Objects.equals(item.getParentId(), parentId))
+                .filter(item -> item.getNodeType() == nodeType)
+                .filter(item -> Objects.equals(normalizeSuggestionText(item.getName()), normalizedName))
+                .findFirst()
+                .orElse(null);
+        if (existing != null) {
+            return toKnowledgePointNodeResponse(existing, loadKnowledgePointMap(), List.of());
+        }
 
         KnowledgePointEntity entity = KnowledgePointEntity.builder()
-                .parentId(parent == null ? null : parent.getId())
+                .parentId(parentId)
                 .name(request.getName().trim())
                 .description(normalizeBlank(request.getDescription()))
                 .keywords(normalizeKeywords(request.getKeywords()))
                 .nodeType(nodeType)
                 .active(request.getActive() == null ? Boolean.TRUE : request.getActive())
-                .orderIndex(resolveKnowledgePointOrderIndex(parent == null ? null : parent.getId(), request.getOrderIndex()))
+                .orderIndex(resolveKnowledgePointOrderIndex(parentId, request.getOrderIndex()))
                 .build();
 
         KnowledgePointEntity saved = knowledgePointRepository.save(entity);

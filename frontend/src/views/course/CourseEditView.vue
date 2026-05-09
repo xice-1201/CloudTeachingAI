@@ -289,12 +289,16 @@
                     <el-tag size="small" effect="plain">{{ suggestion.kind === 'GENERATED' ? 'AI 新生成' : '复用现有标签' }}</el-tag>
                   </div>
                   <div v-if="suggestion.path" class="suggestion-path">{{ suggestion.path }}</div>
+                  <div v-else-if="suggestion.suggestedParentKnowledgePointPath" class="suggestion-path">
+                    将创建到 {{ suggestion.suggestedParentKnowledgePointPath }}
+                  </div>
                   <div class="suggestion-path">{{ suggestion.reason }}</div>
                 </div>
                 <el-button
                   link
                   type="primary"
-                  :disabled="!resolveSuggestionKnowledgePointId(suggestion)"
+                  :loading="adoptingSuggestionKeys.has(suggestionKey(suggestion))"
+                  :disabled="!canApplySuggestion(suggestion)"
                   @click="applySuggestedKnowledgePoints([suggestion])"
                 >
                   采用
@@ -377,7 +381,7 @@ type TagReviewOption = {
   source?: ResourceTag['source'] | ResourceKnowledgePoint['source']
 }
 
-type KnowledgePointOption = Pick<KnowledgePointNode, 'id' | 'name' | 'nodeType' | 'path'>
+type KnowledgePointOption = Pick<KnowledgePointNode, 'id' | 'parentId' | 'name' | 'nodeType' | 'path' | 'orderIndex'>
 
 const route = useRoute()
 const router = useRouter()
@@ -411,13 +415,14 @@ const selectedCoverFile = ref<File | null>(null)
 const studentOptions = ref<User[]>([])
 const knowledgePointOptions = ref<KnowledgePointOption[]>([])
 const suggestions = ref<ResourceTagSuggestion[]>([])
+const adoptingSuggestionKeys = ref<Set<string>>(new Set())
 let temporaryCoverUrl = ''
 let resourceFileSelectionSeq = 0
 
 const isEdit = computed(() => Boolean(route.params.id))
 const courseId = computed(() => String(route.params.id ?? ''))
 const hasKnowledgePointOptions = computed(() => knowledgePointOptions.value.length > 0)
-const applicableSuggestions = computed(() => suggestions.value.filter((suggestion) => Boolean(resolveSuggestionKnowledgePointId(suggestion))))
+const applicableSuggestions = computed(() => suggestions.value.filter(canApplySuggestion))
 const allResources = computed(() => Object.values(resourceMap.value).flat())
 const suggestedResources = computed(() => allResources.value.filter((resource) => resource.taggingStatus === 'SUGGESTED'))
 const retryableResources = computed(() => allResources.value.filter(canRetryResourceTagging))
@@ -704,10 +709,66 @@ function resolveSuggestionKnowledgePointId(suggestion: ResourceTagSuggestion) {
   )?.id
 }
 
-function applySuggestedKnowledgePoints(items: ResourceTagSuggestion[]) {
-  const ids = items
-    .map(resolveSuggestionKnowledgePointId)
-    .filter((id): id is number => typeof id === 'number')
+function canApplySuggestion(suggestion: ResourceTagSuggestion) {
+  return Boolean(suggestion.label.trim() && (resolveSuggestionKnowledgePointId(suggestion) || suggestion.suggestedParentKnowledgePointId))
+}
+
+function suggestionKey(suggestion: ResourceTagSuggestion) {
+  return `${suggestion.kind}:${suggestion.label}:${suggestion.suggestedParentKnowledgePointId ?? suggestion.knowledgePointId ?? ''}`
+}
+
+function setSuggestionAdopting(suggestion: ResourceTagSuggestion, adopting: boolean) {
+  const nextKeys = new Set(adoptingSuggestionKeys.value)
+  const key = suggestionKey(suggestion)
+  if (adopting) {
+    nextKeys.add(key)
+  } else {
+    nextKeys.delete(key)
+  }
+  adoptingSuggestionKeys.value = nextKeys
+}
+
+function nextKnowledgePointOrderIndex(parentId: number) {
+  return Math.max(
+    0,
+    ...knowledgePointOptions.value
+      .filter((item) => item.parentId === parentId)
+      .map((item) => item.orderIndex ?? 0),
+  ) + 1
+}
+
+async function createKnowledgePointFromSuggestion(suggestion: ResourceTagSuggestion) {
+  const parentId = suggestion.suggestedParentKnowledgePointId
+  if (!parentId) return undefined
+
+  const existingId = resolveSuggestionKnowledgePointId(suggestion)
+  if (existingId) return existingId
+
+  const created = await courseApi.createKnowledgePoint({
+    parentId,
+    name: suggestion.label.trim(),
+    description: suggestion.reason,
+    keywords: suggestion.label.trim(),
+    nodeType: suggestion.suggestedNodeType === 'DOMAIN' ? 'DOMAIN' : 'POINT',
+    active: true,
+    orderIndex: nextKnowledgePointOrderIndex(parentId),
+  })
+  await loadKnowledgePoints()
+  return created.id
+}
+
+async function applySuggestedKnowledgePoints(items: ResourceTagSuggestion[]) {
+  const ids: number[] = []
+  for (const suggestion of items) {
+    setSuggestionAdopting(suggestion, true)
+    try {
+      const existingId = resolveSuggestionKnowledgePointId(suggestion)
+      const knowledgePointId = existingId ?? await createKnowledgePointFromSuggestion(suggestion)
+      if (typeof knowledgePointId === 'number') ids.push(knowledgePointId)
+    } finally {
+      setSuggestionAdopting(suggestion, false)
+    }
+  }
   resourceDialog.form.knowledgePointIds = Array.from(new Set([...resourceDialog.form.knowledgePointIds, ...ids]))
 }
 
@@ -942,7 +1003,7 @@ async function loadKnowledgePoints() {
   const walk = (nodes: KnowledgePointNode[]) => {
     nodes.forEach((node) => {
       if (node.active !== false && node.nodeType !== 'SUBJECT') {
-        options.push({ id: node.id, name: node.name, nodeType: node.nodeType, path: node.path })
+        options.push({ id: node.id, parentId: node.parentId, name: node.name, nodeType: node.nodeType, path: node.path, orderIndex: node.orderIndex })
       }
       if (node.children?.length) {
         walk(node.children)

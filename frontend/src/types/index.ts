@@ -115,6 +115,10 @@ export interface ResourceTagSuggestion {
   knowledgePointId?: number | null
   knowledgePointName?: string | null
   path?: string | null
+  suggestedParentKnowledgePointId?: number | null
+  suggestedParentKnowledgePointName?: string | null
+  suggestedParentKnowledgePointPath?: string | null
+  suggestedNodeType?: KnowledgePointNode['nodeType'] | null
   confidence: number
   reason: string
 }
