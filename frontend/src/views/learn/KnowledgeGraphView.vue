@@ -100,7 +100,7 @@
             :key="item.id"
             type="button"
             class="node-item"
-            @click="selectGraphRoot(item.id)"
+            @click="selectGraphRootByNode(item)"
           >
             <span class="node-dot" :style="{ backgroundColor: item.color }" />
             <span class="node-main">
@@ -121,7 +121,7 @@ import * as echarts from 'echarts'
 import { courseApi } from '@/api/course'
 import type { KnowledgeGraph, KnowledgeGraphNode, KnowledgePointNode } from '@/types'
 
-type KnowledgePointOption = Pick<KnowledgePointNode, 'id' | 'nodeType' | 'path'>
+type KnowledgePointOption = Pick<KnowledgePointNode, 'id' | 'name' | 'nodeType' | 'path'>
 
 withDefaults(defineProps<{ embedded?: boolean }>(), {
   embedded: false,
@@ -147,7 +147,7 @@ const knowledgePointOptions = computed<KnowledgePointOption[]>(() => {
   const walk = (nodes: KnowledgePointNode[]) => {
     nodes.forEach((node) => {
       if (node.active !== false) {
-        items.push({ id: node.id, nodeType: node.nodeType, path: node.path })
+        items.push({ id: node.id, name: node.name, nodeType: node.nodeType, path: node.path })
       }
       if (node.children?.length) walk(node.children)
     })
@@ -182,6 +182,7 @@ function renderGraph() {
 
   const nodes = graph.value.nodes.map((item) => ({
     id: String(item.id),
+    selectableRootId: resolveSelectableRootId(item),
     name: item.name,
     value: item.resourceCount,
     category: nodeCategory(item.nodeType),
@@ -270,12 +271,42 @@ async function selectGraphRoot(id: number) {
   await loadGraph()
 }
 
+async function selectGraphRootByNode(item: KnowledgeGraphNode) {
+  const id = resolveSelectableRootId(item)
+  if (id == null) return
+  await selectGraphRoot(id)
+}
+
 function handleGraphClick(params: echarts.ECElementEvent) {
   if (params.dataType !== 'node') return
-  const data = params.data as { id?: string | number } | null | undefined
-  const id = Number(data?.id)
-  if (!Number.isFinite(id)) return
+  const data = params.data as { selectableRootId?: string | number | null } | null | undefined
+  const id = Number(data?.selectableRootId)
+  if (!Number.isFinite(id) || id <= 0) return
   selectGraphRoot(id).catch(() => undefined)
+}
+
+function resolveSelectableRootId(item: Pick<KnowledgeGraphNode, 'id' | 'parentId' | 'name' | 'path'>) {
+  if (item.id > 0) {
+    return item.id
+  }
+
+  const normalizedPath = normalizeKnowledgePointText(item.path)
+  const byPath = knowledgePointOptions.value.find((option) => normalizeKnowledgePointText(option.path) === normalizedPath)
+  if (byPath) {
+    return byPath.id
+  }
+
+  const normalizedName = normalizeKnowledgePointText(item.name)
+  const byName = knowledgePointOptions.value.find((option) => normalizeKnowledgePointText(option.name) === normalizedName)
+  if (byName) {
+    return byName.id
+  }
+
+  return item.parentId && item.parentId > 0 ? item.parentId : null
+}
+
+function normalizeKnowledgePointText(value: string) {
+  return value.trim().replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').toLowerCase()
 }
 
 watch(graph, async () => {
