@@ -19,6 +19,8 @@
         </el-col>
       </el-row>
 
+      <KnowledgeGraphView embedded />
+
       <el-row :gutter="20" class="dashboard-row">
         <el-col :xs="24" :lg="16">
           <el-card shadow="never" header="课程分析">
@@ -147,7 +149,6 @@
         </el-col>
       </el-row>
 
-      <KnowledgeGraphView embedded />
     </template>
 
     <template v-else>

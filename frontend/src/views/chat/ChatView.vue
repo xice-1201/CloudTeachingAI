@@ -32,62 +32,58 @@
     </div>
 
     <div class="chat-main">
-      <div v-if="!currentSessionId" class="chat-welcome">
-        <el-icon :size="64" color="#c0c4cc"><ChatDotRound /></el-icon>
-        <p>选择或创建一个对话开始提问</p>
-        <el-button type="primary" @click="createSession()">新建对话</el-button>
+      <div v-if="activeContextLabel" class="context-bar">
+        <div>
+          <div class="context-title">当前围绕：{{ activeContextLabel }}</div>
+          <div class="context-subtitle">AI 会优先结合该教学上下文回答。</div>
+        </div>
+        <div class="context-actions">
+          <el-button v-if="activeReturnUrl" link type="primary" @click="goBackToContext">
+            {{ activeContext.returnLabel || '返回来源' }}
+          </el-button>
+          <el-button link type="primary" @click="clearContext">切换为通用问答</el-button>
+        </div>
       </div>
 
-      <template v-else>
-        <div v-if="activeContextLabel" class="context-bar">
-          <div>
-            <div class="context-title">当前围绕：{{ activeContextLabel }}</div>
-            <div class="context-subtitle">AI 会优先结合该教学上下文回答。</div>
-          </div>
-          <div class="context-actions">
-            <el-button v-if="activeReturnUrl" link type="primary" @click="goBackToContext">
-              {{ activeContext.returnLabel || '返回来源' }}
-            </el-button>
-            <el-button link type="primary" @click="clearContext">切换为通用问答</el-button>
-          </div>
+      <div v-loading="loadingMessages" class="messages" ref="messagesEl">
+        <div v-if="!currentSessionId && messages.length === 0 && !streaming" class="chat-welcome">
+          <el-icon :size="64" color="#c0c4cc"><ChatDotRound /></el-icon>
+          <p>直接输入问题，平台会自动创建新对话。</p>
         </div>
+        <div
+          v-for="msg in messages"
+          :key="msg.id"
+          class="message"
+          :class="msg.role"
+        >
+          <el-avatar v-if="msg.role === 'assistant'" :size="32" style="background: #409eff; flex-shrink: 0">AI</el-avatar>
+          <div class="message-bubble">{{ msg.content }}</div>
+          <el-avatar v-if="msg.role === 'user'" :size="32" style="background: #67c23a; flex-shrink: 0">我</el-avatar>
+        </div>
+        <div v-if="streaming || streamingText" class="message assistant">
+          <el-avatar :size="32" style="background: #409eff; flex-shrink: 0">AI</el-avatar>
+          <div class="message-bubble streaming">{{ streamingText }}<span class="cursor">|</span></div>
+        </div>
+      </div>
 
-        <div v-loading="loadingMessages" class="messages" ref="messagesEl">
-          <div
-            v-for="msg in messages"
-            :key="msg.id"
-            class="message"
-            :class="msg.role"
-          >
-            <el-avatar v-if="msg.role === 'assistant'" :size="32" style="background: #409eff; flex-shrink: 0">AI</el-avatar>
-            <div class="message-bubble">{{ msg.content }}</div>
-            <el-avatar v-if="msg.role === 'user'" :size="32" style="background: #67c23a; flex-shrink: 0">我</el-avatar>
-          </div>
-          <div v-if="streaming || streamingText" class="message assistant">
-            <el-avatar :size="32" style="background: #409eff; flex-shrink: 0">AI</el-avatar>
-            <div class="message-bubble streaming">{{ streamingText }}<span class="cursor">|</span></div>
-          </div>
-        </div>
-
-        <div class="input-area">
-          <el-input
-            v-model="inputText"
-            type="textarea"
-            :rows="3"
-            placeholder="输入问题，按 Ctrl+Enter 发送..."
-            resize="none"
-            @keydown.ctrl.enter="sendMessage"
-          />
-          <el-button
-            type="primary"
-            :disabled="!inputText.trim() || streaming"
-            :loading="streaming"
-            @click="sendMessage"
-          >
-            发送
-          </el-button>
-        </div>
-      </template>
+      <div class="input-area">
+        <el-input
+          v-model="inputText"
+          type="textarea"
+          :rows="3"
+          placeholder="输入问题，按 Ctrl+Enter 发送..."
+          resize="none"
+          @keydown.ctrl.enter="sendMessage"
+        />
+        <el-button
+          type="primary"
+          :disabled="!inputText.trim() || streaming || creating"
+          :loading="streaming || creating"
+          @click="sendMessage"
+        >
+          发送
+        </el-button>
+      </div>
     </div>
   </div>
 </template>
@@ -146,16 +142,23 @@ function formatDate(d: string) {
   return new Date(d).toLocaleDateString('zh-CN')
 }
 
-async function createSession(context: ChatContext = activeContext.value) {
-  if (creating.value) return
+async function createSession(context: ChatContext = activeContext.value, selectAfterCreate = true) {
+  if (creating.value) return null
 
   creating.value = true
   try {
     const session = await chatApi.createSession(context)
     sessions.value = [session, ...sessions.value.filter((item) => item.id !== session.id)]
-    await selectSession(session.id)
+    if (selectAfterCreate) {
+      await selectSession(session.id)
+    } else {
+      currentSessionId.value = session.id
+      messages.value = session.messages ?? []
+    }
+    return session
   } catch {
     ElMessage.error('创建对话失败，请稍后重试')
+    return null
   } finally {
     creating.value = false
   }
@@ -201,7 +204,14 @@ async function deleteSession(id: number) {
 
 async function sendMessage() {
   const text = inputText.value.trim()
-  if (!text || streaming.value || currentSessionId.value === null) return
+  if (!text || streaming.value) return
+
+  let sessionId = currentSessionId.value
+  if (sessionId === null) {
+    const session = await createSession(activeContext.value, false)
+    if (!session) return
+    sessionId = session.id
+  }
 
   const userMsg: ChatMessage = {
     id: Date.now(),
@@ -215,7 +225,6 @@ async function sendMessage() {
   streamingText.value = ''
   await scrollToBottom()
 
-  const sessionId = currentSessionId.value
   const es = new EventSource(chatApi.buildMessageStreamUrl(sessionId, text, activeContext.value))
   eventSource = es
 
