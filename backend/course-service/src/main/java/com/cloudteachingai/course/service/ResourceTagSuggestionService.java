@@ -61,6 +61,15 @@ public class ResourceTagSuggestionService {
             "width", "height", "size", "bytes", "kbps", "mbps", "content", "format", "stream",
             "h264", "h265", "hevc", "avc", "aac", "mp3", "opus", "pcm", "mov", "mp4", "m4v", "webm"
     );
+    private static final Set<String> BROADER_THAN_LANGUAGE_SCOPE_TAGS = Set.of(
+            "\u8ba1\u7b97\u673a\u79d1\u5b66",
+            "\u7a0b\u5e8f\u8bbe\u8ba1\u8bed\u8a00",
+            "\u7f16\u7a0b\u8bed\u8a00",
+            "\u8bed\u8a00\u5206\u7c7b",
+            "computer science",
+            "programming language",
+            "programming languages"
+    );
     private static final Set<String> TAG_STOP_WORDS = Set.of(
             "the", "and", "for", "with", "from", "this", "that", "into", "about", "your", "have", "will",
             "video", "document", "slide", "resource", "course", "lesson", "chapter",
@@ -320,7 +329,12 @@ public class ResourceTagSuggestionService {
                                                 "knowledgePointName", Optional.ofNullable(item.knowledgePointName()).orElse(""),
                                                 "path", Optional.ofNullable(item.path()).orElse(""),
                                                 "keywords", item.keywords()
-                                        )).toList()
+                                        )).toList(),
+                                        "taxonomyRules", List.of(
+                                                "Generated tags must be narrower than the selected resource scope or an existing candidate path.",
+                                                "Do not generate parent disciplines, umbrella categories, or language-family categories as children of a concrete programming language.",
+                                                "For example, omit labels like computer science, programming language, or programming language classification when tagging a Python resource."
+                                        )
                                 ))
                         )
                 )
@@ -374,6 +388,10 @@ public class ResourceTagSuggestionService {
                 String label = normalizeDisplayLabel(generated.path("label").asText());
                 String normalizedLabel = normalizeSuggestionText(label);
                 if (!StringUtils.hasText(normalizedLabel) || suggestions.containsKey(normalizedLabel)) {
+                    continue;
+                }
+                if (shouldSkipGeneratedTag(label, llmCandidates)) {
+                    log.info("Skip generated tag broader than current scope: label={}", label);
                     continue;
                 }
                 double confidence = Math.max(0.0D, Math.min(0.99D, generated.path("confidence").asDouble(allowClosestMatches ? 0.52D : 0.66D)));
@@ -631,6 +649,7 @@ public class ResourceTagSuggestionService {
         }
 
         List<ResourceTagSuggestionResponse> generated = tokenScores.entrySet().stream()
+                .filter(entry -> !shouldSkipGeneratedTag(entry.getKey(), candidates))
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()
                         .thenComparing(Map.Entry::getKey))
                 .limit(MAX_TAG_SUGGESTIONS)
@@ -761,6 +780,30 @@ public class ResourceTagSuggestionService {
                 .map(ParentCandidate::parent)
                 .findFirst()
                 .orElseGet(ParentKnowledgePoint::empty);
+    }
+
+    private boolean shouldSkipGeneratedTag(String label, List<TagCandidate> candidates) {
+        String normalizedLabel = normalizeSuggestionText(label);
+        if (!StringUtils.hasText(normalizedLabel)) {
+            return true;
+        }
+        if (mentionsConcreteScope(normalizedLabel, candidates)) {
+            return false;
+        }
+        return BROADER_THAN_LANGUAGE_SCOPE_TAGS.stream()
+                .map(this::normalizeSuggestionText)
+                .anyMatch(pattern -> StringUtils.hasText(pattern) && normalizedLabel.contains(pattern));
+    }
+
+    private boolean mentionsConcreteScope(String normalizedLabel, List<TagCandidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return false;
+        }
+        return candidates.stream()
+                .map(TagCandidate::label)
+                .map(this::normalizeSuggestionText)
+                .filter(label -> label.length() >= 2)
+                .anyMatch(normalizedLabel::contains);
     }
 
     private ParentCandidate toParentCandidate(
