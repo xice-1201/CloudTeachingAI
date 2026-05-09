@@ -536,7 +536,7 @@ public class ResourceTagSuggestionService {
         LinkedHashMap<String, TagCandidate> candidates = new LinkedHashMap<>();
 
         for (KnowledgePointEntity knowledgePoint : knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc()) {
-            if (knowledgePoint.getNodeType() != KnowledgePointType.POINT) {
+            if (knowledgePoint.getNodeType() == KnowledgePointType.SUBJECT) {
                 continue;
             }
             TagCandidate candidate = new TagCandidate(

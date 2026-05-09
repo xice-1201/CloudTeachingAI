@@ -18,7 +18,7 @@ class TaggingJobService:
 
     async def build_tagged_event(self, event: ResourceUploadedEvent) -> ResourceTaggedEvent:
         context = await self._course_client.get_resource_tagging_context(event.resourceId)
-        knowledge_points = await self._course_client.list_leaf_knowledge_points()
+        knowledge_points = await self._course_client.list_attachable_knowledge_points()
         suggestions = await self._tagging_service.suggest_tags(context, knowledge_points)
 
         return ResourceTaggedEvent(
@@ -32,4 +32,3 @@ class TaggingJobService:
             taggingUpdatedAt=datetime.now(timezone.utc).isoformat(),
             knowledgePoints=suggestions,
         )
-

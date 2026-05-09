@@ -18,9 +18,12 @@ class CourseServiceClient:
         payload = response.json()
         return InternalResourceTaggingContext.model_validate(payload["data"])
 
-    async def list_leaf_knowledge_points(self) -> list[InternalKnowledgePoint]:
-        response = await self._client.get("/api/v1/internal/knowledge-points/leaf")
+    async def list_attachable_knowledge_points(self) -> list[InternalKnowledgePoint]:
+        response = await self._client.get("/api/v1/internal/knowledge-points/attachable")
         response.raise_for_status()
         payload = response.json()
         data = payload.get("data") or []
         return [InternalKnowledgePoint.model_validate(item) for item in data]
+
+    async def list_leaf_knowledge_points(self) -> list[InternalKnowledgePoint]:
+        return await self.list_attachable_knowledge_points()

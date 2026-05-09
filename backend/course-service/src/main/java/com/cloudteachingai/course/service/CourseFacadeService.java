@@ -427,7 +427,7 @@ public class CourseFacadeService {
     public List<InternalKnowledgePointResponse> listLeafKnowledgePointsForTagging() {
         Map<Long, KnowledgePointEntity> knowledgePointMap = loadKnowledgePointMap();
         return knowledgePointRepository.findByActiveTrueOrderByOrderIndexAscIdAsc().stream()
-                .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
+                .filter(this::isAttachableKnowledgePoint)
                 .map(item -> InternalKnowledgePointResponse.builder()
                         .id(item.getId())
                         .parentId(item.getParentId())
@@ -763,9 +763,23 @@ public class CourseFacadeService {
         CourseEntity course = requireManageableCourse(chapter.getCourseId(), userContext);
         resourceKnowledgePointRepository.deleteByResourceId(resource.getId());
         resourceTagRepository.deleteByResourceId(resource.getId());
-        resource.setTaggingStatus(ResourceTaggingStatus.UNTAGGED);
+        resource.setTaggingStatus(ResourceTaggingStatus.PROCESSING);
         resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         ResourceEntity saved = resourceRepository.save(resource);
+
+        try {
+            if (applyAiSuggestionResponses(saved, resourceTagSuggestionService.suggestForResource(saved))) {
+                Map<Long, List<ResourceKnowledgePointResponse>> resourceTags = loadResourceKnowledgePointMap(List.of(saved.getId()));
+                Map<Long, List<ResourceTagResponse>> resourceLabelMap = loadResourceTagMap(List.of(saved.getId()));
+                return toResourceResponse(
+                        saved,
+                        resourceTags.getOrDefault(saved.getId(), List.of()),
+                        resourceLabelMap.getOrDefault(saved.getId(), List.of())
+                );
+            }
+        } catch (Exception ex) {
+            log.warn("Immediate resource tag regeneration failed, fallback to async tagging: resourceId={}", saved.getId(), ex);
+        }
 
         ResourceUploadedEvent event = ResourceUploadedEvent.builder()
                 .resourceId(saved.getId())
@@ -850,7 +864,7 @@ public class CourseFacadeService {
         if (!knowledgePointIds.isEmpty()) {
             Map<Long, KnowledgePointEntity> knowledgePointMap = knowledgePointRepository.findByIdIn(knowledgePointIds).stream()
                     .filter(item -> Boolean.TRUE.equals(item.getActive()))
-                    .filter(item -> item.getNodeType() == KnowledgePointType.POINT)
+                    .filter(this::isAttachableKnowledgePoint)
                     .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
 
             List<ResourceKnowledgePointEntity> relations = new ArrayList<>();
@@ -899,6 +913,71 @@ public class CourseFacadeService {
                     .content("资源《" + resource.getTitle() + "》已生成 AI 标签建议，请进入课程内容管理页确认。")
                     .build());
         }
+    }
+
+    private boolean applyAiSuggestionResponses(ResourceEntity resource, List<ResourceTagSuggestionResponse> suggestions) {
+        List<Long> knowledgePointIds = suggestions == null
+                ? List.of()
+                : suggestions.stream()
+                .filter(Objects::nonNull)
+                .map(ResourceTagSuggestionResponse::getKnowledgePointId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (knowledgePointIds.isEmpty()) {
+            return false;
+        }
+
+        Map<Long, KnowledgePointEntity> knowledgePointMap = knowledgePointRepository.findByIdIn(knowledgePointIds).stream()
+                .filter(item -> Boolean.TRUE.equals(item.getActive()))
+                .filter(this::isAttachableKnowledgePoint)
+                .collect(LinkedHashMap::new, (map, item) -> map.put(item.getId(), item), Map::putAll);
+        if (knowledgePointMap.isEmpty()) {
+            return false;
+        }
+
+        LinkedHashMap<Long, ResourceTagSuggestionResponse> suggestionMap = new LinkedHashMap<>();
+        for (ResourceTagSuggestionResponse suggestion : suggestions) {
+            if (suggestion == null || suggestion.getKnowledgePointId() == null) {
+                continue;
+            }
+            if (knowledgePointMap.containsKey(suggestion.getKnowledgePointId())) {
+                suggestionMap.putIfAbsent(suggestion.getKnowledgePointId(), suggestion);
+            }
+        }
+
+        List<ResourceKnowledgePointEntity> relations = new ArrayList<>();
+        List<ResourceTagEntity> tagEntities = new ArrayList<>();
+        for (Map.Entry<Long, ResourceTagSuggestionResponse> entry : suggestionMap.entrySet()) {
+            KnowledgePointEntity knowledgePoint = knowledgePointMap.get(entry.getKey());
+            ResourceTagSuggestionResponse suggestion = entry.getValue();
+            double confidence = suggestion.getConfidence() == null ? 0.5D : Math.max(0D, Math.min(1D, suggestion.getConfidence()));
+            relations.add(ResourceKnowledgePointEntity.builder()
+                    .resourceId(resource.getId())
+                    .knowledgePointId(knowledgePoint.getId())
+                    .confidence(confidence)
+                    .source(ResourceTagSource.AI)
+                    .build());
+            tagEntities.add(ResourceTagEntity.builder()
+                    .resourceId(resource.getId())
+                    .label(knowledgePoint.getName())
+                    .normalizedLabel(normalizeSuggestionText(knowledgePoint.getName()))
+                    .knowledgePointId(knowledgePoint.getId())
+                    .confidence(confidence)
+                    .source(ResourceTagSource.AI)
+                    .build());
+        }
+
+        if (relations.isEmpty()) {
+            return false;
+        }
+        resourceKnowledgePointRepository.saveAll(relations);
+        resourceTagRepository.saveAll(tagEntities);
+        resource.setTaggingStatus(ResourceTaggingStatus.SUGGESTED);
+        resource.setTaggingUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        resource.setStatus(ResourceStatus.PUBLISHED);
+        resourceRepository.save(resource);
+        return true;
     }
 
     public ManagedResourceContent loadManagedResourceContent(Long resourceId, UserContext userContext) {
@@ -1919,6 +1998,10 @@ public class CourseFacadeService {
             throw BusinessException.badRequest("Leaf knowledge points must belong to a domain");
         }
         return parent;
+    }
+
+    private boolean isAttachableKnowledgePoint(KnowledgePointEntity knowledgePoint) {
+        return knowledgePoint != null && knowledgePoint.getNodeType() != KnowledgePointType.SUBJECT;
     }
 
     private void replaceManualResourceTags(

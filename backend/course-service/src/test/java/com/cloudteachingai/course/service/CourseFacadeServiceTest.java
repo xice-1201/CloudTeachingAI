@@ -113,7 +113,7 @@ class CourseFacadeServiceTest {
                 .build();
         ResourceTagConfirmRequest request = new ResourceTagConfirmRequest();
         request.setKnowledgePointIds(List.of(7L));
-        request.setTagLabels(List.of("课堂例题"));
+        request.setTagLabels(List.of());
 
         when(resourceRepository.findById(1001L)).thenReturn(Optional.of(resource));
         when(chapterRepository.findById(201L)).thenReturn(Optional.of(chapter));
@@ -151,7 +151,7 @@ class CourseFacadeServiceTest {
         List<ResourceTagEntity> tags = toList(tagCaptor.getValue());
         assertThat(tags)
                 .extracting(ResourceTagEntity::getLabel)
-                .containsExactly("课堂例题", "极限定义");
+                .containsExactly("极限定义");
         assertThat(tags).allSatisfy(tag -> assertThat(tag.getSource()).isEqualTo(ResourceTagSource.MANUAL));
 
         assertThat(resource.getStatus()).isEqualTo(ResourceStatus.PUBLISHED);

@@ -536,6 +536,11 @@ public class CourseController {
         return ApiResponse.success(courseFacadeService.listLeafKnowledgePointsForTagging());
     }
 
+    @GetMapping("/internal/knowledge-points/attachable")
+    public ApiResponse<List<InternalKnowledgePointResponse>> listAttachableKnowledgePoints() {
+        return ApiResponse.success(courseFacadeService.listLeafKnowledgePointsForTagging());
+    }
+
     @GetMapping("/internal/courses/{courseId}/student-ids")
     public ApiResponse<List<Long>> listCourseStudentIds(@PathVariable Long courseId) {
         return ApiResponse.success(courseFacadeService.listCourseStudentIds(courseId));
