@@ -2,6 +2,12 @@ import request from '@/utils/request'
 import type { AxiosRequestConfig } from 'axios'
 import type { Course, Chapter, KnowledgeGraph, KnowledgePointNode, Resource, ResourceTagSuggestion, PageResponse, Announcement, DiscussionPost, ExerciseQuestion } from '@/types'
 
+export interface ExerciseGenerateResponse {
+  title?: string | null
+  description?: string | null
+  questions: ExerciseQuestion[]
+}
+
 export const courseApi = {
   listCourses: (params?: { page?: number; pageSize?: number; keyword?: string; status?: string }): Promise<PageResponse<Course>> =>
     request.get('/courses', { params }),
@@ -177,7 +183,7 @@ export const courseApi = {
     description?: string
     tagLabels?: string[]
     questionCount?: number
-  }): Promise<ExerciseQuestion[]> =>
+  }): Promise<ExerciseGenerateResponse> =>
     request.post('/resources/exercises/generate', data),
 
   createResource: (chapterId: string, data: Partial<Resource>): Promise<Resource> =>

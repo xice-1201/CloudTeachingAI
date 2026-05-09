@@ -4,6 +4,7 @@ import com.cloudteachingai.course.client.ResourceTagAgentClient;
 import com.cloudteachingai.course.client.UserServiceClient;
 import com.cloudteachingai.course.controller.CourseController.UserContext;
 import com.cloudteachingai.course.dto.ExerciseGenerateRequest;
+import com.cloudteachingai.course.dto.ExerciseGenerateResponse;
 import com.cloudteachingai.course.dto.ResourceResponse;
 import com.cloudteachingai.course.dto.ResourceTagConfirmRequest;
 import com.cloudteachingai.course.dto.ResourceUpsertRequest;
@@ -255,14 +256,20 @@ class CourseFacadeServiceTest {
                 .answer("A")
                 .explanation("if 用于条件判断。")
                 .build();
-        when(exerciseQuestionGenerationService.generate(request)).thenReturn(List.of(generated));
+        ExerciseGenerateResponse generatedResponse = ExerciseGenerateResponse.builder()
+                .title("Python 条件语句练习")
+                .description("围绕条件分支生成的单选题")
+                .questions(List.of(generated))
+                .build();
+        when(exerciseQuestionGenerationService.generate(request)).thenReturn(generatedResponse);
 
-        List<ResourceResponse.ExerciseQuestionResponse> response = courseFacadeService.generateExerciseQuestions(
+        ExerciseGenerateResponse response = courseFacadeService.generateExerciseQuestions(
                 request,
                 new UserContext(401L, "TEACHER")
         );
 
-        assertThat(response).containsExactly(generated);
+        assertThat(response).isSameAs(generatedResponse);
+        assertThat(response.getQuestions()).containsExactly(generated);
         verify(exerciseQuestionGenerationService).generate(request);
     }
 
@@ -310,9 +317,14 @@ class CourseFacadeServiceTest {
         when(resourceRepository.findByChapterIdOrderByOrderIndexAscIdAsc(201L)).thenReturn(List.of(resource));
         when(chapterRepository.findByCourseIdOrderByOrderIndexAscIdAsc(301L)).thenReturn(List.of(chapter));
         when(resourceRepository.findByChapterIdInOrderByOrderIndexAscIdAsc(List.of(201L))).thenReturn(List.of(resource));
-        when(exerciseQuestionGenerationService.generate(any(ExerciseGenerateRequest.class))).thenReturn(List.of(generated));
+        ExerciseGenerateResponse generatedResponse = ExerciseGenerateResponse.builder()
+                .title("Python 条件与循环练习")
+                .description("结合课程和单元上下文生成的习题")
+                .questions(List.of(generated))
+                .build();
+        when(exerciseQuestionGenerationService.generate(any(ExerciseGenerateRequest.class))).thenReturn(generatedResponse);
 
-        List<ResourceResponse.ExerciseQuestionResponse> response = courseFacadeService.generateExerciseQuestions(
+        ExerciseGenerateResponse response = courseFacadeService.generateExerciseQuestions(
                 request,
                 new UserContext(401L, "TEACHER")
         );
@@ -324,7 +336,9 @@ class CourseFacadeServiceTest {
                 .contains("Python 入门")
                 .contains("条件与循环")
                 .contains("if 语句示例");
-        assertThat(response).containsExactly(generated);
+        assertThat(response.getTitle()).isEqualTo("Python 条件与循环练习");
+        assertThat(response.getDescription()).isEqualTo("结合课程和单元上下文生成的习题");
+        assertThat(response.getQuestions()).containsExactly(generated);
     }
 
     @Test

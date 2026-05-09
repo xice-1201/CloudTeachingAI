@@ -10,6 +10,7 @@ import com.cloudteachingai.course.dto.ChapterUpsertRequest;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
 import com.cloudteachingai.course.dto.ExerciseGenerateRequest;
+import com.cloudteachingai.course.dto.ExerciseGenerateResponse;
 import com.cloudteachingai.course.dto.InternalKnowledgePointResponse;
 import com.cloudteachingai.course.dto.InternalResourceTaggingContextResponse;
 import com.cloudteachingai.course.dto.KnowledgeGraphEdgeResponse;
@@ -809,7 +810,7 @@ public class CourseFacadeService {
         return toResourceResponse(saved, List.of(), List.of());
     }
 
-    public List<ResourceResponse.ExerciseQuestionResponse> generateExerciseQuestions(
+    public ExerciseGenerateResponse generateExerciseQuestions(
             ExerciseGenerateRequest request,
             UserContext userContext
     ) {

@@ -1,6 +1,7 @@
 package com.cloudteachingai.course.service;
 
 import com.cloudteachingai.course.dto.ExerciseGenerateRequest;
+import com.cloudteachingai.course.dto.ExerciseGenerateResponse;
 import com.cloudteachingai.course.dto.ResourceResponse;
 import com.cloudteachingai.course.exception.BusinessException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -62,7 +63,7 @@ public class ExerciseQuestionGenerationService {
     @Value("${ai.exercise-generation.fallback-model:gpt-4.1-mini}")
     private String fallbackModel;
 
-    public List<ResourceResponse.ExerciseQuestionResponse> generate(ExerciseGenerateRequest request) {
+    public ExerciseGenerateResponse generate(ExerciseGenerateRequest request) {
         if (!enabled) {
             throw BusinessException.badRequest("AI exercise generation is disabled");
         }
@@ -80,11 +81,15 @@ public class ExerciseQuestionGenerationService {
         }
 
         try {
-            List<ResourceResponse.ExerciseQuestionResponse> questions = requestAiQuestions(provider, title, description, topics, count);
-            if (questions.isEmpty()) {
+            GeneratedExerciseContent generated = requestAiQuestions(provider, title, description, topics, count);
+            if (generated.questions().isEmpty()) {
                 throw BusinessException.internal("AI did not return valid exercise questions");
             }
-            return questions;
+            return ExerciseGenerateResponse.builder()
+                    .title(StringUtils.hasText(generated.title()) ? generated.title() : title)
+                    .description(StringUtils.hasText(generated.description()) ? generated.description() : description)
+                    .questions(generated.questions())
+                    .build();
         } catch (BusinessException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -93,7 +98,7 @@ public class ExerciseQuestionGenerationService {
         }
     }
 
-    private List<ResourceResponse.ExerciseQuestionResponse> requestAiQuestions(
+    private GeneratedExerciseContent requestAiQuestions(
             TagProvider provider,
             String title,
             String description,
@@ -109,8 +114,8 @@ public class ExerciseQuestionGenerationService {
                                 "role", "system",
                                 "content", """
                                         You are an assessment designer for an educational platform.
-                                        Generate diverse single-choice questions based on the provided resource.
-                                        Return JSON only: {"questions":[{"stem":"...","options":[{"id":"A","text":"..."},{"id":"B","text":"..."},{"id":"C","text":"..."},{"id":"D","text":"..."}],"answer":"A","explanation":"..."}]}.
+                                        Generate a concise exercise resource title, a short exercise resource description, and diverse single-choice questions based on the provided resource or context.
+                                        Return JSON only: {"title":"exercise resource title","description":"exercise resource description","questions":[{"stem":"...","options":[{"id":"A","text":"..."},{"id":"B","text":"..."},{"id":"C","text":"..."},{"id":"D","text":"..."}],"answer":"A","explanation":"..."}]}.
                                         Requirements: every question must test a different concept or cognitive angle; shuffle the correct answer across A/B/C/D; avoid template-like repeated stems; options must be plausible and mutually exclusive; use the same language as the resource.
                                         """
                         ),
@@ -150,13 +155,23 @@ public class ExerciseQuestionGenerationService {
                 .path("message")
                 .path("content");
         if (contentNode.isMissingNode() || !StringUtils.hasText(contentNode.asText())) {
-            return List.of();
+            return new GeneratedExerciseContent(null, null, List.of());
         }
-        return parseQuestions(contentNode.asText(), count);
+        return parseGeneratedContent(contentNode.asText(), count);
+    }
+
+    private GeneratedExerciseContent parseGeneratedContent(String content, int count) throws Exception {
+        JsonNode root = objectMapper.readTree(content);
+        String title = firstText(root, "title", "resourceTitle", "exerciseTitle");
+        String description = firstText(root, "description", "resourceDescription", "exerciseDescription");
+        return new GeneratedExerciseContent(title, description, parseQuestions(root, count));
     }
 
     private List<ResourceResponse.ExerciseQuestionResponse> parseQuestions(String content, int count) throws Exception {
-        JsonNode root = objectMapper.readTree(content);
+        return parseQuestions(objectMapper.readTree(content), count);
+    }
+
+    private List<ResourceResponse.ExerciseQuestionResponse> parseQuestions(JsonNode root, int count) {
         JsonNode questionsNode = root.path("questions");
         if (!questionsNode.isArray()) {
             return List.of();
@@ -175,6 +190,16 @@ public class ExerciseQuestionGenerationService {
             questions.add(question);
         }
         return questions;
+    }
+
+    private String firstText(JsonNode root, String... fieldNames) {
+        for (String fieldName : fieldNames) {
+            String value = root.path(fieldName).asText("").trim();
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private ResourceResponse.ExerciseQuestionResponse parseQuestion(JsonNode questionNode) {
@@ -258,5 +283,12 @@ public class ExerciseQuestionGenerationService {
     }
 
     private record TagProvider(String apiKey, String baseUrl, String model) {
+    }
+
+    private record GeneratedExerciseContent(
+            String title,
+            String description,
+            List<ResourceResponse.ExerciseQuestionResponse> questions
+    ) {
     }
 }

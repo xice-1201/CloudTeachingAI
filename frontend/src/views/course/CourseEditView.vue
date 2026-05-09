@@ -677,7 +677,7 @@ function validateExerciseQuestions() {
 async function generateExerciseQuestions() {
   exerciseGenerating.value = true
   try {
-    const questions = await courseApi.generateExerciseQuestions({
+    const generated = await courseApi.generateExerciseQuestions({
       courseId: Number(courseId.value) || undefined,
       chapterId: Number(resourceDialog.chapterId) || undefined,
       title: resourceDialog.form.title,
@@ -685,6 +685,13 @@ async function generateExerciseQuestions() {
       tagLabels: selectedKnowledgePointLabels(),
       questionCount: Math.max(3, resourceDialog.form.exerciseQuestions.length || 5),
     })
+    if (!resourceDialog.form.title.trim() && generated.title?.trim()) {
+      resourceDialog.form.title = generated.title.trim()
+    }
+    if (!resourceDialog.form.description.trim() && generated.description?.trim()) {
+      resourceDialog.form.description = generated.description.trim()
+    }
+    const questions = generated.questions ?? []
     resourceDialog.form.exerciseQuestions = questions.length ? questions : [createBlankExerciseQuestion()]
     ElMessage.success('AI 习题草稿已生成，可继续编辑后保存')
   } finally {

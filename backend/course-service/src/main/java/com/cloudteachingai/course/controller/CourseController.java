@@ -9,6 +9,7 @@ import com.cloudteachingai.course.dto.CoverUploadResponse;
 import com.cloudteachingai.course.dto.CourseResponse;
 import com.cloudteachingai.course.dto.CourseUpsertRequest;
 import com.cloudteachingai.course.dto.ExerciseGenerateRequest;
+import com.cloudteachingai.course.dto.ExerciseGenerateResponse;
 import com.cloudteachingai.course.dto.DiscussionPostResponse;
 import com.cloudteachingai.course.dto.DiscussionPostUpsertRequest;
 import com.cloudteachingai.course.dto.InternalKnowledgePointResponse;
@@ -465,7 +466,7 @@ public class CourseController {
     }
 
     @PostMapping("/resources/exercises/generate")
-    public ApiResponse<List<ResourceResponse.ExerciseQuestionResponse>> generateExerciseQuestions(
+    public ApiResponse<ExerciseGenerateResponse> generateExerciseQuestions(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestBody ExerciseGenerateRequest request) {
         UserContext userContext = extractUserContext(authorization);
