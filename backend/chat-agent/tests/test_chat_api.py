@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import base64
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -192,3 +193,92 @@ def test_chat_session_can_use_user_id_query_without_token():
     listed = client.get("/api/v1/chat/sessions", params={"userId": "99"}).json()
 
     assert [session["id"] for session in listed["data"]] == [session_id]
+
+
+def test_context_prompt_includes_student_learning_profile(monkeypatch):
+    load_chat_main()
+    from app.config import Settings
+    from app.course_context import CourseContextClient
+    from app.models import ChatContext
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return json.dumps(self._payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        if url.endswith("/api/v1/learn/ability-map"):
+            return FakeResponse({
+                "code": 0,
+                "data": [
+                    {
+                        "knowledgePointName": "循环结构",
+                        "knowledgePointPath": "Python/基础/循环结构",
+                        "masteryLevel": 0.32,
+                        "confidence": 0.7,
+                        "progressScore": 0.4,
+                        "source": "TEST_AND_PROGRESS",
+                    },
+                    {
+                        "knowledgePointName": "变量",
+                        "knowledgePointPath": "Python/基础/变量",
+                        "masteryLevel": 0.86,
+                        "confidence": 0.8,
+                        "progressScore": 0.9,
+                        "source": "LEARNING_PROGRESS",
+                    },
+                ],
+            })
+        if url.endswith("/api/v1/learn/path"):
+            return FakeResponse({
+                "code": 0,
+                "data": {
+                    "focusKnowledgePoints": [
+                        {
+                            "knowledgePointName": "循环结构",
+                            "knowledgePointPath": "Python/基础/循环结构",
+                            "masteryLevel": 0.32,
+                        }
+                    ],
+                    "resources": [
+                        {
+                            "courseTitle": "Python 入门",
+                            "resourceTitle": "while 循环练习",
+                            "statusLabel": "继续学习",
+                            "currentProgress": 0.25,
+                        }
+                    ],
+                },
+            })
+        if url.endswith("/api/v1/learn/courses/12/progress"):
+            return FakeResponse({
+                "code": 0,
+                "data": {
+                    "courseId": 12,
+                    "progress": 0.45,
+                    "completedResources": 2,
+                    "totalResources": 5,
+                    "lastLearnedAt": "2026-05-10T09:00:00Z",
+                },
+            })
+        return FakeResponse({"code": 0, "data": None})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = CourseContextClient(Settings())
+
+    prompt = asyncio.run(client.build_context_prompt(ChatContext(courseId=12), "Bearer token"))
+
+    assert "学生能力画像" in prompt
+    assert "Python/基础/循环结构" in prompt
+    assert "当前学习路线" in prompt
+    assert "while 循环练习" in prompt
+    assert "当前课程进度" in prompt

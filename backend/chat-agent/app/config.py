@@ -12,6 +12,7 @@ class Settings:
     fallback_enabled: bool = os.getenv("CHAT_FALLBACK_ENABLED", "true").lower() == "true"
     chat_database_url: str | None = os.getenv("CHAT_DATABASE_URL")
     course_service_base_url: str = os.getenv("COURSE_SERVICE_BASE_URL", "http://course-service:8003")
+    learn_service_base_url: str = os.getenv("LEARN_SERVICE_BASE_URL", "http://learn-service:8004")
     course_context_timeout_seconds: float = float(os.getenv("COURSE_CONTEXT_TIMEOUT_SECONDS", "3"))
 
 
