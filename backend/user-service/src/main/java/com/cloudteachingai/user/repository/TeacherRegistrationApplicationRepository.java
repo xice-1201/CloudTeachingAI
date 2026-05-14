@@ -13,4 +13,6 @@ public interface TeacherRegistrationApplicationRepository extends JpaRepository<
     Optional<TeacherRegistrationApplication> findByEmailAndStatus(String email, TeacherRegistrationApplication.Status status);
 
     List<TeacherRegistrationApplication> findAllByStatusOrderByRequestedAtDesc(TeacherRegistrationApplication.Status status);
+
+    void deleteByEmailOrReviewedByOrCreatedUserId(String email, Long reviewedBy, Long createdUserId);
 }

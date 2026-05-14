@@ -18,4 +18,8 @@ public interface SubmissionRepository extends JpaRepository<SubmissionEntity, Lo
     List<SubmissionEntity> findByStudentIdAndAssignmentIdIn(Long studentId, Collection<Long> assignmentIds);
 
     boolean existsByAssignmentIdAndStudentId(Long assignmentId, Long studentId);
+
+    void deleteByStudentId(Long studentId);
+
+    void deleteByAssignmentIdIn(Collection<Long> assignmentIds);
 }

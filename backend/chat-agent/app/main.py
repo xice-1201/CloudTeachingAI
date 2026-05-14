@@ -84,6 +84,12 @@ async def delete_session(
     return ok(None)
 
 
+@app.delete("/api/v1/internal/users/{user_id}/chat-data")
+async def delete_user_chat_data(user_id: int) -> ApiResponse:
+    deleted = store.delete_sessions_by_user(user_id)
+    return ok({"deletedSessions": deleted})
+
+
 @app.get("/api/v1/chat/sessions/{session_id}/messages")
 async def send_message(
     session_id: int,

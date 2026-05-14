@@ -33,6 +33,19 @@ management:
       exposure:
         include: health,info
 
+auth-service:
+  url: ${AUTH_SERVICE_URL:http://localhost:8001}
+course-service:
+  url: ${COURSE_SERVICE_URL:http://localhost:8003}
+learn-service:
+  url: ${LEARN_SERVICE_URL:http://localhost:8004}
+assign-service:
+  url: ${ASSIGN_SERVICE_URL:http://localhost:8005}
+notify-service:
+  url: ${NOTIFY_SERVICE_URL:http://localhost:8006}
+chat-agent:
+  url: ${CHAT_AGENT_URL:http://localhost:8104}
+
 system-health:
   timeout-seconds: ${SYSTEM_HEALTH_TIMEOUT_SECONDS:5}
   targets:

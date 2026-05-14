@@ -14,4 +14,6 @@ public interface AuthCredentialRepository extends JpaRepository<AuthCredential, 
     boolean existsByEmail(String email);
 
     void deleteByEmail(String email);
+
+    void deleteByUserId(Long userId);
 }

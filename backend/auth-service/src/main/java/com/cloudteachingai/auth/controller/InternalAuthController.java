@@ -44,4 +44,13 @@ public class InternalAuthController {
         mailService.sendTeacherApprovalEmail(email, username);
         return ApiResponse.success(null);
     }
+
+    @DeleteMapping("/users/{userId}/credentials")
+    public ApiResponse<Void> deleteAccountCredentials(
+            @PathVariable Long userId,
+            @RequestParam(required = false) String email) {
+        log.info("Delete credential request: userId={}, email={}", userId, email);
+        authService.deleteAccountCredentials(userId, email);
+        return ApiResponse.success(null);
+    }
 }

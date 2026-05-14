@@ -8,6 +8,7 @@ import com.cloudteachingai.assign.dto.SubmissionCreateRequest;
 import com.cloudteachingai.assign.dto.SubmissionResponse;
 import com.cloudteachingai.assign.dto.SubmissionReviewRequest;
 import com.cloudteachingai.assign.exception.BusinessException;
+import com.cloudteachingai.assign.service.AssignmentAccountCleanupService;
 import com.cloudteachingai.assign.service.AssignmentFacadeService;
 import com.cloudteachingai.assign.util.JwtUtil;
 import jakarta.validation.Valid;
@@ -31,6 +32,7 @@ import java.util.List;
 public class AssignmentController {
 
     private final AssignmentFacadeService assignmentFacadeService;
+    private final AssignmentAccountCleanupService assignmentAccountCleanupService;
     private final JwtUtil jwtUtil;
 
     @GetMapping("/courses/{courseId}/assignments")
@@ -120,6 +122,18 @@ public class AssignmentController {
             @RequestParam(defaultValue = "5") int pageSize) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(assignmentFacadeService.listPendingAssignments(pageSize, authorization, userContext));
+    }
+
+    @DeleteMapping("/internal/users/{userId}/assignment-data")
+    public ApiResponse<Void> deleteUserAssignmentData(
+            @PathVariable Long userId,
+            @RequestParam String role) {
+        if ("TEACHER".equalsIgnoreCase(role)) {
+            assignmentAccountCleanupService.deleteTeacherAssignmentData(userId);
+        } else {
+            assignmentAccountCleanupService.deleteStudentAssignmentData(userId);
+        }
+        return ApiResponse.success(null);
     }
 
     private UserContext extractUserContext(String authorization) {

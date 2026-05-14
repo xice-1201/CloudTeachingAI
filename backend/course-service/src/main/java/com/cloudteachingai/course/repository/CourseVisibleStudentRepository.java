@@ -17,4 +17,6 @@ public interface CourseVisibleStudentRepository extends JpaRepository<CourseVisi
     long countByCourseId(Long courseId);
 
     void deleteByCourseId(Long courseId);
+
+    void deleteByStudentId(Long studentId);
 }

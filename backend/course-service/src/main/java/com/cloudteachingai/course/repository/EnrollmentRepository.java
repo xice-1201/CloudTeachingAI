@@ -21,6 +21,8 @@ public interface EnrollmentRepository extends JpaRepository<EnrollmentEntity, Lo
 
     List<EnrollmentEntity> findByCourseId(Long courseId);
 
+    void deleteByStudentId(Long studentId);
+
     @Query(
             value = """
                     SELECT e

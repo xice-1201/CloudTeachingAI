@@ -13,4 +13,6 @@ public interface CourseDiscussionPostRepository extends JpaRepository<CourseDisc
     List<CourseDiscussionPostEntity> findByCourseIdAndResourceIdAndParentIdIsNullOrderByCreatedAtDescIdDesc(Long courseId, Long resourceId);
 
     List<CourseDiscussionPostEntity> findByParentIdInOrderByCreatedAtAscIdAsc(Collection<Long> parentIds);
+
+    void deleteByAuthorId(Long authorId);
 }

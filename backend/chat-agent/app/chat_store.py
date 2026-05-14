@@ -18,6 +18,8 @@ class ChatStore(Protocol):
 
     def delete_session(self, user_id: int | str, session_id: int) -> bool: ...
 
+    def delete_sessions_by_user(self, user_id: int | str) -> int: ...
+
     def update_context(self, session: ChatSession, context: ChatContext) -> ChatSession: ...
 
     def add_message(self, session: ChatSession, role: str, content: str) -> ChatMessage: ...
@@ -63,6 +65,16 @@ class MemoryChatStore:
             return False
         del self._sessions[session_id]
         return True
+
+    def delete_sessions_by_user(self, user_id: int | str) -> int:
+        session_ids = [
+            session_id
+            for session_id, session in self._sessions.items()
+            if session.userId == user_id
+        ]
+        for session_id in session_ids:
+            del self._sessions[session_id]
+        return len(session_ids)
 
     def update_context(self, session: ChatSession, context: ChatContext) -> ChatSession:
         if not context.has_value():
@@ -152,6 +164,14 @@ class PostgresChatStore:
                 (session_id, _user_key(user_id)),
             )
             return result.rowcount > 0
+
+    def delete_sessions_by_user(self, user_id: int | str) -> int:
+        with self._connect() as conn:
+            result = conn.execute(
+                "DELETE FROM chat_sessions WHERE user_id = %s",
+                (_user_key(user_id),),
+            )
+            return result.rowcount
 
     def update_context(self, session: ChatSession, context: ChatContext) -> ChatSession:
         if not context.has_value():

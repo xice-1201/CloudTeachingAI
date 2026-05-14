@@ -200,7 +200,11 @@
       SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
       AUTH_SERVICE_URL: http://auth-service:8001
+      COURSE_SERVICE_URL: http://course-service:8003
+      LEARN_SERVICE_URL: http://learn-service:8004
+      ASSIGN_SERVICE_URL: http://assign-service:8005
       NOTIFY_SERVICE_URL: http://notify-service:8006
+      CHAT_AGENT_URL: http://chat-agent:8104
       SYSTEM_HEALTH_AUTH_URL: http://auth-service:8001/actuator/health
       SYSTEM_HEALTH_USER_URL: http://user-service:8002/actuator/health
       SYSTEM_HEALTH_COURSE_URL: http://course-service:8003/actuator/health

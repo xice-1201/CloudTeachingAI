@@ -12,6 +12,7 @@ import com.cloudteachingai.auth.entity.RefreshToken;
 import com.cloudteachingai.auth.entity.VerificationCode;
 import com.cloudteachingai.auth.exception.BusinessException;
 import com.cloudteachingai.auth.repository.AuthCredentialRepository;
+import com.cloudteachingai.auth.repository.PasswordResetTokenRepository;
 import com.cloudteachingai.auth.repository.RefreshTokenRepository;
 import com.cloudteachingai.auth.repository.VerificationCodeRepository;
 import com.cloudteachingai.auth.util.JwtUtil;
@@ -41,6 +42,7 @@ public class AuthService {
 
     private final AuthCredentialRepository authCredentialRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final VerificationCodeRepository verificationCodeRepository;
     private final StringRedisTemplate redisTemplate;
     private final JwtUtil jwtUtil;
@@ -163,6 +165,16 @@ public class AuthService {
 
     public String encodePassword(String password) {
         return passwordEncoder.encode(password);
+    }
+
+    @Transactional
+    public void deleteAccountCredentials(Long userId, String email) {
+        refreshTokenRepository.deleteByUserId(userId);
+        passwordResetTokenRepository.deleteByUserId(userId);
+        authCredentialRepository.deleteByUserId(userId);
+        if (email != null && !email.isBlank()) {
+            verificationCodeRepository.deleteByEmail(email);
+        }
     }
 
     @Transactional

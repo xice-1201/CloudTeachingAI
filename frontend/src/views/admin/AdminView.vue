@@ -57,7 +57,7 @@
           <el-table-column label="创建时间" width="170">
             <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="180" fixed="right">
+          <el-table-column label="操作" width="250" fixed="right">
             <template #default="{ row }">
               <el-button :icon="View" link type="primary" @click="openUserDrawer(row)">查看</el-button>
               <el-button
@@ -66,6 +66,15 @@
                 @click="toggleUserActive(row)"
               >
                 {{ row.isActive ? '停用' : '启用' }}
+              </el-button>
+              <el-button
+                v-if="row.role !== 'ADMIN'"
+                :icon="Delete"
+                link
+                type="danger"
+                @click="handleDeleteUserCompletely(row)"
+              >
+                彻底删除
               </el-button>
             </template>
           </el-table-column>
@@ -258,6 +267,7 @@
                 <el-option label="创建用户" value="USER_CREATED" />
                 <el-option label="启用用户" value="USER_ACTIVATED" />
                 <el-option label="停用用户" value="USER_DEACTIVATED" />
+                <el-option label="彻底删除用户" value="USER_DELETED" />
                 <el-option label="通过教师申请" value="TEACHER_APPLICATION_APPROVED" />
                 <el-option label="拒绝教师申请" value="TEACHER_APPLICATION_REJECTED" />
                 <el-option label="创建课程" value="COURSE_CREATED" />
@@ -483,7 +493,7 @@ function roleLabel(role: string) { return { STUDENT: '学生', TEACHER: '教师'
 function statusLabel(status: string) { return { PENDING: '待审批', APPROVED: '已通过', REJECTED: '已拒绝' }[status] ?? status }
 function courseStatusTagType(status: Course['status']) { return { DRAFT: 'info', PUBLISHED: 'success', ARCHIVED: 'warning' }[status] ?? 'info' }
 function courseStatusLabel(status: Course['status']) { return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status] ?? status }
-function auditActionLabel(action: string) { return { USER_CREATED: '创建用户', USER_ACTIVATED: '启用用户', USER_DEACTIVATED: '停用用户', TEACHER_APPLICATION_APPROVED: '通过教师申请', TEACHER_APPLICATION_REJECTED: '拒绝教师申请', COURSE_CREATED: '创建课程', COURSE_UPDATED: '编辑课程', COURSE_PUBLISHED: '发布课程', COURSE_UNPUBLISHED: '下架课程', COURSE_ARCHIVED: '归档课程', COURSE_RESTORED: '恢复课程', COURSE_DELETED: '删除课程' }[action] ?? action }
+function auditActionLabel(action: string) { return { USER_CREATED: '创建用户', USER_ACTIVATED: '启用用户', USER_DEACTIVATED: '停用用户', USER_DELETED: '彻底删除用户', TEACHER_APPLICATION_APPROVED: '通过教师申请', TEACHER_APPLICATION_REJECTED: '拒绝教师申请', COURSE_CREATED: '创建课程', COURSE_UPDATED: '编辑课程', COURSE_PUBLISHED: '发布课程', COURSE_UNPUBLISHED: '下架课程', COURSE_ARCHIVED: '归档课程', COURSE_RESTORED: '恢复课程', COURSE_DELETED: '删除课程' }[action] ?? action }
 function auditTargetTypeLabel(targetType: string) { return { USER: '用户', TEACHER_REGISTRATION_APPLICATION: '教师申请', COURSE: '课程' }[targetType] ?? targetType }
 function actorFallback(actorId?: number | null) { return actorId ? `User-${actorId}` : '系统' }
 function courseVisibilityLabel(course: Course) {
@@ -569,6 +579,26 @@ async function toggleUserActive(user: User) {
     userDrawer.value.user = updatedUser
   }
   ElMessage.success(updatedUser.isActive ? '用户已启用' : '用户已停用')
+}
+
+async function handleDeleteUserCompletely(user: User) {
+  await ElMessageBox.confirm(
+    `确认彻底删除“${user.username}”吗？该操作会删除其账号、学习记录、课程/作业相关数据、通知与 AI 对话记录，且无法恢复。`,
+    '彻底删除用户',
+    {
+      type: 'error',
+      confirmButtonText: '彻底删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    },
+  )
+  await userApi.deleteUserCompletely(user.id)
+  ElMessage.success('用户及关联数据已彻底删除')
+  if (userDrawer.value.user?.id === user.id) {
+    userDrawer.value.visible = false
+    userDrawer.value.user = null
+  }
+  await fetchUsers()
 }
 
 async function fetchTeacherApplications() {

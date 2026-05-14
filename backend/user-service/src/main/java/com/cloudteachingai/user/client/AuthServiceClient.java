@@ -1,6 +1,8 @@
 package com.cloudteachingai.user.client;
 
 import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
@@ -25,5 +27,11 @@ public interface AuthServiceClient {
     void sendTeacherApprovalEmail(
             @RequestParam String email,
             @RequestParam String username
+    );
+
+    @DeleteMapping("/api/v1/auth/internal/users/{userId}/credentials")
+    void deleteAccountCredentials(
+            @PathVariable Long userId,
+            @RequestParam String email
     );
 }

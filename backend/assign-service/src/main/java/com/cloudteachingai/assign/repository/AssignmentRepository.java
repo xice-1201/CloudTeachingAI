@@ -16,4 +16,8 @@ public interface AssignmentRepository extends JpaRepository<AssignmentEntity, Lo
     List<AssignmentEntity> findByCourseIdInAndDeadlineAfterOrderByDeadlineAscIdAsc(Collection<Long> courseIds, OffsetDateTime deadline);
 
     List<AssignmentEntity> findByCourseIdInOrderByDeadlineAscIdDesc(Collection<Long> courseIds);
+
+    List<AssignmentEntity> findByTeacherId(Long teacherId);
+
+    void deleteByTeacherId(Long teacherId);
 }

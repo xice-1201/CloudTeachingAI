@@ -13,9 +13,11 @@ import com.cloudteachingai.learn.dto.TeacherDashboardResponse;
 import com.cloudteachingai.learn.dto.UpdateLearningProgressRequest;
 import com.cloudteachingai.learn.exception.BusinessException;
 import com.cloudteachingai.learn.service.LearnFacadeService;
+import com.cloudteachingai.learn.service.LearningAccountCleanupService;
 import com.cloudteachingai.learn.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,6 +35,7 @@ import java.util.List;
 public class LearnController {
 
     private final LearnFacadeService learnFacadeService;
+    private final LearningAccountCleanupService learningAccountCleanupService;
     private final JwtUtil jwtUtil;
 
     @GetMapping("/progress/{resourceId}")
@@ -99,6 +102,12 @@ public class LearnController {
     public ApiResponse<TeacherDashboardResponse> getTeacherDashboard(@RequestHeader("Authorization") String authorization) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(learnFacadeService.getTeacherDashboard(authorization, userContext));
+    }
+
+    @DeleteMapping("/internal/users/{userId}/learning-data")
+    public ApiResponse<Void> deleteUserLearningData(@PathVariable Long userId) {
+        learningAccountCleanupService.deleteStudentLearningData(userId);
+        return ApiResponse.success(null);
     }
 
     private UserContext extractUserContext(String authorization) {

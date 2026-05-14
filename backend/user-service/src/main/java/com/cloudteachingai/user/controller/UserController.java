@@ -19,6 +19,7 @@ import com.cloudteachingai.user.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -72,6 +73,14 @@ public class UserController {
             @RequestHeader(value = "X-User-Id", required = false) Long actorId,
             @PathVariable Long id) {
         return ApiResponse.success(userService.updateUserActive(id, false, actorId));
+    }
+
+    @DeleteMapping("/admin/users/{id}")
+    public ApiResponse<Void> deleteUserCompletely(
+            @RequestHeader(value = "X-User-Id", required = false) Long actorId,
+            @PathVariable Long id) {
+        userService.deleteUserCompletely(id, actorId);
+        return ApiResponse.success(null);
     }
 
     @GetMapping("/admin/audit-logs")

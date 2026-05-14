@@ -58,6 +58,11 @@ public class NotificationService {
     }
 
     @Transactional
+    public void deleteNotificationsForUser(Long userId) {
+        notificationRepository.deleteByUserId(userId);
+    }
+
+    @Transactional
     public NotificationResponse createNotification(CreateNotificationRequest request) {
         return createNotification(request, null);
     }

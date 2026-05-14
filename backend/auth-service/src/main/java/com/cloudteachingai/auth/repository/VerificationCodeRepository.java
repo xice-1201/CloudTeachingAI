@@ -24,6 +24,8 @@ public interface VerificationCodeRepository extends JpaRepository<VerificationCo
     @Query("UPDATE VerificationCode v SET v.used = true WHERE v.email = :email")
     void markAllAsUsed(String email);
 
+    void deleteByEmail(String email);
+
     /**
      * 删除过期的验证码
      */

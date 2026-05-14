@@ -195,6 +195,30 @@ def test_chat_session_can_use_user_id_query_without_token():
     assert [session["id"] for session in listed["data"]] == [session_id]
 
 
+def test_internal_cleanup_deletes_all_user_chat_sessions():
+    chat_main = load_chat_main()
+    chat_main.store = chat_main.MemoryChatStore()
+    chat_main.responder = FakeResponder()
+
+    client = TestClient(chat_main.app)
+    headers = {"Authorization": bearer_for_user("56")}
+
+    first_id = client.post("/api/v1/chat/sessions", headers=headers).json()["data"]["id"]
+    second_id = client.post("/api/v1/chat/sessions", headers=headers).json()["data"]["id"]
+    other_id = client.post("/api/v1/chat/sessions", headers={"Authorization": bearer_for_user("57")}).json()["data"]["id"]
+
+    cleanup = client.delete("/api/v1/internal/users/56/chat-data").json()
+
+    assert cleanup["code"] == 0
+    assert cleanup["data"]["deletedSessions"] == 2
+    assert client.get(f"/api/v1/chat/sessions/{first_id}", headers=headers).status_code == 404
+    assert client.get(f"/api/v1/chat/sessions/{second_id}", headers=headers).status_code == 404
+    assert client.get(
+        f"/api/v1/chat/sessions/{other_id}",
+        headers={"Authorization": bearer_for_user("57")},
+    ).status_code == 200
+
+
 def test_context_prompt_includes_student_learning_profile(monkeypatch):
     load_chat_main()
     from app.config import Settings

@@ -31,6 +31,9 @@ export const userApi = {
   deactivateUser: (id: string | number): Promise<User> =>
     request.post(`/admin/users/${id}/deactivate`),
 
+  deleteUserCompletely: (id: string | number): Promise<void> =>
+    request.delete(`/admin/users/${id}`),
+
   listAuditLogs: (params?: {
     page?: number
     pageSize?: number

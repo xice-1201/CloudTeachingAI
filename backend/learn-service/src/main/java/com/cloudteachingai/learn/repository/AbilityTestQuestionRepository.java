@@ -11,4 +11,6 @@ public interface AbilityTestQuestionRepository extends JpaRepository<AbilityTest
     List<AbilityTestQuestionEntity> findBySessionIdOrderByDisplayOrderAsc(Long sessionId);
 
     Optional<AbilityTestQuestionEntity> findByIdAndSessionId(Long id, Long sessionId);
+
+    void deleteBySessionIdIn(List<Long> sessionIds);
 }

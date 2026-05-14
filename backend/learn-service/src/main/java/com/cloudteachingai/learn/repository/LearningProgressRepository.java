@@ -14,5 +14,7 @@ public interface LearningProgressRepository extends JpaRepository<LearningProgre
 
     List<LearningProgressEntity> findByStudentId(Long studentId);
 
+    void deleteByStudentId(Long studentId);
+
     List<LearningProgressEntity> findByCourseIdIn(List<Long> courseIds);
 }

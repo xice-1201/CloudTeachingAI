@@ -1,6 +1,10 @@
 package com.cloudteachingai.user.service;
 
 import com.cloudteachingai.user.client.AuthServiceClient;
+import com.cloudteachingai.user.client.AssignServiceClient;
+import com.cloudteachingai.user.client.ChatAgentClient;
+import com.cloudteachingai.user.client.CourseServiceClient;
+import com.cloudteachingai.user.client.LearnServiceClient;
 import com.cloudteachingai.user.client.NotifyServiceClient;
 import com.cloudteachingai.user.dto.CreateNotificationRequest;
 import com.cloudteachingai.user.dto.CreateTeacherRegistrationApplicationRequest;
@@ -44,6 +48,10 @@ public class UserService {
     private final MentorRelationRepository mentorRelationRepository;
     private final TeacherRegistrationApplicationRepository teacherRegistrationApplicationRepository;
     private final AuthServiceClient authServiceClient;
+    private final CourseServiceClient courseServiceClient;
+    private final LearnServiceClient learnServiceClient;
+    private final AssignServiceClient assignServiceClient;
+    private final ChatAgentClient chatAgentClient;
     private final NotifyServiceClient notifyServiceClient;
     private final AdminAuditLogService adminAuditLogService;
 
@@ -285,6 +293,40 @@ public class UserService {
                 (active ? "Activated user: " : "Deactivated user: ") + user.getEmail()
         );
         return UserResponse.from(user);
+    }
+
+    @Transactional
+    public void deleteUserCompletely(Long userId, Long actorId) {
+        User user = requireUser(userId);
+        if (user.getRole() == User.UserRole.ADMIN) {
+            throw BusinessException.badRequest("管理员账号不支持通过此功能删除");
+        }
+
+        String role = user.getRole().name();
+        String username = user.getUsername();
+        String email = user.getEmail();
+
+        assignServiceClient.deleteUserAssignmentData(userId, role);
+        if (user.getRole() == User.UserRole.STUDENT) {
+            learnServiceClient.deleteUserLearningData(userId);
+        }
+        courseServiceClient.deleteUserCourseData(userId, role);
+        chatAgentClient.deleteUserChatData(userId);
+        notifyServiceClient.deleteNotificationsForUser(userId);
+        authServiceClient.deleteAccountCredentials(userId, email);
+
+        mentorRelationRepository.deleteByStudentIdOrMentorId(userId, userId);
+        teacherRegistrationApplicationRepository.deleteByEmailOrReviewedByOrCreatedUserId(email, userId, userId);
+        userRepository.delete(user);
+
+        adminAuditLogService.record(
+                actorId,
+                "USER_DELETED",
+                "USER",
+                userId,
+                username,
+                "Deleted " + role + " user and related learning, course, assignment, notification, chat, and auth data"
+        );
     }
 
     @Transactional

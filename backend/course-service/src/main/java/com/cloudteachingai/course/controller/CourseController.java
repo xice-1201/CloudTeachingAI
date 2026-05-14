@@ -27,6 +27,7 @@ import com.cloudteachingai.course.dto.ResourceUpsertRequest;
 import com.cloudteachingai.course.entity.enums.ResourceType;
 import com.cloudteachingai.course.exception.BusinessException;
 import com.cloudteachingai.course.service.CourseCoverStorageService;
+import com.cloudteachingai.course.service.CourseAccountCleanupService;
 import com.cloudteachingai.course.service.CourseFacadeService;
 import com.cloudteachingai.course.service.CourseInteractionService;
 import com.cloudteachingai.course.service.ResourceStorageService;
@@ -73,6 +74,7 @@ public class CourseController {
 
     private final CourseFacadeService courseFacadeService;
     private final CourseInteractionService courseInteractionService;
+    private final CourseAccountCleanupService courseAccountCleanupService;
     private final CourseCoverStorageService courseCoverStorageService;
     private final ResourceStorageService resourceStorageService;
     private final JwtUtil jwtUtil;
@@ -545,6 +547,18 @@ public class CourseController {
     @GetMapping("/internal/courses/{courseId}/student-ids")
     public ApiResponse<List<Long>> listCourseStudentIds(@PathVariable Long courseId) {
         return ApiResponse.success(courseFacadeService.listCourseStudentIds(courseId));
+    }
+
+    @DeleteMapping("/internal/users/{userId}/course-data")
+    public ApiResponse<Void> deleteUserCourseData(
+            @PathVariable Long userId,
+            @RequestParam String role) {
+        if ("TEACHER".equalsIgnoreCase(role)) {
+            courseAccountCleanupService.deleteTeacherCourseData(userId);
+        } else {
+            courseAccountCleanupService.deleteStudentCourseData(userId);
+        }
+        return ApiResponse.success(null);
     }
 
     private UserContext extractUserContext(String authorization) {

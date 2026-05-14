@@ -34,4 +34,6 @@ public interface MentorRelationRepository extends JpaRepository<MentorRelation, 
     List<MentorRelation> findAllByMentorIdAndStatusOrderByReviewedAtDesc(
             Long mentorId,
             MentorRelation.Status status);
+
+    void deleteByStudentIdOrMentorId(Long studentId, Long mentorId);
 }

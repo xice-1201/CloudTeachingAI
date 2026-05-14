@@ -10,6 +10,7 @@ import com.cloudteachingai.notify.service.NotificationService;
 import com.cloudteachingai.notify.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -63,6 +64,12 @@ public class NotificationController {
     @PostMapping("/internal/notifications")
     public ApiResponse<NotificationResponse> createNotification(@Valid @RequestBody CreateNotificationRequest request) {
         return ApiResponse.success(notificationService.createNotification(request));
+    }
+
+    @DeleteMapping("/internal/users/{userId}/notifications")
+    public ApiResponse<Void> deleteNotificationsForUser(@PathVariable Long userId) {
+        notificationService.deleteNotificationsForUser(userId);
+        return ApiResponse.success(null);
     }
 
     private Long extractUserId(String authorization) {

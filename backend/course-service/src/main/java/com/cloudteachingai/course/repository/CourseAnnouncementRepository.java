@@ -8,4 +8,6 @@ import java.util.List;
 public interface CourseAnnouncementRepository extends JpaRepository<CourseAnnouncementEntity, Long> {
 
     List<CourseAnnouncementEntity> findByCourseIdOrderByPinnedDescPublishedAtDescIdDesc(Long courseId);
+
+    void deleteByAuthorId(Long authorId);
 }
