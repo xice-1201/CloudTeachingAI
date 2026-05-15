@@ -42,7 +42,15 @@
         <el-col :xs="24" :lg="10">
           <el-card shadow="never" header="我的学生" v-loading="relationLoading">
             <div v-if="students.length === 0" class="empty-tip">暂无已确认的指导学生。</div>
-            <div v-for="student in students" :key="student.id" class="teacher-item">
+            <div
+              v-for="student in students"
+              :key="student.id"
+              class="teacher-item clickable-student"
+              role="button"
+              tabindex="0"
+              @click="openStudent(student.id)"
+              @keydown.enter="openStudent(student.id)"
+            >
               <el-avatar :size="40" :src="student.avatar">{{ student.username?.[0]?.toUpperCase() }}</el-avatar>
               <div class="teacher-info">
                 <div class="teacher-name">{{ student.username }}</div>
@@ -114,10 +122,23 @@
               <el-empty v-if="!loading && teachers.length === 0" description="暂无结果" :image-size="60" />
             </div>
           </el-card>
-          <el-card v-else shadow="never" header="导师状态">
+          <el-card v-else shadow="never" header="向导师提问">
             <div class="confirmed-tip">
               <el-tag type="success">已确认</el-tag>
-              <span>当前导师关系已生效，暂不开放新的导师申请。</span>
+              <span>可以把学习困惑发送给导师，导师会通过平台消息回复你。</span>
+            </div>
+            <el-input
+              v-model="questionContent"
+              type="textarea"
+              :rows="5"
+              maxlength="1000"
+              show-word-limit
+              placeholder="输入你想咨询导师的问题，例如学习卡点、测试结果疑问或下一步学习安排"
+            />
+            <div class="question-actions">
+              <el-button type="primary" :loading="questionSubmitting" @click="submitMentorQuestion">
+                发送给导师
+              </el-button>
             </div>
           </el-card>
         </el-col>
@@ -128,7 +149,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { userApi } from '@/api/user'
 import { useUserStore } from '@/store/user'
@@ -136,6 +157,7 @@ import type { MentorApplication, User } from '@/types'
 
 const userStore = useUserStore()
 const route = useRoute()
+const router = useRouter()
 const mentor = ref<User | null>(null)
 const students = ref<User[]>([])
 const applications = ref<MentorApplication[]>([])
@@ -145,6 +167,8 @@ const loading = ref(false)
 const relationLoading = ref(false)
 const applyingMentorId = ref<number | null>(null)
 const handlingApplicationId = ref<number | null>(null)
+const questionContent = ref('')
+const questionSubmitting = ref(false)
 
 const pendingMentorIds = computed(() => new Set(applications.value.map((item) => item.mentorId)))
 const currentRole = computed(() => userStore.user?.role ?? localStorage.getItem('userRole'))
@@ -161,6 +185,10 @@ function normalizeMentor(value?: User | null) {
 function formatDateTime(value?: string | null) {
   if (!value) return '-'
   return new Date(value).toLocaleString('zh-CN')
+}
+
+function openStudent(studentId: number) {
+  router.push(`/mentor/students/${studentId}`)
 }
 
 async function searchTeachers() {
@@ -225,11 +253,31 @@ async function rejectApplication(applicationId: number) {
   }
 }
 
+async function submitMentorQuestion() {
+  const content = questionContent.value.trim()
+  if (!content) {
+    ElMessage.warning('请输入要咨询导师的问题')
+    return
+  }
+  questionSubmitting.value = true
+  try {
+    await userApi.askMentorQuestion(content)
+    questionContent.value = ''
+    ElMessage.success('问题已发送给导师')
+  } finally {
+    questionSubmitting.value = false
+  }
+}
+
 onMounted(async () => {
   if (!userStore.user) {
     await userStore.fetchProfile().catch(() => null)
   }
   await loadRelations()
+  if (isTeacherView.value && route.query.studentId) {
+    await router.replace(`/mentor/students/${route.query.studentId}`)
+    return
+  }
   if (isStudentView.value && !hasMentor.value) {
     await searchTeachers()
   }
@@ -296,6 +344,20 @@ onMounted(async () => {
   border-bottom: none;
 }
 
+.clickable-student {
+  cursor: pointer;
+  border-radius: 8px;
+  padding-left: 8px;
+  padding-right: 8px;
+  transition: background-color 0.2s ease;
+}
+
+.clickable-student:hover,
+.clickable-student:focus-visible {
+  background: #f5f9ff;
+  outline: none;
+}
+
 .application-actions {
   display: flex;
   gap: 8px;
@@ -313,6 +375,12 @@ onMounted(async () => {
   color: #606266;
   font-size: 14px;
   padding: 18px 0;
+}
+
+.question-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .empty-tip {

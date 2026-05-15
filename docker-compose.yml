@@ -303,6 +303,7 @@
       SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
       COURSE_SERVICE_URL: http://course-service:8003
+      USER_SERVICE_URL: http://user-service:8002
       AI_ABILITY_TEST_ENABLED: ${AI_ABILITY_TEST_ENABLED:-true}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}

@@ -11,6 +11,8 @@ import com.cloudteachingai.learn.client.CourseResourceTagResponse;
 import com.cloudteachingai.learn.client.CourseServiceClient;
 import com.cloudteachingai.learn.client.CourseSummaryResponse;
 import com.cloudteachingai.learn.client.PageResponse;
+import com.cloudteachingai.learn.client.UserApiResponse;
+import com.cloudteachingai.learn.client.UserServiceClient;
 import com.cloudteachingai.learn.controller.LearnController.UserContext;
 import com.cloudteachingai.learn.dto.AbilityMapResponse;
 import com.cloudteachingai.learn.dto.AbilityTestAnswerRequest;
@@ -98,6 +100,7 @@ public class LearnFacadeService {
     private final AbilityTestQuestionRepository abilityTestQuestionRepository;
     private final AbilityMapRepository abilityMapRepository;
     private final CourseServiceClient courseServiceClient;
+    private final UserServiceClient userServiceClient;
     private final OutboxService outboxService;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -367,6 +370,21 @@ public class LearnFacadeService {
     public List<AbilityMapResponse> getAbilityMap(String authorization, UserContext userContext) {
         assertStudent(userContext);
         return buildAbilityMapResponses(userContext.userId(), authorization);
+    }
+
+    public List<AbilityMapResponse> getMentoredStudentAbilityMap(
+            Long studentId,
+            String authorization,
+            UserContext userContext) {
+        if (!"TEACHER".equals(userContext.role())) {
+            throw BusinessException.forbidden("Only teachers can view mentored student ability maps");
+        }
+        if (!isApprovedMentor(userContext.userId(), studentId)) {
+            throw BusinessException.forbidden("No permission to view this student's ability map");
+        }
+        return abilityMapRepository.findByStudentIdOrderByMasteryLevelDescUpdatedAtDesc(studentId).stream()
+                .map(this::toAbilityMapResponse)
+                .toList();
     }
 
     public LearningPathResponse getLearningPath(String authorization, UserContext userContext) {
@@ -1724,6 +1742,24 @@ public class LearnFacadeService {
         return course != null
                 && "PUBLISHED".equalsIgnoreCase(course.getStatus())
                 && "PUBLIC".equalsIgnoreCase(course.getVisibilityType());
+    }
+
+    private boolean isApprovedMentor(Long mentorId, Long studentId) {
+        if (mentorId == null || studentId == null) {
+            return false;
+        }
+        try {
+            UserApiResponse<Boolean> response = userServiceClient.checkApprovedMentorRelation(mentorId, studentId);
+            return response != null && Boolean.TRUE.equals(response.getData());
+        } catch (FeignException.NotFound ex) {
+            return false;
+        } catch (FeignException.Forbidden ex) {
+            throw BusinessException.forbidden("No permission to verify mentor relation");
+        } catch (FeignException.Unauthorized ex) {
+            throw BusinessException.unauthorized("Invalid token");
+        } catch (FeignException ex) {
+            throw BusinessException.badRequest("Failed to verify mentor relation");
+        }
     }
 
     private Map<Long, CourseContext> loadCourseContexts(Set<Long> courseIds, String authorization) {

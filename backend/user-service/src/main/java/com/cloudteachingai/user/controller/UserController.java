@@ -5,6 +5,7 @@ import com.cloudteachingai.user.dto.ApiResponse;
 import com.cloudteachingai.user.dto.CreateAdminAuditLogRequest;
 import com.cloudteachingai.user.dto.CreateTeacherRegistrationApplicationRequest;
 import com.cloudteachingai.user.dto.CreateUserRequest;
+import com.cloudteachingai.user.dto.MentorMessageRequest;
 import com.cloudteachingai.user.dto.MentorRelationResponse;
 import com.cloudteachingai.user.dto.PageResponse;
 import com.cloudteachingai.user.dto.ReviewTeacherRegistrationApplicationRequest;
@@ -261,6 +262,32 @@ public class UserController {
             @RequestParam(value = "userId", required = false) Long userIdParam,
             @PathVariable Long id) {
         return ApiResponse.success(userService.rejectMentorRelation(resolveUserId(userIdHeader, userIdParam), id));
+    }
+
+    @PostMapping("/users/mentor-relations/question")
+    public ApiResponse<Void> askMentorQuestion(
+            @RequestHeader(value = "X-User-Id", required = false) Long userIdHeader,
+            @RequestParam(value = "userId", required = false) Long userIdParam,
+            @Valid @RequestBody MentorMessageRequest request) {
+        userService.askMentorQuestion(resolveUserId(userIdHeader, userIdParam), request.getContent());
+        return ApiResponse.success(null);
+    }
+
+    @PostMapping("/users/mentor-relations/students/{studentId}/advice")
+    public ApiResponse<Void> sendMentorAdvice(
+            @RequestHeader(value = "X-User-Id", required = false) Long userIdHeader,
+            @RequestParam(value = "userId", required = false) Long userIdParam,
+            @PathVariable Long studentId,
+            @Valid @RequestBody MentorMessageRequest request) {
+        userService.sendMentorAdvice(resolveUserId(userIdHeader, userIdParam), studentId, request.getContent());
+        return ApiResponse.success(null);
+    }
+
+    @GetMapping("/internal/mentor-relations/check")
+    public ApiResponse<Boolean> checkApprovedMentorRelation(
+            @RequestParam Long mentorId,
+            @RequestParam Long studentId) {
+        return ApiResponse.success(userService.isApprovedMentorRelation(mentorId, studentId));
     }
 
     private Long resolveUserId(Long userIdHeader, Long userIdParam) {

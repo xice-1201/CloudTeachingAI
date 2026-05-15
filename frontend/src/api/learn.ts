@@ -22,6 +22,9 @@ export const learnApi = {
   getAbilityMap: (): Promise<AbilityMap[]> =>
     request.get('/learn/ability-map'),
 
+  getMentoredStudentAbilityMap: (studentId: string | number): Promise<AbilityMap[]> =>
+    request.get(`/learn/students/${studentId}/ability-map`),
+
   startAbilityTest: (knowledgePointId: number, questionLimit?: number): Promise<AbilityTestStartResponse> =>
     request.post('/learn/ability-test/start', {
       knowledgePointId,

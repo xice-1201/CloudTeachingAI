@@ -37,6 +37,8 @@ jwt:
 
 course-service:
   url: ${COURSE_SERVICE_URL:http://localhost:8003}
+user-service:
+  url: ${USER_SERVICE_URL:http://localhost:8002}
 
 ai:
   ability-test:

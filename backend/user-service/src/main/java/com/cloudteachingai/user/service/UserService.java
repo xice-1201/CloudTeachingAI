@@ -297,6 +297,39 @@ public class UserService {
         return MentorRelationResponse.from(relation, student, teacher);
     }
 
+    public boolean isApprovedMentorRelation(Long mentorId, Long studentId) {
+        if (mentorId == null || studentId == null) {
+            return false;
+        }
+        return mentorRelationRepository
+                .findByStudentIdAndMentorIdAndStatus(studentId, mentorId, MentorRelation.Status.APPROVED)
+                .isPresent();
+    }
+
+    public void askMentorQuestion(Long studentId, String content) {
+        User student = requireUser(studentId);
+        if (student.getRole() != User.UserRole.STUDENT) {
+            throw BusinessException.badRequest("Only students can ask mentor questions");
+        }
+        MentorRelation relation = mentorRelationRepository
+                .findFirstByStudentIdAndStatusOrderByRequestedAtDesc(studentId, MentorRelation.Status.APPROVED)
+                .orElseThrow(() -> BusinessException.badRequest("No approved mentor relation"));
+        User mentor = requireUser(relation.getMentorId());
+        notifyStudentQuestion(student, mentor, normalizeMentorMessage(content));
+    }
+
+    public void sendMentorAdvice(Long mentorId, Long studentId, String content) {
+        User mentor = requireUser(mentorId);
+        if (mentor.getRole() != User.UserRole.TEACHER) {
+            throw BusinessException.badRequest("Only teachers can send mentor advice");
+        }
+        if (!isApprovedMentorRelation(mentorId, studentId)) {
+            throw BusinessException.forbidden("No approved mentor relation with this student");
+        }
+        User student = requireUser(studentId);
+        notifyMentorAdvice(student, mentor, normalizeMentorMessage(content));
+    }
+
     @Transactional
     public UserResponse updateUserActive(Long userId, boolean active, Long actorId) {
         User user = userRepository.findById(userId)
@@ -572,6 +605,45 @@ public class UserService {
             ));
         } catch (Exception e) {
             log.warn("Failed to notify student {} for rejected mentor application {}", student.getId(), relation.getId(), e);
+        }
+    }
+
+    private String normalizeMentorMessage(String content) {
+        if (!StringUtils.hasText(content)) {
+            throw BusinessException.badRequest("Message content is required");
+        }
+        return content.trim();
+    }
+
+    private void notifyStudentQuestion(User student, User mentor, String content) {
+        try {
+            notifyServiceClient.createNotification(new CreateNotificationRequest(
+                    mentor.getId(),
+                    "SYSTEM",
+                    "学生向你提问",
+                    String.format("学生 %s 向你提出问题：%s", student.getUsername(), content),
+                    "MENTOR_RELATION",
+                    student.getId(),
+                    "/mentor/students/" + student.getId() + "?reply=1"
+            ));
+        } catch (Exception e) {
+            log.warn("Failed to notify mentor {} for student question {}", mentor.getId(), student.getId(), e);
+        }
+    }
+
+    private void notifyMentorAdvice(User student, User mentor, String content) {
+        try {
+            notifyServiceClient.createNotification(new CreateNotificationRequest(
+                    student.getId(),
+                    "SYSTEM",
+                    "导师学习建议",
+                    String.format("%s 老师向你提供了学习建议：%s", mentor.getUsername(), content),
+                    "MENTOR_RELATION",
+                    mentor.getId(),
+                    "/mentor"
+            ));
+        } catch (Exception e) {
+            log.warn("Failed to notify student {} for mentor advice {}", student.getId(), mentor.getId(), e);
         }
     }
 

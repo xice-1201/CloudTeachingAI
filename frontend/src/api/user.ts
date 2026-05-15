@@ -69,4 +69,10 @@ export const userApi = {
 
   rejectMentorApplication: (applicationId: string | number): Promise<MentorApplication> =>
     request.post(`/users/mentor-relations/${applicationId}/reject`),
+
+  askMentorQuestion: (content: string): Promise<void> =>
+    request.post('/users/mentor-relations/question', { content }),
+
+  sendMentorAdvice: (studentId: string | number, content: string): Promise<void> =>
+    request.post(`/users/mentor-relations/students/${studentId}/advice`, { content }),
 }

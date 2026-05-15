@@ -69,6 +69,14 @@ public class LearnController {
         return ApiResponse.success(learnFacadeService.getAbilityMap(authorization, userContext));
     }
 
+    @GetMapping("/students/{studentId}/ability-map")
+    public ApiResponse<List<AbilityMapResponse>> getMentoredStudentAbilityMap(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long studentId) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(learnFacadeService.getMentoredStudentAbilityMap(studentId, authorization, userContext));
+    }
+
     @PostMapping("/ability-test/start")
     public ApiResponse<AbilityTestStartResponse> startAbilityTest(
             @RequestHeader("Authorization") String authorization,
