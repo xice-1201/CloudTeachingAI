@@ -9,7 +9,7 @@
         <div class="card-header">
           <div>
             <div class="card-title">开始一次能力测验</div>
-            <div class="card-subtitle">选择任意知识范围，系统会在该范围内生成 1-6 道选择题。</div>
+            <div class="card-subtitle">选择任意知识范围，系统会按范围大小生成 2-20 道选择题。</div>
           </div>
           <el-tag type="info">规则版诊断</el-tag>
         </div>

@@ -82,11 +82,15 @@ public class LearnFacadeService {
     private static final String PATH_STATUS_NOT_STARTED = "NOT_STARTED";
     private static final String PATH_STATUS_IN_PROGRESS = "IN_PROGRESS";
     private static final String PATH_STATUS_COMPLETED = "COMPLETED";
-    private static final int DEFAULT_QUESTION_LIMIT = 6;
+    private static final int MIN_ABILITY_TEST_QUESTIONS = 2;
+    private static final int MAX_ABILITY_TEST_QUESTIONS = 20;
     private static final int MAX_RADAR_POINTS = 8;
     private static final int MAX_PATH_RESOURCES = 6;
     private static final int MAX_PATH_FOCUS_POINTS = 3;
     private static final double WEAK_MASTERY_THRESHOLD = 0.7D;
+    private static final String DIFFICULTY_EASY = "EASY";
+    private static final String DIFFICULTY_MEDIUM = "MEDIUM";
+    private static final String DIFFICULTY_HARD = "HARD";
     private static final Set<String> VALID_ANSWERS = Set.of("A", "B", "C", "D");
 
     private final LearningProgressRepository learningProgressRepository;
@@ -212,17 +216,18 @@ public class LearnFacadeService {
             throw BusinessException.badRequest("Selected knowledge point has no available test targets");
         }
 
-        int questionLimit = resolveQuestionLimit(request.getQuestionLimit());
         List<CourseKnowledgePointNodeResponse> sortedTargets = targets.stream()
                 .sorted(Comparator.comparing(CourseKnowledgePointNodeResponse::getPath, Comparator.nullsLast(String::compareToIgnoreCase))
                         .thenComparing(CourseKnowledgePointNodeResponse::getId))
                 .toList();
+        int questionLimit = resolveQuestionLimit(request.getQuestionLimit(), sortedTargets.size());
+        String firstDifficulty = decideInitialDifficulty(userContext.userId(), root, sortedTargets, authorization);
         AbilityQuestionBuildResult questionBuild = buildAdaptiveQuestionSpec(
                 root,
                 sortedTargets,
                 questionLimit,
                 1,
-                "MEDIUM",
+                firstDifficulty,
                 List.of()
         );
         AbilityQuestionSpec firstQuestion = questionBuild.questions().getFirst();
@@ -448,31 +453,47 @@ public class LearnFacadeService {
         KnowledgePointCatalog catalog = loadKnowledgePointCatalog(authorization);
         Map<Long, ProgressStats> progressStats = buildProgressStats(session.getStudentId(), authorization);
 
-        Map<Long, List<AbilityTestQuestionEntity>> questionsByKnowledgePoint = questions.stream()
+        Map<Long, List<AbilityTestQuestionEntity>> directQuestionsByKnowledgePoint = questions.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getAnswered()))
                 .collect(Collectors.groupingBy(
                         AbilityTestQuestionEntity::getKnowledgePointId,
                         LinkedHashMap::new,
                         Collectors.toList()
                 ));
+        Map<Long, AbilityEvidenceAccumulator> evidenceByKnowledgePoint = new LinkedHashMap<>();
+        for (AbilityTestQuestionEntity question : questions) {
+            if (!Boolean.TRUE.equals(question.getAnswered()) || question.getScore() == null) {
+                continue;
+            }
+            for (Long knowledgePointId : collectSelfAndAncestorIds(question.getKnowledgePointId(), catalog)) {
+                double relationWeight = Objects.equals(knowledgePointId, question.getKnowledgePointId()) ? 1D : 0.65D;
+                evidenceByKnowledgePoint
+                        .computeIfAbsent(knowledgePointId, ignored -> new AbilityEvidenceAccumulator())
+                        .add(questionMasteryContribution(question), difficultySignalWeight(question.getDifficulty()) * relationWeight);
+            }
+        }
 
         List<AbilityMapResponse> responses = new ArrayList<>();
-        for (Map.Entry<Long, List<AbilityTestQuestionEntity>> entry : questionsByKnowledgePoint.entrySet()) {
+        for (Map.Entry<Long, AbilityEvidenceAccumulator> entry : evidenceByKnowledgePoint.entrySet()) {
             Long knowledgePointId = entry.getKey();
-            List<AbilityTestQuestionEntity> pointQuestions = entry.getValue();
-            AbilityTestQuestionEntity firstQuestion = pointQuestions.getFirst();
-            double testScore = pointQuestions.stream()
-                    .mapToDouble(question -> question.getScore() == null ? 0D : question.getScore())
-                    .average()
-                    .orElse(0D);
+            AbilityEvidenceAccumulator evidence = entry.getValue();
+            AbilityTestQuestionEntity firstQuestion = directQuestionsByKnowledgePoint
+                    .getOrDefault(knowledgePointId, List.of())
+                    .stream()
+                    .findFirst()
+                    .orElse(null);
+            double testScore = evidence.score();
             CourseKnowledgePointNodeResponse node = catalog.nodesById().get(knowledgePointId);
             ProgressStats stats = progressStats.get(knowledgePointId);
             double progressScore = stats == null ? 0D : stats.averageProgress();
             int resourceCount = stats == null ? 0 : stats.resourceCount();
-            double confidence = stats == null ? 0.8D : 0.9D;
+            double confidence = resolveAbilityEvidenceConfidence(evidence.totalWeight(), questions.size(), stats != null);
             String source = stats == null ? "TEST" : "TEST_AND_PROGRESS";
-            String knowledgePointName = node == null ? firstQuestion.getKnowledgePointName() : node.getName();
+            String knowledgePointName = node == null
+                    ? (stats == null ? Optional.ofNullable(firstQuestion).map(AbilityTestQuestionEntity::getKnowledgePointName).orElse("未知知识点") : stats.knowledgePointName())
+                    : node.getName();
             String knowledgePointPath = node == null
-                    ? (stats == null ? firstQuestion.getKnowledgePointName() : stats.knowledgePointPath())
+                    ? (stats == null ? knowledgePointName : stats.knowledgePointPath())
                     : node.getPath();
 
             AbilityMapEntity entity = abilityMapRepository.findByStudentIdAndKnowledgePointId(session.getStudentId(), knowledgePointId)
@@ -982,11 +1003,11 @@ public class LearnFacadeService {
                 .build();
     }
 
-    private int resolveQuestionLimit(Integer requestedLimit) {
+    private int resolveQuestionLimit(Integer requestedLimit, int targetCount) {
         if (requestedLimit == null) {
-            return DEFAULT_QUESTION_LIMIT;
+            return Math.max(MIN_ABILITY_TEST_QUESTIONS, Math.min(MAX_ABILITY_TEST_QUESTIONS, Math.max(1, targetCount) * 2));
         }
-        return Math.max(2, Math.min(10, requestedLimit));
+        return Math.max(MIN_ABILITY_TEST_QUESTIONS, Math.min(MAX_ABILITY_TEST_QUESTIONS, requestedLimit));
     }
 
     private AbilityTestQuestionEntity toQuestionEntity(Long sessionId, AbilityQuestionSpec spec, int displayOrder) {
@@ -1000,6 +1021,7 @@ public class LearnFacadeService {
                 .optionC(spec.optionC())
                 .optionD(spec.optionD())
                 .correctAnswer(spec.correctAnswer())
+                .difficulty(spec.difficulty())
                 .explanation(spec.explanation())
                 .displayOrder(displayOrder)
                 .answered(false)
@@ -1013,7 +1035,7 @@ public class LearnFacadeService {
                 .sorted(Comparator.comparing(AbilityTestQuestionEntity::getDisplayOrder))
                 .toList();
         if (scoredQuestions.isEmpty()) {
-            return "MEDIUM";
+            return DIFFICULTY_MEDIUM;
         }
         double averageScore = scoredQuestions.stream()
                 .mapToDouble(AbilityTestQuestionEntity::getScore)
@@ -1024,12 +1046,48 @@ public class LearnFacadeService {
                 .filter(item -> item.getScore() < 0.5D)
                 .count();
         if (recentWrongCount >= 2 || averageScore < 0.45D) {
-            return "EASY";
+            return DIFFICULTY_EASY;
         }
         if (averageScore >= 0.75D) {
-            return "HARD";
+            return DIFFICULTY_HARD;
         }
-        return "MEDIUM";
+        return DIFFICULTY_MEDIUM;
+    }
+
+    private String decideInitialDifficulty(
+            Long studentId,
+            CourseKnowledgePointNodeResponse root,
+            List<CourseKnowledgePointNodeResponse> targets,
+            String authorization) {
+        Set<Long> targetIds = targets.stream()
+                .map(CourseKnowledgePointNodeResponse::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (root.getId() != null) {
+            targetIds.add(root.getId());
+        }
+        if (targetIds.isEmpty()) {
+            return DIFFICULTY_MEDIUM;
+        }
+
+        List<AbilityMapResponse> abilityMap = buildAbilityMapResponses(studentId, authorization).stream()
+                .filter(item -> targetIds.contains(item.getKnowledgePointId()))
+                .toList();
+        if (abilityMap.isEmpty()) {
+            return DIFFICULTY_MEDIUM;
+        }
+
+        double averageMastery = abilityMap.stream()
+                .mapToDouble(item -> item.getMasteryLevel() == null ? 0D : item.getMasteryLevel())
+                .average()
+                .orElse(0D);
+        if (averageMastery < 0.45D) {
+            return DIFFICULTY_EASY;
+        }
+        if (averageMastery >= 0.75D) {
+            return DIFFICULTY_HARD;
+        }
+        return DIFFICULTY_MEDIUM;
     }
 
     private AbilityQuestionBuildResult buildAdaptiveQuestionSpec(
@@ -1039,7 +1097,7 @@ public class LearnFacadeService {
             int questionNumber,
             String difficulty,
             List<AbilityTestQuestionEntity> answeredQuestions) {
-        CourseKnowledgePointNodeResponse target = targets.get(Math.floorMod(questionNumber - 1, targets.size()));
+        CourseKnowledgePointNodeResponse target = selectAdaptiveQuestionTarget(targets, answeredQuestions, questionNumber);
         AiQuestionGenerationResult aiResult = requestAdaptiveAiQuestionSpec(
                 root,
                 targets,
@@ -1063,6 +1121,33 @@ public class LearnFacadeService {
                 "Adaptive rule fallback generated question " + questionNumber + "/" + totalQuestionCount
                         + " with difficulty=" + difficulty + ". " + aiResult.message()
         );
+    }
+
+    private CourseKnowledgePointNodeResponse selectAdaptiveQuestionTarget(
+            List<CourseKnowledgePointNodeResponse> targets,
+            List<AbilityTestQuestionEntity> answeredQuestions,
+            int questionNumber) {
+        if (targets.size() == 1) {
+            return targets.getFirst();
+        }
+
+        Map<Long, Long> answeredCountByPoint = answeredQuestions.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getAnswered()))
+                .collect(Collectors.groupingBy(
+                        AbilityTestQuestionEntity::getKnowledgePointId,
+                        Collectors.counting()
+                ));
+        long minAnswered = targets.stream()
+                .map(CourseKnowledgePointNodeResponse::getId)
+                .mapToLong(id -> answeredCountByPoint.getOrDefault(id, 0L))
+                .min()
+                .orElse(0L);
+        List<CourseKnowledgePointNodeResponse> leastCovered = targets.stream()
+                .filter(item -> answeredCountByPoint.getOrDefault(item.getId(), 0L) == minAnswered)
+                .sorted(Comparator.comparing(CourseKnowledgePointNodeResponse::getPath, Comparator.nullsLast(String::compareToIgnoreCase))
+                        .thenComparing(CourseKnowledgePointNodeResponse::getId))
+                .toList();
+        return leastCovered.get(Math.floorMod(questionNumber - 1, leastCovered.size()));
     }
 
     private AbilityQuestionBuildResult buildQuestionSpecs(
@@ -1180,7 +1265,7 @@ public class LearnFacadeService {
 
             List<AbilityQuestionSpec> specs = new ArrayList<>();
             for (JsonNode question : questions) {
-                AbilityQuestionSpec spec = toAiQuestionSpec(question, targetById);
+                AbilityQuestionSpec spec = toAiQuestionSpec(question, targetById, DIFFICULTY_MEDIUM);
                 if (spec != null) {
                     specs.add(spec);
                 }
@@ -1236,7 +1321,7 @@ public class LearnFacadeService {
                                             Requirements:
                                             - Use the same language as the knowledge point content, usually Chinese.
                                             - The requested difficulty is mandatory: EASY tests basic recognition, MEDIUM tests understanding/application, HARD tests transfer, edge cases, or misconception diagnosis.
-                                            - The first question of a session is always MEDIUM.
+                                            - The first question difficulty is based on the student's existing ability profile for the selected range.
                                             - Questions after the first must reflect the student's previous answers and cumulative score trend.
                                             - Do not ask students to self-rate their mastery.
                                             - Exactly one option must be correct.
@@ -1290,7 +1375,7 @@ public class LearnFacadeService {
                 return new AiQuestionGenerationResult(List.of(), "AI ability test response JSON did not contain a questions array.");
             }
             for (JsonNode question : questions) {
-                AbilityQuestionSpec spec = toAiQuestionSpec(question, targetById);
+                AbilityQuestionSpec spec = toAiQuestionSpec(question, targetById, difficulty);
                 if (spec != null) {
                     return new AiQuestionGenerationResult(List.of(spec), "AI returned 1 valid adaptive question.");
                 }
@@ -1313,6 +1398,7 @@ public class LearnFacadeService {
                         "questionNumber", item.getDisplayOrder(),
                         "knowledgePointId", item.getKnowledgePointId(),
                         "knowledgePointName", item.getKnowledgePointName(),
+                        "difficulty", Optional.ofNullable(item.getDifficulty()).orElse(DIFFICULTY_MEDIUM),
                         "selectedAnswer", Optional.ofNullable(item.getSelectedAnswer()).orElse(""),
                         "correctAnswer", item.getCorrectAnswer(),
                         "score", Optional.ofNullable(item.getScore()).orElse(0D)
@@ -1348,7 +1434,8 @@ public class LearnFacadeService {
 
     private AbilityQuestionSpec toAiQuestionSpec(
             JsonNode question,
-            Map<Long, CourseKnowledgePointNodeResponse> targetById) {
+            Map<Long, CourseKnowledgePointNodeResponse> targetById,
+            String difficulty) {
         Long knowledgePointId = question.path("knowledgePointId").canConvertToLong()
                 ? question.path("knowledgePointId").asLong()
                 : null;
@@ -1382,6 +1469,7 @@ public class LearnFacadeService {
                 optionC,
                 optionD,
                 correctAnswer.toUpperCase(Locale.ROOT),
+                difficulty,
                 Optional.ofNullable(normalizeBlank(question.path("explanation").asText("")))
                         .orElse("系统将根据正确答案自动评分。")
         );
@@ -1402,6 +1490,7 @@ public class LearnFacadeService {
                     "与本知识点无关的术语。",
                     "任意一个看起来熟悉的答案。",
                     "A",
+                    difficulty,
                     "简单题主要确认基础概念是否清楚。"
             );
             case "HARD" -> new AbilityQuestionSpec(
@@ -1412,6 +1501,7 @@ public class LearnFacadeService {
                     "只根据题目长度选择解法。",
                     "跳过概念分析，先猜一个选项。",
                     "B",
+                    difficulty,
                     "困难题关注迁移应用、适用条件和原因解释。"
             );
             default -> new AbilityQuestionSpec(
@@ -1422,6 +1512,7 @@ public class LearnFacadeService {
                     "跳过基础定义，直接做任意练习。",
                     "只看一遍材料，不需要复盘。",
                     "B",
+                    difficulty,
                     "中等题关注理解核心概念并完成典型应用。"
             );
         };
@@ -1877,6 +1968,40 @@ public class LearnFacadeService {
                 + masteryPercent + "%，该资源已标注覆盖这个知识点，适合作为下一步补强内容。";
     }
 
+    private List<Long> collectSelfAndAncestorIds(Long knowledgePointId, KnowledgePointCatalog catalog) {
+        List<Long> ids = new ArrayList<>();
+        Set<Long> visited = new LinkedHashSet<>();
+        Long cursor = knowledgePointId;
+        while (cursor != null && visited.add(cursor)) {
+            ids.add(cursor);
+            CourseKnowledgePointNodeResponse node = catalog.nodesById().get(cursor);
+            cursor = node == null ? null : node.getParentId();
+        }
+        return ids;
+    }
+
+    private double questionMasteryContribution(AbilityTestQuestionEntity question) {
+        boolean correct = question.getScore() != null && question.getScore() >= 0.5D;
+        return switch (normalizeDifficulty(question.getDifficulty())) {
+            case DIFFICULTY_EASY -> correct ? 0.72D : 0.18D;
+            case DIFFICULTY_HARD -> correct ? 0.95D : 0.4D;
+            default -> correct ? 0.84D : 0.28D;
+        };
+    }
+
+    private double difficultySignalWeight(String difficulty) {
+        return switch (normalizeDifficulty(difficulty)) {
+            case DIFFICULTY_EASY -> 0.85D;
+            case DIFFICULTY_HARD -> 1.15D;
+            default -> 1D;
+        };
+    }
+
+    private double resolveAbilityEvidenceConfidence(double totalWeight, int totalQuestions, boolean hasProgressStats) {
+        double coverage = totalQuestions <= 0 ? 0D : Math.min(1D, totalWeight / Math.max(1D, totalQuestions));
+        return roundScore((hasProgressStats ? 0.62D : 0.56D) + coverage * 0.32D);
+    }
+
     private List<CourseKnowledgePointNodeResponse> collectQuestionTargets(CourseKnowledgePointNodeResponse root) {
         List<CourseKnowledgePointNodeResponse> targets = new ArrayList<>();
         collectLeafKnowledgePoints(root, targets);
@@ -2071,6 +2196,15 @@ public class LearnFacadeService {
         return normalized;
     }
 
+    private String normalizeDifficulty(String difficulty) {
+        String normalized = difficulty == null ? "" : difficulty.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case DIFFICULTY_EASY -> DIFFICULTY_EASY;
+            case DIFFICULTY_HARD -> DIFFICULTY_HARD;
+            default -> DIFFICULTY_MEDIUM;
+        };
+    }
+
     private double blendMastery(double testScore, double progressScore) {
         if (progressScore <= 0D) {
             return roundScore(testScore);
@@ -2120,8 +2254,20 @@ public class LearnFacadeService {
             String optionC,
             String optionD,
             String correctAnswer,
+            String difficulty,
             String explanation
     ) {
+        private AbilityQuestionSpec(
+                CourseKnowledgePointNodeResponse point,
+                String prompt,
+                String optionA,
+                String optionB,
+                String optionC,
+                String optionD,
+                String correctAnswer,
+                String explanation) {
+            this(point, prompt, optionA, optionB, optionC, optionD, correctAnswer, DIFFICULTY_MEDIUM, explanation);
+        }
     }
 
     private record ProgressStats(
@@ -2131,6 +2277,25 @@ public class LearnFacadeService {
             double averageProgress,
             int resourceCount
     ) {
+    }
+
+    private static final class AbilityEvidenceAccumulator {
+        private double weightedTotal;
+        private double totalWeight;
+
+        private void add(double score, double weight) {
+            double sanitizedWeight = Math.max(0D, weight);
+            weightedTotal += score * sanitizedWeight;
+            totalWeight += sanitizedWeight;
+        }
+
+        private double score() {
+            return totalWeight <= 0D ? 0D : weightedTotal / totalWeight;
+        }
+
+        private double totalWeight() {
+            return totalWeight;
+        }
     }
 
     private record CourseContext(

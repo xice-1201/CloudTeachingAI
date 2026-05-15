@@ -57,6 +57,9 @@ public class AbilityTestQuestionEntity {
     @Column(name = "correct_answer", nullable = false)
     private String correctAnswer;
 
+    @Column(nullable = false)
+    private String difficulty;
+
     @Column
     private String explanation;
 
@@ -87,6 +90,7 @@ public class AbilityTestQuestionEntity {
         createdAt = now;
         updatedAt = now;
         answered = answered == null ? false : answered;
+        difficulty = difficulty == null ? "MEDIUM" : difficulty;
     }
 
     @PreUpdate
