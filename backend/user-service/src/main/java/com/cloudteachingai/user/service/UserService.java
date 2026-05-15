@@ -132,13 +132,20 @@ public class UserService {
     public UserResponse updateProfile(Long userId, UpdateProfileRequest request) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("用户不存在"));
+        String avatarToDelete = null;
         if (request.getUsername() != null && !request.getUsername().isBlank()) {
             user.setUsername(request.getUsername());
         }
         if (request.getAvatar() != null) {
-            user.setAvatar(request.getAvatar());
+            String previousAvatar = user.getAvatar();
+            String nextAvatar = StringUtils.hasText(request.getAvatar()) ? request.getAvatar() : null;
+            user.setAvatar(nextAvatar);
+            if (!Objects.equals(previousAvatar, nextAvatar)) {
+                avatarToDelete = previousAvatar;
+            }
         }
         user = userRepository.save(user);
+        avatarStorageService.deleteIfManaged(avatarToDelete);
         return UserResponse.from(user);
     }
 

@@ -9,9 +9,12 @@
         <el-avatar :size="80" :src="form.avatar">
           {{ (form.username || userStore.user?.username)?.[0]?.toUpperCase() }}
         </el-avatar>
-        <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="image/*" @change="handleAvatarChange">
-          <el-button size="small" style="margin-top: 8px">更换头像</el-button>
-        </el-upload>
+        <div class="avatar-actions">
+          <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="image/*" @change="handleAvatarChange">
+            <el-button size="small">更换头像</el-button>
+          </el-upload>
+          <el-button v-if="form.avatar" size="small" type="danger" plain @click="handleAvatarRemove">删除头像</el-button>
+        </div>
       </div>
 
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px" style="margin-top: 24px">
@@ -80,6 +83,11 @@ async function handleAvatarChange(file: UploadFile) {
   ElMessage.success('头像上传成功')
 }
 
+function handleAvatarRemove() {
+  form.avatar = ''
+  ElMessage.info('头像已恢复默认，保存修改后将删除头像文件')
+}
+
 async function handleSave() {
   await formRef.value?.validate()
   saving.value = true
@@ -115,5 +123,11 @@ onMounted(async () => {
   flex-direction: column;
   align-items: center;
   padding: 20px 0;
+}
+
+.avatar-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 </style>
