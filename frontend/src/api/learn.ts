@@ -22,8 +22,11 @@ export const learnApi = {
   getAbilityMap: (): Promise<AbilityMap[]> =>
     request.get('/learn/ability-map'),
 
-  startAbilityTest: (knowledgePointId: number, questionLimit = 6): Promise<AbilityTestStartResponse> =>
-    request.post('/learn/ability-test/start', { knowledgePointId, questionLimit }),
+  startAbilityTest: (knowledgePointId: number, questionLimit?: number): Promise<AbilityTestStartResponse> =>
+    request.post('/learn/ability-test/start', {
+      knowledgePointId,
+      ...(questionLimit == null ? {} : { questionLimit }),
+    }),
 
   submitAnswer: (sessionId: number, questionId: number, answer: string): Promise<AbilityTestAnswerResponse> =>
     request.post(`/learn/ability-test/${sessionId}/answer`, { questionId, answer }),

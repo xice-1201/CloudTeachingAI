@@ -12,6 +12,6 @@ public class AbilityTestStartRequest {
     private Long knowledgePointId;
 
     @Min(1)
-    @Max(12)
+    @Max(20)
     private Integer questionLimit;
 }
