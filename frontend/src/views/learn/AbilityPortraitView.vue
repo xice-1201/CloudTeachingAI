@@ -64,6 +64,9 @@ type PortraitNode = {
 }
 
 const router = useRouter()
+const emit = defineEmits<{
+  (event: 'ability-data-change', value: boolean): void
+}>()
 const chartEl = ref<HTMLElement>()
 const loading = ref(false)
 const knowledgePoints = ref<KnowledgePointNode[]>([])
@@ -78,6 +81,8 @@ const masteryLegend = [
 ]
 
 const hasAbilityData = computed(() => abilityMap.value.length > 0)
+
+watch(hasAbilityData, (value) => emit('ability-data-change', value), { immediate: true })
 
 const portraitNodes = computed<PortraitNode[]>(() => {
   const abilityByKnowledgePoint = new Map(abilityMap.value.map((item) => [item.knowledgePointId, item]))

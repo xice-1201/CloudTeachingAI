@@ -166,8 +166,8 @@
         </el-col>
       </el-row>
 
-      <AbilityPortraitView />
-      <LearningPathView embedded />
+      <AbilityPortraitView @ability-data-change="studentHasAbilityData = $event" />
+      <LearningPathView v-if="studentHasAbilityData" embedded />
 
       <el-row :gutter="20" style="margin-top: 20px">
         <el-col :span="16">
@@ -228,6 +228,7 @@ const studentLoading = ref(false)
 const teacherLoading = ref(false)
 const teacherTodoLoading = ref(false)
 const teacherDashboard = ref<TeacherDashboard | null>(null)
+const studentHasAbilityData = ref(false)
 
 type TeacherTodoKind = 'AI_REVIEW' | 'NEW_SUBMISSION' | 'DISCUSSION' | 'STUDENT_RISK'
 type TeacherTodoPriority = 'HIGH' | 'MEDIUM' | 'LOW'

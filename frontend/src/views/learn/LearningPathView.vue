@@ -2,21 +2,32 @@
   <div :class="embedded ? 'learning-path-panel' : 'page-container'" v-loading="loading">
     <div v-if="!embedded" class="page-header">
       <span class="page-title">个性化学习路线</span>
-      <el-button type="primary" :loading="generating" @click="handleGenerate">
+      <el-button v-if="hasAbilityData" type="primary" :loading="generating" @click="handleGenerate">
         重新生成路线
       </el-button>
+      <el-button v-else type="primary" @click="router.push('/learning/ability-test')">去做能力测试</el-button>
     </div>
     <div v-else class="embedded-header">
       <div>
         <div class="embedded-title">个性化学习路线</div>
         <div class="embedded-subtitle">根据能力图谱、学习进度和课程资源推荐下一步</div>
       </div>
-      <el-button type="primary" :loading="generating" @click="handleGenerate">
+      <el-button v-if="hasAbilityData" type="primary" :loading="generating" @click="handleGenerate">
         重新生成路线
       </el-button>
+      <el-button v-else type="primary" @click="router.push('/learning/ability-test')">去做能力测试</el-button>
     </div>
 
-    <section v-if="hasPath" class="route-summary">
+    <el-empty
+      v-if="showNoAbilityData"
+      description="还没有个人能力画像，暂不生成推荐学习路线。请先完成能力测试。"
+    >
+      <template #extra>
+        <el-button type="primary" @click="router.push('/learning/ability-test')">前往能力测试</el-button>
+      </template>
+    </el-empty>
+
+    <section v-if="hasAbilityData && hasPath" class="route-summary">
       <div class="summary-main">
         <div class="summary-title">本轮推荐重点</div>
         <div class="summary-subtitle">
@@ -26,7 +37,7 @@
       <div class="summary-time">生成时间：{{ formatTime(path?.generatedAt) }}</div>
     </section>
 
-    <div v-if="hasPath" class="focus-points">
+    <div v-if="hasAbilityData && hasPath" class="focus-points">
       <div v-for="item in path?.focusKnowledgePoints" :key="item.knowledgePointId" class="focus-item">
         <div class="focus-head">
           <div class="focus-name">{{ item.knowledgePointName }}</div>
@@ -140,14 +151,16 @@ const router = useRouter()
 const loading = ref(false)
 const generating = ref(false)
 const path = ref<LearningPath | null>(null)
+const hasAbilityData = ref(false)
 const embedded = computed(() => props.embedded)
 const returnUrl = computed(() => (embedded.value ? '/dashboard' : '/learning/path'))
 const returnLabel = computed(() => (embedded.value ? '返回首页' : '返回路线'))
 
 const hasPath = computed(() => Boolean(path.value))
 const hasResources = computed(() => Boolean(path.value?.resources?.length))
-const showEmpty = computed(() => !loading.value && !path.value)
-const showNoResources = computed(() => !loading.value && hasPath.value && !hasResources.value)
+const showNoAbilityData = computed(() => !loading.value && !hasAbilityData.value)
+const showEmpty = computed(() => !loading.value && hasAbilityData.value && !path.value)
+const showNoResources = computed(() => !loading.value && hasAbilityData.value && hasPath.value && !hasResources.value)
 
 function masteryColor(level: number) {
   if (level >= 0.8) return '#67c23a'
@@ -226,6 +239,12 @@ function askAiForFocus(item: LearningPath['focusKnowledgePoints'][number]) {
 async function loadPath() {
   loading.value = true
   try {
+    const abilityMap = await learnApi.getAbilityMap().catch(() => [])
+    hasAbilityData.value = abilityMap.length > 0
+    if (!hasAbilityData.value) {
+      path.value = null
+      return
+    }
     path.value = await learnApi.getLearningPath().catch(() => null)
   } finally {
     loading.value = false
@@ -233,6 +252,12 @@ async function loadPath() {
 }
 
 async function handleGenerate() {
+  if (!hasAbilityData.value) {
+    path.value = null
+    ElMessage.warning('请先完成能力测试，形成个人能力画像后再生成学习路线')
+    router.push('/learning/ability-test')
+    return
+  }
   generating.value = true
   try {
     path.value = await learnApi.generateLearningPath()
