@@ -8,7 +8,7 @@
       <div class="learn-header-actions">
         <el-button v-if="fromLearningPath" text @click="returnToLearningPath">返回路线</el-button>
         <el-button v-if="resource" text :icon="ChatDotRound" @click="askAiForResource">问 AI</el-button>
-        <el-button text @click="scrollToDiscussions">讨论 {{ resourceDiscussions.length }}</el-button>
+        <el-button v-if="canParticipateDiscussion" text @click="scrollToDiscussions">讨论 {{ resourceDiscussions.length }}</el-button>
         <el-button v-if="resourceUrl" text @click="downloadResource">下载资源</el-button>
       </div>
     </div>
@@ -79,7 +79,7 @@
           <div v-else class="progress-text">当前资源还没有确认的知识点标签。</div>
         </el-card>
 
-        <el-card id="discussions" shadow="never" header="资源讨论">
+        <el-card v-if="canParticipateDiscussion" id="discussions" shadow="never" header="资源讨论">
           <div class="discussion-editor">
             <el-input
               v-model="resourceDiscussionForm.title"
@@ -133,6 +133,9 @@
             </article>
           </div>
         </el-card>
+        <el-card v-else shadow="never" header="资源讨论">
+          <div class="progress-text">选课后即可参与资源讨论。</div>
+        </el-card>
 
         <el-card shadow="never" header="课程目录" class="outline-card">
           <div v-for="chapter in chapters" :key="chapter.id" class="outline-chapter">
@@ -175,6 +178,7 @@ const progress = ref<LearningProgress | null>(null)
 const chapters = ref<Chapter[]>([])
 const resourceMap = ref<Record<number, Resource[]>>({})
 const resourceDiscussions = ref<DiscussionPost[]>([])
+const canParticipateDiscussion = ref(false)
 const replyingToId = ref<number | null>(null)
 const replyContent = ref('')
 const currentCourseId = ref<number | null>(null)
@@ -315,6 +319,7 @@ function formatDate(value: string) {
 }
 
 function scrollToDiscussions() {
+  if (!canParticipateDiscussion.value) return
   document.getElementById('discussions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
@@ -423,6 +428,28 @@ async function loadResourcePage() {
   }
 }
 
+async function loadDiscussionAccess() {
+  const courseId = resolveCourseId()
+  resourceDiscussions.value = []
+  replyingToId.value = null
+  replyContent.value = ''
+
+  if (!courseId) {
+    canParticipateDiscussion.value = false
+    return
+  }
+  if (!userStore.isStudent) {
+    canParticipateDiscussion.value = true
+    return
+  }
+
+  const enrolledCourses = await courseApi.listEnrolledCourses(
+    { page: 1, pageSize: 200 },
+    { headers: { 'X-Silent-Error': 'true' } },
+  ).catch(() => null)
+  canParticipateDiscussion.value = Boolean(enrolledCourses?.items?.some((course) => course.id === courseId))
+}
+
 async function submitExerciseAnswers() {
   if (!resource.value?.exerciseQuestions?.length) return
   const unanswered = resource.value.exerciseQuestions.some((question) => !exerciseAnswers.value[question.id])
@@ -445,8 +472,14 @@ function resetExerciseAnswers() {
 }
 
 async function loadResourceDiscussions() {
+  if (!canParticipateDiscussion.value) {
+    resourceDiscussions.value = []
+    return
+  }
   resourceDiscussions.value = await courseApi.listDiscussions(String(route.params.courseId), {
     resourceId: Number(route.params.resourceId),
+  }, {
+    headers: { 'X-Silent-Error': 'true' },
   }).catch(() => [])
 }
 
@@ -562,6 +595,7 @@ onMounted(async () => {
   try {
     await loadCurriculum()
     await loadResourcePage()
+    await loadDiscussionAccess()
     await loadResourceDiscussions()
     if (route.hash === '#discussions') {
       setTimeout(scrollToDiscussions, 100)
@@ -582,6 +616,7 @@ watch(() => `${route.params.courseId}:${route.params.resourceId}`, async () => {
     if (canTrackProgress.value) await saveProgress().catch(() => undefined)
     await loadCurriculum()
     await loadResourcePage()
+    await loadDiscussionAccess()
     await loadResourceDiscussions()
     if (route.hash === '#discussions') {
       setTimeout(scrollToDiscussions, 100)

@@ -1676,10 +1676,7 @@ public class LearnFacadeService {
     private Set<Long> collectCandidateCourseIds(
             Collection<LearningProgressEntity> progresses,
             String authorization) {
-        Set<Long> courseIds = progresses.stream()
-                .map(LearningProgressEntity::getCourseId)
-                .filter(value -> value != null)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Long> courseIds = new LinkedHashSet<>();
 
         try {
             CourseApiResponse<PageResponse<CourseSummaryResponse>> response =
@@ -1696,9 +1693,7 @@ public class LearnFacadeService {
         } catch (FeignException.Unauthorized ex) {
             throw BusinessException.unauthorized("Invalid token");
         } catch (FeignException ex) {
-            if (courseIds.isEmpty()) {
-                throw BusinessException.badRequest("Failed to load enrolled courses");
-            }
+            throw BusinessException.badRequest("Failed to load enrolled courses");
         }
 
         try {
@@ -1707,6 +1702,7 @@ public class LearnFacadeService {
             PageResponse<CourseSummaryResponse> page = response == null ? null : response.getData();
             if (page != null && page.getItems() != null) {
                 page.getItems().stream()
+                        .filter(this::isPublicPublishedCourse)
                         .map(CourseSummaryResponse::getId)
                         .filter(value -> value != null)
                         .forEach(courseIds::add);
@@ -1722,6 +1718,12 @@ public class LearnFacadeService {
         }
 
         return courseIds;
+    }
+
+    private boolean isPublicPublishedCourse(CourseSummaryResponse course) {
+        return course != null
+                && "PUBLISHED".equalsIgnoreCase(course.getStatus())
+                && "PUBLIC".equalsIgnoreCase(course.getVisibilityType());
     }
 
     private Map<Long, CourseContext> loadCourseContexts(Set<Long> courseIds, String authorization) {

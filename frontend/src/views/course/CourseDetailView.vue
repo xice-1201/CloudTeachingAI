@@ -467,6 +467,30 @@ function percentText(value: number) {
   return `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%`
 }
 
+function parseRouteNumber(value: unknown) {
+  const rawValue = Array.isArray(value) ? value[0] : value
+  const id = Number(rawValue)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+function notifyLearningPathEnrollRequired() {
+  if (route.query.requireEnroll !== '1') return
+  ElMessage.info('该推荐资源来自当前课程，请先选课后再进入对应资源学习')
+}
+
+function openRecommendedResourceAfterEnroll() {
+  const resourceId = parseRouteNumber(route.query.recommendedResourceId)
+  if (!course.value || !resourceId) return false
+  router.push({
+    path: `/courses/${course.value.id}/learn/${resourceId}`,
+    query: {
+      fromPath: '1',
+      returnUrl: typeof route.query.returnUrl === 'string' ? route.query.returnUrl : '/learning/path',
+    },
+  })
+  return true
+}
+
 function openAnnouncementDialog(item?: Announcement) {
   announcementDialog.value.visible = true
   announcementDialog.value.id = item?.id ?? null
@@ -563,6 +587,7 @@ async function handleEnroll() {
   await courseApi.enrollCourse(String(course.value.id))
   ElMessage.success('选课成功')
   await Promise.all([loadCurriculum(), loadInteractions()])
+  openRecommendedResourceAfterEnroll()
 }
 
 async function submitAnnouncement() {
@@ -651,6 +676,7 @@ onMounted(async () => {
   loading.value = true
   try {
     await loadCourseSummary()
+    notifyLearningPathEnrollRequired()
     await loadCurriculum()
     await Promise.all([loadInteractions(), loadTeacherAnalytics()])
     if (route.hash === '#discussions') {

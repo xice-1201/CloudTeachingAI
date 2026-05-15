@@ -171,7 +171,9 @@ request.interceptors.response.use(
       response.config,
       response as AxiosResponse<ErrorPayload>,
     )
-    logBrowserError(businessError, payload)
+    if (!silentError) {
+      logBrowserError(businessError, payload)
+    }
 
     if (!silentError) {
       ElMessage.error(buildErrorMessage(payload, '请求失败'))
@@ -185,7 +187,9 @@ request.interceptors.response.use(
     const skipAuthRedirect = shouldSkipAuthRedirect(originalRequest)
     const payload = error?.response?.data as ErrorPayload | undefined
 
-    logBrowserError(error, payload)
+    if (!silentError) {
+      logBrowserError(error, payload)
+    }
 
     if (error.response) {
       const { status, data } = error.response as AxiosResponse<ErrorPayload>

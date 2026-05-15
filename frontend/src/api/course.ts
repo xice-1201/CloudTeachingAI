@@ -90,8 +90,8 @@ export const courseApi = {
   enrollCourse: (id: string): Promise<void> =>
     request.post(`/courses/${id}/enroll`),
 
-  listEnrolledCourses: (params?: { page?: number; pageSize?: number }): Promise<PageResponse<Course>> =>
-    request.get('/courses/enrolled', { params }),
+  listEnrolledCourses: (params?: { page?: number; pageSize?: number }, config?: AxiosRequestConfig): Promise<PageResponse<Course>> =>
+    request.get('/courses/enrolled', { ...config, params }),
 
   // 章节
   listChapters: (courseId: string, config?: AxiosRequestConfig): Promise<Chapter[]> =>

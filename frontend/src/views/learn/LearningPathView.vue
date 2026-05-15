@@ -138,6 +138,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound, Finished, Flag } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
+import { courseApi } from '@/api/course'
 import { learnApi } from '@/api/learn'
 import type { LearningPath, PathResource } from '@/types'
 
@@ -152,6 +153,7 @@ const loading = ref(false)
 const generating = ref(false)
 const path = ref<LearningPath | null>(null)
 const hasAbilityData = ref(false)
+const enrolledCourseIds = ref<number[]>([])
 const embedded = computed(() => props.embedded)
 const returnUrl = computed(() => (embedded.value ? '/dashboard' : '/learning/path'))
 const returnLabel = computed(() => (embedded.value ? '返回首页' : '返回路线'))
@@ -174,6 +176,20 @@ function formatTime(value?: string) {
 }
 
 function openResource(item: PathResource) {
+  if (!enrolledCourseIds.value.includes(item.courseId)) {
+    ElMessage.info('该资源来自未选课程，请先完成选课后再学习对应资源')
+    router.push({
+      path: `/courses/${item.courseId}`,
+      query: {
+        fromPath: '1',
+        requireEnroll: '1',
+        recommendedResourceId: item.resourceId,
+        returnUrl: returnUrl.value,
+      },
+    })
+    return
+  }
+
   router.push({
     path: `/courses/${item.courseId}/learn/${item.resourceId}`,
     query: {
@@ -245,10 +261,19 @@ async function loadPath() {
       path.value = null
       return
     }
+    enrolledCourseIds.value = await loadEnrolledCourseIds()
     path.value = await learnApi.getLearningPath().catch(() => null)
   } finally {
     loading.value = false
   }
+}
+
+async function loadEnrolledCourseIds() {
+  const response = await courseApi.listEnrolledCourses(
+    { page: 1, pageSize: 200 },
+    { headers: { 'X-Silent-Error': 'true' } },
+  ).catch(() => null)
+  return response?.items?.map((course) => course.id) ?? []
 }
 
 async function handleGenerate() {
@@ -260,6 +285,7 @@ async function handleGenerate() {
   }
   generating.value = true
   try {
+    enrolledCourseIds.value = await loadEnrolledCourseIds()
     path.value = await learnApi.generateLearningPath()
     if (path.value?.resources?.length) {
       ElMessage.success('学习路线已更新')
