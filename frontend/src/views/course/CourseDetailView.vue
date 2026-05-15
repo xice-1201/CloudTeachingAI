@@ -312,6 +312,7 @@ const resourceMap = ref<Record<number, Resource[]>>({})
 const announcements = ref<Announcement[]>([])
 const generalDiscussions = ref<DiscussionPost[]>([])
 const contentAccessGranted = ref(false)
+const isEnrolled = ref(false)
 const replyingToId = ref<number | null>(null)
 const replyContent = ref('')
 
@@ -333,9 +334,9 @@ const canPublish = computed(() => canEdit.value && course.value?.status === 'DRA
 const canUnpublish = computed(() => canEdit.value && course.value?.status === 'PUBLISHED')
 const canArchive = computed(() => canEdit.value && course.value?.status !== 'ARCHIVED')
 const canRestore = computed(() => canEdit.value && course.value?.status === 'ARCHIVED')
-const canEnroll = computed(() => userStore.isStudent && course.value?.status === 'PUBLISHED' && !contentAccessGranted.value)
-const showEnrollHint = computed(() => userStore.isStudent && !contentAccessGranted.value && course.value?.status === 'PUBLISHED')
-const canParticipateDiscussion = computed(() => contentAccessGranted.value || canEdit.value)
+const canEnroll = computed(() => userStore.isStudent && course.value?.status === 'PUBLISHED' && !isEnrolled.value)
+const showEnrollHint = computed(() => userStore.isStudent && !isEnrolled.value && course.value?.status === 'PUBLISHED')
+const canParticipateDiscussion = computed(() => isEnrolled.value || canEdit.value)
 const recentDiscussions = computed(() => generalDiscussions.value.slice(0, 3))
 const allResources = computed(() => Object.values(resourceMap.value).flat())
 const courseAnalytics = computed(() => {
@@ -527,6 +528,18 @@ async function loadCourseSummary() {
   course.value = await courseApi.getCourse(String(route.params.id))
 }
 
+async function loadEnrollmentStatus() {
+  if (!userStore.isStudent || !course.value) {
+    isEnrolled.value = false
+    return
+  }
+  const enrolledCourses = await courseApi.listEnrolledCourses(
+    { page: 1, pageSize: 200 },
+    { headers: { 'X-Silent-Error': 'true' } },
+  ).catch(() => null)
+  isEnrolled.value = Boolean(enrolledCourses?.items?.some((item) => item.id === course.value?.id))
+}
+
 async function loadCurriculum() {
   const courseId = String(route.params.id)
   try {
@@ -547,7 +560,7 @@ async function loadCurriculum() {
 async function loadInteractions() {
   const courseId = String(route.params.id)
   announcements.value = await courseApi.listAnnouncements(courseId).catch(() => [])
-  if (!contentAccessGranted.value && !canEdit.value) {
+  if (!canParticipateDiscussion.value) {
     generalDiscussions.value = []
     return
   }
@@ -585,6 +598,7 @@ async function handleLifecycle(action: 'publish' | 'unpublish' | 'archive' | 're
 async function handleEnroll() {
   if (!course.value) return
   await courseApi.enrollCourse(String(course.value.id))
+  isEnrolled.value = true
   ElMessage.success('选课成功')
   await Promise.all([loadCurriculum(), loadInteractions()])
   openRecommendedResourceAfterEnroll()
@@ -676,6 +690,7 @@ onMounted(async () => {
   loading.value = true
   try {
     await loadCourseSummary()
+    await loadEnrollmentStatus()
     notifyLearningPathEnrollRequired()
     await loadCurriculum()
     await Promise.all([loadInteractions(), loadTeacherAnalytics()])
