@@ -213,6 +213,9 @@
       SYSTEM_HEALTH_NOTIFY_URL: http://notify-service:8006/actuator/health
       SYSTEM_HEALTH_TAG_AGENT_URL: http://tag-agent:8101/health
       SYSTEM_HEALTH_CHAT_AGENT_URL: http://chat-agent:8104/health
+      APP_STORAGE_ROOT: /app/storage
+    volumes:
+      - user-storage-data:/app/storage
     ports:
       - "8002:8002"
     networks:
@@ -434,6 +437,7 @@ networks:
 volumes:
   auth-db-data:
   user-db-data:
+  user-storage-data:
   notify-db-data:
   course-db-data:
   course-storage-data:

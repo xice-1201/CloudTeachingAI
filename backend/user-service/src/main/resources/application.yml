@@ -46,6 +46,9 @@ notify-service:
 chat-agent:
   url: ${CHAT_AGENT_URL:http://localhost:8104}
 
+app:
+  storage-root: ${APP_STORAGE_ROOT:/app/storage}
+
 system-health:
   timeout-seconds: ${SYSTEM_HEALTH_TIMEOUT_SECONDS:5}
   targets:

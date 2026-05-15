@@ -75,7 +75,9 @@ async function handleAvatarChange(file: UploadFile) {
   if (!file.raw) return
   const res = await userApi.uploadAvatar(file.raw)
   form.avatar = res.url
-  if (userStore.user) userStore.user.avatar = res.url
+  await userStore.fetchProfile()
+  form.avatar = userStore.user?.avatar ?? res.url
+  ElMessage.success('头像上传成功')
 }
 
 async function handleSave() {

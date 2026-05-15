@@ -13,12 +13,17 @@ import com.cloudteachingai.user.dto.TeacherRegistrationApplicationResponse;
 import com.cloudteachingai.user.dto.UpdateProfileRequest;
 import com.cloudteachingai.user.dto.UserResponse;
 import com.cloudteachingai.user.entity.User;
+import com.cloudteachingai.user.service.AvatarStorageService;
 import com.cloudteachingai.user.service.SystemHealthService;
 import com.cloudteachingai.user.service.AdminAuditLogService;
 import com.cloudteachingai.user.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,10 +33,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @RestController
@@ -42,6 +50,7 @@ public class UserController {
     private final UserService userService;
     private final SystemHealthService systemHealthService;
     private final AdminAuditLogService adminAuditLogService;
+    private final AvatarStorageService avatarStorageService;
 
     @PostMapping("/admin/users")
     public ApiResponse<UserResponse> createUser(
@@ -184,16 +193,26 @@ public class UserController {
         return ApiResponse.success(userService.updateProfile(userId, request));
     }
 
-    @PostMapping("/users/me/avatar")
+    @PostMapping(value = "/users/me/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<Map<String, String>> uploadAvatar(
             @RequestHeader(value = "X-User-Id", required = false) Long userIdHeader,
-            @RequestParam(value = "userId", required = false) Long userIdParam) {
+            @RequestParam(value = "userId", required = false) Long userIdParam,
+            @RequestPart("file") MultipartFile file) {
         Long userId = userIdHeader != null ? userIdHeader : userIdParam;
         if (userId == null) {
             return ApiResponse.error(40101, "未提供用户身份");
         }
-        String placeholderUrl = "https://placeholder.example.com/avatars/" + userId + ".png";
-        return ApiResponse.success(Map.of("url", placeholderUrl));
+        String avatarUrl = avatarStorageService.store(file, userId);
+        userService.updateAvatar(userId, avatarUrl);
+        return ApiResponse.success(Map.of("url", avatarUrl));
+    }
+
+    @GetMapping("/users/avatars/{filename:.+}")
+    public ResponseEntity<Resource> getAvatar(@PathVariable String filename) {
+        return ResponseEntity.ok()
+                .contentType(avatarStorageService.resolveMediaType(filename))
+                .cacheControl(CacheControl.maxAge(30, TimeUnit.DAYS).cachePublic())
+                .body(avatarStorageService.loadAsResource(filename));
     }
 
     @GetMapping("/users/students")

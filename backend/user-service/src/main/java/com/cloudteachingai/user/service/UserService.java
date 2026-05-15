@@ -54,6 +54,7 @@ public class UserService {
     private final ChatAgentClient chatAgentClient;
     private final NotifyServiceClient notifyServiceClient;
     private final AdminAuditLogService adminAuditLogService;
+    private final AvatarStorageService avatarStorageService;
 
     @Transactional
     public UserResponse createUser(CreateUserRequest request, Long actorId) {
@@ -138,6 +139,17 @@ public class UserService {
             user.setAvatar(request.getAvatar());
         }
         user = userRepository.save(user);
+        return UserResponse.from(user);
+    }
+
+    @Transactional
+    public UserResponse updateAvatar(Long userId, String avatarUrl) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> BusinessException.notFound("用户不存在"));
+        String previousAvatar = user.getAvatar();
+        user.setAvatar(avatarUrl);
+        user = userRepository.save(user);
+        avatarStorageService.deleteIfManaged(previousAvatar);
         return UserResponse.from(user);
     }
 
@@ -305,6 +317,7 @@ public class UserService {
         String role = user.getRole().name();
         String username = user.getUsername();
         String email = user.getEmail();
+        String avatar = user.getAvatar();
 
         assignServiceClient.deleteUserAssignmentData(userId, role);
         if (user.getRole() == User.UserRole.STUDENT) {
@@ -318,6 +331,7 @@ public class UserService {
         mentorRelationRepository.deleteByStudentIdOrMentorId(userId, userId);
         teacherRegistrationApplicationRepository.deleteByEmailOrReviewedByOrCreatedUserId(email, userId, userId);
         userRepository.delete(user);
+        avatarStorageService.deleteIfManaged(avatar);
 
         adminAuditLogService.record(
                 actorId,
