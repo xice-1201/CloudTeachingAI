@@ -217,6 +217,78 @@ function nodeSymbolSize(item: KnowledgeGraphNode) {
   return Math.min(72, base + Math.sqrt(Math.max(0, item.resourceCount)) * 5)
 }
 
+function nodeSymbol(type: KnowledgeGraphNode['nodeType']) {
+  return { SUBJECT: 'roundRect', DOMAIN: 'diamond', POINT: 'circle' }[type] ?? 'circle'
+}
+
+function buildHierarchicalGraphNodes(items: KnowledgeGraphNode[]) {
+  const height = chartEl.value?.clientHeight ?? 620
+  const minDepth = Math.min(...items.map((item) => item.depth), 0)
+  const columns = new Map<number, KnowledgeGraphNode[]>()
+
+  items
+    .slice()
+    .sort((left, right) => left.depth - right.depth || left.path.localeCompare(right.path, 'zh-CN'))
+    .forEach((item) => {
+      const level = Math.max(0, item.depth - minDepth)
+      columns.set(level, [...(columns.get(level) ?? []), item])
+    })
+
+  const columnGap = 220
+  const leftPadding = 120
+  const topPadding = 96
+  const bottomPadding = 72
+  const usableHeight = Math.max(360, height - topPadding - bottomPadding)
+  const positions = new Map<number, { x: number; y: number }>()
+
+  columns.forEach((columnItems, level) => {
+    const rowGap = usableHeight / Math.max(1, columnItems.length)
+    columnItems.forEach((item, index) => {
+      positions.set(item.id, {
+        x: leftPadding + level * columnGap,
+        y: topPadding + rowGap * (index + 0.5),
+      })
+    })
+  })
+
+  return items.map((item) => {
+    const position = positions.get(item.id) ?? { x: leftPadding, y: topPadding }
+    return {
+      id: String(item.id),
+      selectableRootId: resolveSelectableRootId(item),
+      name: item.name,
+      value: item.resourceCount,
+      category: nodeCategory(item.nodeType),
+      symbol: nodeSymbol(item.nodeType),
+      symbolSize: nodeSymbolSize(item),
+      x: position.x,
+      y: position.y,
+      fixed: true,
+      itemStyle: {
+        color: item.color,
+        borderColor: item.depth === minDepth ? '#303133' : '#ffffff',
+        borderWidth: item.depth === minDepth ? 2 : 1,
+        shadowBlur: item.depth === minDepth ? 8 : 3,
+        shadowColor: 'rgba(31, 45, 61, 0.16)',
+      },
+      label: {
+        show: true,
+        position: 'bottom',
+        formatter: item.resourceCount > 0 ? `${item.name}\n${item.resourceCount}` : item.name,
+      },
+      tooltip: {
+        formatter: [
+          `<strong>${item.name}</strong>`,
+          `路径：${item.path}`,
+          `层级：第 ${Math.max(1, item.depth - minDepth + 1)} 层`,
+          `子树资源数：${item.resourceCount}`,
+          `直接关联资源：${item.directResourceCount}`,
+        ].join('<br/>'),
+      },
+    }
+  })
+}
+
 function renderGraph() {
   if (!chartEl.value || !graph.value) return
   if (!chart) {
@@ -224,30 +296,17 @@ function renderGraph() {
     chart.on('click', handleGraphClick)
   }
 
-  const nodes = graph.value.nodes.map((item) => ({
-    id: String(item.id),
-    selectableRootId: resolveSelectableRootId(item),
-    name: item.name,
-    value: item.resourceCount,
-    category: nodeCategory(item.nodeType),
-    symbolSize: nodeSymbolSize(item),
-    itemStyle: { color: item.color },
-    label: {
-      show: true,
-      formatter: item.resourceCount > 0 ? `${item.name}\n${item.resourceCount}` : item.name,
-    },
-    tooltip: {
-      formatter: [
-        `<strong>${item.name}</strong>`,
-        `路径：${item.path}`,
-        `子树资源数：${item.resourceCount}`,
-        `直接关联资源：${item.directResourceCount}`,
-      ].join('<br/>'),
-    },
-  }))
+  const nodes = buildHierarchicalGraphNodes(graph.value.nodes)
   const links = graph.value.edges.map((item) => ({
     source: String(item.source),
     target: String(item.target),
+    symbol: ['none', 'arrow'],
+    symbolSize: [0, 10],
+    lineStyle: {
+      width: 1.8,
+      color: '#8a97ad',
+      curveness: 0.06,
+    },
   }))
 
   chart.setOption({
@@ -258,27 +317,24 @@ function renderGraph() {
     },
     series: [{
       type: 'graph',
-      layout: 'force',
+      layout: 'none',
       roam: true,
       draggable: true,
+      edgeSymbol: ['none', 'arrow'],
+      edgeSymbolSize: [0, 10],
       categories: [
         { name: '学科' },
         { name: '知识领域' },
         { name: '知识点' },
       ],
-      force: {
-        repulsion: 260,
-        edgeLength: [70, 150],
-        gravity: 0.08,
-      },
       lineStyle: {
-        color: '#bfc5d2',
-        width: 1.4,
-        curveness: 0.08,
+        color: '#8a97ad',
+        width: 1.8,
+        curveness: 0.06,
       },
       emphasis: {
         focus: 'adjacency',
-        lineStyle: { width: 2.4 },
+        lineStyle: { width: 3, color: '#409eff' },
       },
       label: {
         color: '#303133',
