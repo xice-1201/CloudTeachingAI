@@ -166,7 +166,7 @@
         </el-col>
       </el-row>
 
-      <KnowledgeGraphView embedded />
+      <AbilityPortraitView />
       <LearningPathView embedded />
 
       <el-row :gutter="20" style="margin-top: 20px">
@@ -212,6 +212,7 @@ import { learnApi } from '@/api/learn'
 import { assignApi } from '@/api/assign'
 import { useUserStore } from '@/store/user'
 import KnowledgeGraphView from '@/views/learn/KnowledgeGraphView.vue'
+import AbilityPortraitView from '@/views/learn/AbilityPortraitView.vue'
 import LearningPathView from '@/views/learn/LearningPathView.vue'
 import type { Assignment, Course, DiscussionPost, Submission, TeacherDashboard } from '@/types'
 
