@@ -221,38 +221,9 @@ function nodeSymbol(type: KnowledgeGraphNode['nodeType']) {
   return { SUBJECT: 'roundRect', DOMAIN: 'diamond', POINT: 'circle' }[type] ?? 'circle'
 }
 
-function buildHierarchicalGraphNodes(items: KnowledgeGraphNode[]) {
-  const height = chartEl.value?.clientHeight ?? 620
+function buildGraphNodes(items: KnowledgeGraphNode[]) {
   const minDepth = Math.min(...items.map((item) => item.depth), 0)
-  const columns = new Map<number, KnowledgeGraphNode[]>()
-
-  items
-    .slice()
-    .sort((left, right) => left.depth - right.depth || left.path.localeCompare(right.path, 'zh-CN'))
-    .forEach((item) => {
-      const level = Math.max(0, item.depth - minDepth)
-      columns.set(level, [...(columns.get(level) ?? []), item])
-    })
-
-  const columnGap = 220
-  const leftPadding = 120
-  const topPadding = 96
-  const bottomPadding = 72
-  const usableHeight = Math.max(360, height - topPadding - bottomPadding)
-  const positions = new Map<number, { x: number; y: number }>()
-
-  columns.forEach((columnItems, level) => {
-    const rowGap = usableHeight / Math.max(1, columnItems.length)
-    columnItems.forEach((item, index) => {
-      positions.set(item.id, {
-        x: leftPadding + level * columnGap,
-        y: topPadding + rowGap * (index + 0.5),
-      })
-    })
-  })
-
   return items.map((item) => {
-    const position = positions.get(item.id) ?? { x: leftPadding, y: topPadding }
     return {
       id: String(item.id),
       selectableRootId: resolveSelectableRootId(item),
@@ -261,9 +232,6 @@ function buildHierarchicalGraphNodes(items: KnowledgeGraphNode[]) {
       category: nodeCategory(item.nodeType),
       symbol: nodeSymbol(item.nodeType),
       symbolSize: nodeSymbolSize(item),
-      x: position.x,
-      y: position.y,
-      fixed: true,
       itemStyle: {
         color: item.color,
         borderColor: item.depth === minDepth ? '#303133' : '#ffffff',
@@ -296,7 +264,7 @@ function renderGraph() {
     chart.on('click', handleGraphClick)
   }
 
-  const nodes = buildHierarchicalGraphNodes(graph.value.nodes)
+  const nodes = buildGraphNodes(graph.value.nodes)
   const links = graph.value.edges.map((item) => ({
     source: String(item.source),
     target: String(item.target),
@@ -317,7 +285,7 @@ function renderGraph() {
     },
     series: [{
       type: 'graph',
-      layout: 'none',
+      layout: 'force',
       roam: true,
       draggable: true,
       edgeSymbol: ['none', 'arrow'],
@@ -327,6 +295,11 @@ function renderGraph() {
         { name: '知识领域' },
         { name: '知识点' },
       ],
+      force: {
+        repulsion: 280,
+        edgeLength: [85, 165],
+        gravity: 0.06,
+      },
       lineStyle: {
         color: '#8a97ad',
         width: 1.8,
