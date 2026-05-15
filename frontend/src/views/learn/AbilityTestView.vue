@@ -8,8 +8,8 @@
       <template #header>
         <div class="card-header">
           <div>
-            <div class="card-title">开始一次学科测验</div>
-            <div class="card-subtitle">先选择一个学科，系统会按该学科范围生成 1-6 道选择题。</div>
+            <div class="card-title">开始一次能力测验</div>
+            <div class="card-subtitle">选择任意知识范围，系统会在该范围内生成 1-6 道选择题。</div>
           </div>
           <el-tag type="info">规则版诊断</el-tag>
         </div>
@@ -20,7 +20,7 @@
           <el-select
             v-model="selectedKnowledgePointId"
             filterable
-            placeholder="请选择学科"
+            placeholder="请选择学科、知识领域或知识点"
             style="width: 100%"
           >
             <el-option
@@ -40,7 +40,7 @@
           <div class="setup-tips">
             <p>适合在学习新课程前，或阶段性复盘时使用。</p>
             <p>测试结果会同步到学习中心，并立即刷新个性化学习路线。</p>
-            <p>题目会根据学科下的知识点、描述和关键词生成，并按正确答案自动评分。</p>
+            <p>题目会根据所选范围下的知识点、描述和关键词生成，并按正确答案自动评分。</p>
           </div>
         </el-form-item>
         <el-form-item>
@@ -157,7 +157,7 @@ const knowledgePointOptions = computed<KnowledgePointOption[]>(() => {
   const items: KnowledgePointOption[] = []
   const walk = (nodes: KnowledgePointNode[]) => {
     nodes.forEach((node) => {
-      if (node.active !== false && node.nodeType === 'SUBJECT') {
+      if (node.active !== false) {
         items.push({ id: node.id, nodeType: node.nodeType, path: node.path })
       }
       if (node.children?.length) walk(node.children)

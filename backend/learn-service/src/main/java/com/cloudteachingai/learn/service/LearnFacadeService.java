@@ -82,7 +82,6 @@ public class LearnFacadeService {
     private static final String PATH_STATUS_NOT_STARTED = "NOT_STARTED";
     private static final String PATH_STATUS_IN_PROGRESS = "IN_PROGRESS";
     private static final String PATH_STATUS_COMPLETED = "COMPLETED";
-    private static final String KNOWLEDGE_NODE_TYPE_SUBJECT = "SUBJECT";
     private static final int DEFAULT_QUESTION_LIMIT = 6;
     private static final int MAX_RADAR_POINTS = 8;
     private static final int MAX_PATH_RESOURCES = 6;
@@ -208,10 +207,6 @@ public class LearnFacadeService {
         if (root == null) {
             throw BusinessException.notFound("Knowledge point not found");
         }
-        if (!KNOWLEDGE_NODE_TYPE_SUBJECT.equalsIgnoreCase(root.getNodeType())) {
-            throw BusinessException.badRequest("Ability test range must be a subject");
-        }
-
         List<CourseKnowledgePointNodeResponse> targets = collectQuestionTargets(root);
         if (targets.isEmpty()) {
             throw BusinessException.badRequest("Selected knowledge point has no available test targets");
