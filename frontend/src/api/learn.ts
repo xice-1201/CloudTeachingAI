@@ -3,6 +3,7 @@ import type {
   LearningProgress,
   AbilityMap,
   LearningPath,
+  MentorAdviceGenerateResponse,
   CourseProgress,
   TeacherDashboard,
   AbilityTestStartResponse,
@@ -24,6 +25,12 @@ export const learnApi = {
 
   getMentoredStudentAbilityMap: (studentId: string | number): Promise<AbilityMap[]> =>
     request.get(`/learn/students/${studentId}/ability-map`),
+
+  generateMentorAdvice: (
+    studentId: string | number,
+    data: { studentName?: string; teacherInstruction?: string } = {},
+  ): Promise<MentorAdviceGenerateResponse> =>
+    request.post(`/learn/students/${studentId}/advice/generate`, data, { timeout: 60000 }),
 
   startAbilityTest: (knowledgePointId: number, questionLimit?: number): Promise<AbilityTestStartResponse> =>
     request.post('/learn/ability-test/start', {

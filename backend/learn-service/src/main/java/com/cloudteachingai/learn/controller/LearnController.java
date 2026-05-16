@@ -9,6 +9,8 @@ import com.cloudteachingai.learn.dto.AbilityTestStartResponse;
 import com.cloudteachingai.learn.dto.CourseProgressResponse;
 import com.cloudteachingai.learn.dto.LearningProgressResponse;
 import com.cloudteachingai.learn.dto.LearningPathResponse;
+import com.cloudteachingai.learn.dto.MentorAdviceGenerateRequest;
+import com.cloudteachingai.learn.dto.MentorAdviceGenerateResponse;
 import com.cloudteachingai.learn.dto.TeacherDashboardResponse;
 import com.cloudteachingai.learn.dto.UpdateLearningProgressRequest;
 import com.cloudteachingai.learn.exception.BusinessException;
@@ -75,6 +77,15 @@ public class LearnController {
             @PathVariable Long studentId) {
         UserContext userContext = extractUserContext(authorization);
         return ApiResponse.success(learnFacadeService.getMentoredStudentAbilityMap(studentId, authorization, userContext));
+    }
+
+    @PostMapping("/students/{studentId}/advice/generate")
+    public ApiResponse<MentorAdviceGenerateResponse> generateMentorAdvice(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long studentId,
+            @Valid @RequestBody(required = false) MentorAdviceGenerateRequest request) {
+        UserContext userContext = extractUserContext(authorization);
+        return ApiResponse.success(learnFacadeService.generateMentorAdvice(studentId, request, userContext));
     }
 
     @PostMapping("/ability-test/start")

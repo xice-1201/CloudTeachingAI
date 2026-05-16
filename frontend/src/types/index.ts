@@ -210,6 +210,11 @@ export interface AbilityMap {
   lastTestedAt?: string | null
 }
 
+export interface MentorAdviceGenerateResponse {
+  content: string
+  model: string
+}
+
 export interface AbilityTestQuestionOption {
   key: 'A' | 'B' | 'C' | 'D'
   text: string

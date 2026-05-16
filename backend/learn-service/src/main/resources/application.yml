@@ -47,6 +47,12 @@ ai:
     base-url: ${DEEPSEEK_BASE_URL:${OPENAI_BASE_URL:https://api.deepseek.com}}
     model: ${DEEPSEEK_MODEL:${OPENAI_MODEL:deepseek-chat}}
     timeout-seconds: ${AI_ABILITY_TEST_TIMEOUT_SECONDS:45}
+  mentor-advice:
+    enabled: ${AI_MENTOR_ADVICE_ENABLED:true}
+    api-key: ${AI_MENTOR_ADVICE_API_KEY:${DEEPSEEK_API_KEY:${OPENAI_API_KEY:}}}
+    base-url: ${AI_MENTOR_ADVICE_BASE_URL:${DEEPSEEK_BASE_URL:${OPENAI_BASE_URL:https://api.deepseek.com}}}
+    model: ${AI_MENTOR_ADVICE_MODEL:${DEEPSEEK_MODEL:${OPENAI_MODEL:deepseek-chat}}}
+    timeout-seconds: ${AI_MENTOR_ADVICE_TIMEOUT_SECONDS:45}
 
 management:
   endpoints:

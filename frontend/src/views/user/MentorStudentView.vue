@@ -121,22 +121,19 @@ async function loadStudentContext() {
 }
 
 async function generateAdvice() {
+  const studentId = parseStudentId()
+  if (!studentId) {
+    ElMessage.error('学生信息无效')
+    return
+  }
   suggesting.value = true
   try {
-    const weakPoints = sortedAbilityMap.value.slice(0, 3)
-    const strongPoints = [...abilityMap.value].sort((left, right) => right.masteryLevel - left.masteryLevel).slice(0, 2)
-    if (!weakPoints.length) {
-      adviceContent.value = '目前你的能力画像数据还不充分，建议先完成一次能力测试，并优先学习课程中的基础资源，形成可分析的学习记录。'
-      return
-    }
-    const weakText = weakPoints.map((item) => `${item.knowledgePointName}（${Math.round(item.masteryLevel * 100)}%）`).join('、')
-    const strongText = strongPoints.map((item) => item.knowledgePointName).join('、') || '已有基础'
-    adviceContent.value = [
-      `结合当前能力画像，你在 ${weakText} 上还需要重点补强。`,
-      `建议本周先复习这些知识点对应的基础资源，再完成 1 次小范围能力测试，检查是否真正掌握。`,
-      `你在 ${strongText} 方面已有一定基础，可以把这些优势迁移到薄弱知识点的练习中。`,
-      '学习时建议记录每次出错的题型和原因，下次交流时我们可以针对这些卡点继续调整学习路径。',
-    ].join('\n')
+    const response = await learnApi.generateMentorAdvice(studentId, {
+      studentName: student.value?.username,
+      teacherInstruction: adviceContent.value.trim() || undefined,
+    })
+    adviceContent.value = response.content
+    ElMessage.success('AI 学习建议已生成，可编辑后发送')
   } finally {
     suggesting.value = false
   }

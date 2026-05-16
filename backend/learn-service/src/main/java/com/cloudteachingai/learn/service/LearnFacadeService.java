@@ -26,6 +26,8 @@ import com.cloudteachingai.learn.dto.LearningPathFocusResponse;
 import com.cloudteachingai.learn.dto.LearningPathResourceResponse;
 import com.cloudteachingai.learn.dto.LearningPathResponse;
 import com.cloudteachingai.learn.dto.LearningProgressResponse;
+import com.cloudteachingai.learn.dto.MentorAdviceGenerateRequest;
+import com.cloudteachingai.learn.dto.MentorAdviceGenerateResponse;
 import com.cloudteachingai.learn.dto.TeacherCourseAnalyticsResponse;
 import com.cloudteachingai.learn.dto.TeacherDashboardResponse;
 import com.cloudteachingai.learn.dto.TeacherKnowledgePointAnalyticsResponse;
@@ -122,6 +124,21 @@ public class LearnFacadeService {
 
     @Value("${ai.ability-test.timeout-seconds:45}")
     private int abilityTestAiTimeoutSeconds;
+
+    @Value("${ai.mentor-advice.enabled:true}")
+    private boolean mentorAdviceAiEnabled;
+
+    @Value("${ai.mentor-advice.api-key:}")
+    private String mentorAdviceAiApiKey;
+
+    @Value("${ai.mentor-advice.base-url:https://api.deepseek.com}")
+    private String mentorAdviceAiBaseUrl;
+
+    @Value("${ai.mentor-advice.model:deepseek-chat}")
+    private String mentorAdviceAiModel;
+
+    @Value("${ai.mentor-advice.timeout-seconds:45}")
+    private int mentorAdviceAiTimeoutSeconds;
 
     public LearningProgressResponse getResourceProgress(Long resourceId, UserContext userContext) {
         assertStudent(userContext);
@@ -385,6 +402,27 @@ public class LearnFacadeService {
         return abilityMapRepository.findByStudentIdOrderByMasteryLevelDescUpdatedAtDesc(studentId).stream()
                 .map(this::toAbilityMapResponse)
                 .toList();
+    }
+
+    public MentorAdviceGenerateResponse generateMentorAdvice(
+            Long studentId,
+            MentorAdviceGenerateRequest request,
+            UserContext userContext) {
+        if (!"TEACHER".equals(userContext.role())) {
+            throw BusinessException.forbidden("Only teachers can generate mentor advice");
+        }
+        if (!isApprovedMentor(userContext.userId(), studentId)) {
+            throw BusinessException.forbidden("No permission to guide this student");
+        }
+
+        List<AbilityMapResponse> abilityMap = abilityMapRepository.findByStudentIdOrderByMasteryLevelDescUpdatedAtDesc(studentId).stream()
+                .map(this::toAbilityMapResponse)
+                .toList();
+        String content = requestMentorAdvice(request, abilityMap);
+        return MentorAdviceGenerateResponse.builder()
+                .content(content)
+                .model(mentorAdviceAiModel)
+                .build();
     }
 
     public LearningPathResponse getLearningPath(String authorization, UserContext userContext) {
@@ -1204,6 +1242,107 @@ public class LearnFacadeService {
                 "AI generated " + aiQuestions.size() + " valid questions; rule fallback filled "
                         + (questionLimit - aiQuestions.size()) + " remaining questions. " + aiResult.message()
         );
+    }
+
+    private String requestMentorAdvice(
+            MentorAdviceGenerateRequest request,
+            List<AbilityMapResponse> abilityMap) {
+        if (!mentorAdviceAiEnabled) {
+            throw BusinessException.badRequest("AI mentor advice generation is disabled");
+        }
+        if (normalizeBlank(mentorAdviceAiApiKey) == null) {
+            throw BusinessException.badRequest("AI mentor advice generation is not configured");
+        }
+
+        try {
+            Map<String, Object> payload = Map.of(
+                    "model", mentorAdviceAiModel,
+                    "temperature", 0.55,
+                    "messages", List.of(
+                            Map.of(
+                                    "role", "system",
+                                    "content", """
+                                            You are an experienced teacher mentor on a learning platform.
+                                            Generate a concrete, personalized learning advice message for the teacher to review and send to a student.
+                                            Requirements:
+                                            - Write in Chinese.
+                                            - Use the student's ability profile and focus on actionable next steps.
+                                            - Mention weak knowledge points, suggested practice/testing rhythm, and one encouraging observation when data allows.
+                                            - If ability data is empty, explain that the student should first complete an ability test and begin learning records.
+                                            - Keep it under 500 Chinese characters.
+                                            - Return only the final message text, no JSON, no title, no markdown.
+                                            """
+                            ),
+                            Map.of(
+                                    "role", "user",
+                                    "content", objectMapper.writeValueAsString(Map.of(
+                                            "studentName", Optional.ofNullable(request)
+                                                    .map(MentorAdviceGenerateRequest::getStudentName)
+                                                    .map(this::normalizeBlank)
+                                                    .orElse(""),
+                                            "teacherInstruction", Optional.ofNullable(request)
+                                                    .map(MentorAdviceGenerateRequest::getTeacherInstruction)
+                                                    .map(this::normalizeBlank)
+                                                    .orElse(""),
+                                            "abilityMap", abilityMap.stream()
+                                                    .map(this::toAiAbilityMap)
+                                                    .toList()
+                                    ))
+                            )
+                    )
+            );
+
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(normalizeBaseUrl(mentorAdviceAiBaseUrl) + "/chat/completions"))
+                    .timeout(Duration.ofSeconds(Math.max(5, mentorAdviceAiTimeoutSeconds)))
+                    .header("Authorization", "Bearer " + mentorAdviceAiApiKey)
+                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                log.warn("AI mentor advice generation failed: status={}, body={}", response.statusCode(), abbreviate(response.body(), 1000));
+                throw BusinessException.badRequest("AI mentor advice generation provider request failed");
+            }
+
+            JsonNode rootNode = objectMapper.readTree(response.body());
+            String content = normalizeBlank(rootNode.path("choices").path(0).path("message").path("content").asText(""));
+            if (content == null) {
+                throw BusinessException.badRequest("AI mentor advice generation returned empty content");
+            }
+            return sanitizeMentorAdvice(content);
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            log.warn("AI mentor advice generation failed", ex);
+            throw BusinessException.badRequest("AI mentor advice generation failed, please try again later");
+        }
+    }
+
+    private Map<String, Object> toAiAbilityMap(AbilityMapResponse item) {
+        return Map.of(
+                "knowledgePointId", Optional.ofNullable(item.getKnowledgePointId()).orElse(0L),
+                "knowledgePointName", Optional.ofNullable(item.getKnowledgePointName()).orElse(""),
+                "knowledgePointPath", Optional.ofNullable(item.getKnowledgePointPath()).orElse(""),
+                "masteryLevel", Optional.ofNullable(item.getMasteryLevel()).orElse(0D),
+                "confidence", Optional.ofNullable(item.getConfidence()).orElse(0D),
+                "testScore", Optional.ofNullable(item.getTestScore()).orElse(0D),
+                "progressScore", Optional.ofNullable(item.getProgressScore()).orElse(0D),
+                "resourceCount", Optional.ofNullable(item.getResourceCount()).orElse(0),
+                "source", Optional.ofNullable(item.getSource()).orElse("")
+        );
+    }
+
+    private String sanitizeMentorAdvice(String content) {
+        String cleaned = content
+                .replace("```json", "")
+                .replace("```", "")
+                .trim();
+        if (cleaned.length() <= 2000) {
+            return cleaned;
+        }
+        return cleaned.substring(0, 2000).trim();
     }
 
     private AiQuestionGenerationResult requestAiQuestionSpecs(
